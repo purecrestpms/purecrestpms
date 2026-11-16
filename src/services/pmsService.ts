@@ -355,6 +355,12 @@ export async function transitionReservationStatus(params: {
   nextStatus: ReservationRecord['status'];
   settlementAmountNgn?: number;
   paymentMethod?: ReservationRecord['paymentMethod'];
+  cancellationType?: 'free' | 'paid';
+  cancellationFeeNgn?: number;
+  cancellationReason?: string;
+  collectCancellationFeeNow?: boolean;
+  checkOutTime?: string;
+  lateCheckoutFeeNgn?: number;
   actorRole: string;
 }) {
   const { uid } = getActorContext();
@@ -366,15 +372,59 @@ export async function transitionReservationStatus(params: {
     ? doc(db, 'properties', params.property.id, 'rooms', params.reservation.roomId)
     : null;
 
-  const extraPayment = params.settlementAmountNgn || 0;
-  const newPaid = params.reservation.paidNgn + extraPayment;
-
-  batch.update(resRef, {
+  let extraPayment = Math.max(0, Math.round(params.settlementAmountNgn || 0));
+  const resUpdates: Record<string, unknown> = {
     status: params.nextStatus,
-    paidNgn: newPaid,
     paymentMethod: params.paymentMethod || params.reservation.paymentMethod,
     updatedAt: now,
-  });
+  };
+
+  if (params.nextStatus === 'cancelled') {
+    const requestedFee = Math.max(0, Math.round(params.cancellationFeeNgn || 0));
+    const cancelType: 'free' | 'paid' =
+      params.cancellationType === 'paid' && requestedFee > 0 ? 'paid' : 'free';
+    const cancelFee = cancelType === 'paid' ? requestedFee : 0;
+    const collectNow = cancelType === 'paid' && Boolean(params.collectCancellationFeeNow) && cancelFee > 0;
+    extraPayment = collectNow ? cancelFee : 0;
+
+    resUpdates.cancellationType = cancelType;
+    resUpdates.cancellationFeeNgn = cancelFee;
+    resUpdates.cancellationReason = (params.cancellationReason || '').trim().slice(0, 240);
+    resUpdates.cancelledAtIso = new Date().toISOString();
+
+    if (collectNow) {
+      const ledId = cleanId('led');
+      batch.set(doc(db, 'properties', params.property.id, 'ledger_entries', ledId), {
+        propertyId: params.property.id,
+        entryDate: new Date().toISOString().slice(0, 10),
+        entryType: 'revenue',
+        category: 'Room Accommodation',
+        reference: params.reservation.bookingRef,
+        description: `Cancellation fee (${params.reservation.roomNumber}) — ${params.reservation.guestName}`,
+        amountNgn: cancelFee,
+        vatNgn: Math.round(cancelFee * 0.075),
+        paymentMethod: params.paymentMethod || params.reservation.paymentMethod,
+        authorizedEmails: params.property.authorizedEmails,
+        ownerUid: uid,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  } else if (params.nextStatus === 'checked_out') {
+    resUpdates.checkedOutAtIso = new Date().toISOString();
+    if (params.checkOutTime !== undefined) {
+      resUpdates.checkOutTime = params.checkOutTime.trim().slice(0, 16);
+    }
+    if (params.lateCheckoutFeeNgn !== undefined) {
+      const cleanLateFee = Math.max(0, Math.round(params.lateCheckoutFeeNgn));
+      resUpdates.lateCheckoutFeeNgn = cleanLateFee;
+      resUpdates.lateCheckoutApplied = cleanLateFee > 0;
+    }
+  }
+
+  const newPaid = params.reservation.paidNgn + extraPayment;
+  resUpdates.paidNgn = newPaid;
+  batch.update(resRef, resUpdates);
 
   const isRoomHoldingThisRes =
     hasRoom &&
@@ -428,13 +478,17 @@ export async function transitionReservationStatus(params: {
 
     if (extraPayment > 0) {
       const ledId = cleanId('led');
+      const lateFeeAmt = Math.max(
+        0,
+        Math.round(params.lateCheckoutFeeNgn ?? params.reservation.lateCheckoutFeeNgn ?? 0)
+      );
       batch.set(doc(db, 'properties', params.property.id, 'ledger_entries', ledId), {
         propertyId: params.property.id,
         entryDate: new Date().toISOString().slice(0, 10),
         entryType: 'revenue',
         category: 'Room Accommodation',
         reference: params.reservation.bookingRef,
-        description: `Final checkout settlement ${params.reservation.roomNumber} — ${params.reservation.guestName}`,
+        description: `Final checkout settlement ${params.reservation.roomNumber} — ${params.reservation.guestName}${lateFeeAmt > 0 ? ` (incl. ₦${lateFeeAmt.toLocaleString('en-NG')} late checkout)` : ''}`,
         amountNgn: extraPayment,
         vatNgn: Math.round(extraPayment * 0.075),
         paymentMethod: params.paymentMethod || params.reservation.paymentMethod,
@@ -459,12 +513,18 @@ export async function transitionReservationStatus(params: {
 
   try {
     await batch.commit();
+    const cancelDetail =
+      params.nextStatus === 'cancelled'
+        ? params.cancellationType === 'paid' && (params.cancellationFeeNgn || 0) > 0
+          ? `Paid Cancellation Fee ₦${Math.round(params.cancellationFeeNgn || 0).toLocaleString('en-NG')}${params.cancellationReason ? ` (${params.cancellationReason})` : ''}`
+          : `Free Cancellation (₦0)${params.cancellationReason ? ` (${params.cancellationReason})` : ''}`
+        : `Settled +₦${extraPayment.toLocaleString('en-NG')}`;
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Front Desk',
       action: `Reservation ${params.reservation.bookingRef} -> ${params.nextStatus.replace('_', ' ')}`,
-      details: `${params.reservation.roomNumber} · ${params.reservation.guestName} · Settled +₦${extraPayment.toLocaleString('en-NG')}`,
+      details: `${params.reservation.roomNumber} · ${params.reservation.guestName} · ${cancelDetail}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -898,6 +958,76 @@ export async function extendReservationStay(params: {
   }
 }
 
+export async function applyLateCheckoutWorkflow(params: {
+  property: PropertyRecord;
+  reservation: ReservationRecord;
+  checkOutTime: string;
+  lateCheckoutFeeNgn: number;
+  actorRole: string;
+}) {
+  const cleanTime = params.checkOutTime.trim().slice(0, 16) || '14:00';
+  const cleanFee = Math.max(0, Math.round(params.lateCheckoutFeeNgn || 0));
+  const resRef = doc(db, 'properties', params.property.id, 'reservations', params.reservation.id);
+  try {
+    await updateDoc(resRef, {
+      checkOutTime: cleanTime,
+      lateCheckoutFeeNgn: cleanFee,
+      lateCheckoutApplied: cleanFee > 0,
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Guest Folio',
+      action: `Late Check-Out Updated ${params.reservation.bookingRef}`,
+      details: `Time: ${cleanTime} · Fee applied to bill: ₦${cleanFee.toLocaleString('en-NG')}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, resRef.path);
+  }
+}
+
+export async function deleteReservationWorkflow(params: {
+  property: PropertyRecord;
+  reservation: ReservationRecord;
+  room?: RoomRecord;
+  actorRole: string;
+}) {
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+  const resRef = doc(db, 'properties', params.property.id, 'reservations', params.reservation.id);
+  batch.delete(resRef);
+
+  if (
+    params.reservation.roomId &&
+    (!params.room ||
+      !params.room.currentReservationId ||
+      params.room.currentReservationId === params.reservation.id)
+  ) {
+    batch.update(doc(db, 'properties', params.property.id, 'rooms', params.reservation.roomId), {
+      occupancyStatus: 'vacant',
+      currentGuestName: '',
+      currentReservationId: '',
+      updatedAt: now,
+    });
+  }
+
+  try {
+    await batch.commit();
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Reservations',
+      action: `Deleted Reservation ${params.reservation.bookingRef}`,
+      details: `${params.reservation.guestName} · ${params.reservation.roomNumber} (${params.reservation.checkInDate} → ${params.reservation.checkOutDate})`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, resRef.path);
+  }
+}
+
 export async function updateRoomStatus(params: {
   property: PropertyRecord;
   room: RoomRecord;
@@ -1018,6 +1148,39 @@ export async function createRoomWorkflow(params: {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `properties/${params.property.id}/rooms/${id}`);
+  }
+}
+
+export async function deleteRoomWorkflow(params: {
+  property: PropertyRecord;
+  room: RoomRecord;
+  currentRoomCount: number;
+  actorRole: string;
+}) {
+  if (params.room.occupancyStatus === 'occupied') {
+    throw new Error(
+      `Suite ${params.room.roomNumber} currently has an occupied guest. Check out or move the guest before deleting this room.`
+    );
+  }
+  const roomRef = doc(db, 'properties', params.property.id, 'rooms', params.room.id);
+  const propRef = doc(db, 'properties', params.property.id);
+  const nextCount = Math.max(1, params.currentRoomCount - 1);
+  try {
+    await deleteDoc(roomRef);
+    await updateDoc(propRef, {
+      roomCount: nextCount,
+      updatedAt: serverTimestamp(),
+    }).catch(() => undefined);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Rooms',
+      action: `Deleted Room ${params.room.roomNumber}`,
+      details: `${params.room.name} (${params.room.roomType}) removed from inventory.`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, roomRef.path);
   }
 }
 
@@ -1339,6 +1502,27 @@ export async function updateGuestRecord(params: {
   }
 }
 
+export async function deleteGuestRecordWorkflow(params: {
+  property: PropertyRecord;
+  guest: GuestRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'guests', params.guest.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Guest Profile',
+      action: `Deleted Guest Record: ${params.guest.fullName}`,
+      details: `Removed profile (${params.guest.phone}) from directory.`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
+  }
+}
+
 export async function createHousekeepingTask(params: {
   property: PropertyRecord;
   room: RoomRecord;
@@ -1405,6 +1589,55 @@ export async function advanceHousekeepingTask(params: {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, taskRef.path);
+  }
+}
+
+export async function updateHousekeepingTaskWorkflow(params: {
+  property: PropertyRecord;
+  task: HousekeepingTaskRecord;
+  updates: Pick<HousekeepingTaskRecord, 'taskType' | 'assignedTo' | 'priority' | 'notes'>;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'housekeeping_tasks', params.task.id);
+  try {
+    await updateDoc(ref, {
+      taskType: params.updates.taskType,
+      assignedTo: params.updates.assignedTo.trim().slice(0, 80),
+      priority: params.updates.priority,
+      notes: params.updates.notes.trim().slice(0, 300),
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Housekeeping',
+      action: `Edited Task Room ${params.task.roomNumber}`,
+      details: `${params.updates.taskType} · ${params.updates.assignedTo} (${params.updates.priority})`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
+export async function deleteHousekeepingTaskWorkflow(params: {
+  property: PropertyRecord;
+  task: HousekeepingTaskRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'housekeeping_tasks', params.task.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Housekeeping',
+      action: `Deleted Housekeeping Task (Room ${params.task.roomNumber})`,
+      details: `${params.task.taskType} assigned to ${params.task.assignedTo}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
   }
 }
 
@@ -1755,6 +1988,62 @@ export async function createLedgerEntry(params: {
   }
 }
 
+export async function updateLedgerEntryWorkflow(params: {
+  property: PropertyRecord;
+  entry: LedgerEntryRecord;
+  updates: Pick<
+    LedgerEntryRecord,
+    'entryDate' | 'entryType' | 'category' | 'description' | 'amountNgn' | 'vatNgn' | 'paymentMethod'
+  >;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'ledger_entries', params.entry.id);
+  const cleanAmount = Math.max(0, Math.round(params.updates.amountNgn));
+  try {
+    await updateDoc(ref, {
+      entryDate: params.updates.entryDate.trim().slice(0, 24),
+      entryType: params.updates.entryType,
+      category: params.updates.category,
+      description: params.updates.description.trim().slice(0, 240),
+      amountNgn: cleanAmount,
+      vatNgn: Math.max(0, Math.round(params.updates.vatNgn)),
+      paymentMethod: params.updates.paymentMethod.trim().slice(0, 48),
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Accounting',
+      action: `Edited Ledger Entry (${params.entry.reference || params.entry.category})`,
+      details: `${params.updates.description.trim()} · ₦${cleanAmount.toLocaleString('en-NG')}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
+export async function deleteLedgerEntryWorkflow(params: {
+  property: PropertyRecord;
+  entry: LedgerEntryRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'ledger_entries', params.entry.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Accounting',
+      action: `Deleted Ledger Entry (${params.entry.reference || params.entry.category})`,
+      details: `${params.entry.description} · ₦${params.entry.amountNgn.toLocaleString('en-NG')}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
+  }
+}
+
 export async function createInventoryItem(params: {
   property: PropertyRecord;
   item: Omit<InventoryItemRecord, 'id' | 'propertyId' | 'authorizedEmails' | 'ownerUid'>;
@@ -1782,6 +2071,59 @@ export async function createInventoryItem(params: {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, ref.path);
+  }
+}
+
+export async function updateInventoryItemWorkflow(params: {
+  property: PropertyRecord;
+  item: InventoryItemRecord;
+  updates: Omit<InventoryItemRecord, 'id' | 'propertyId' | 'authorizedEmails' | 'ownerUid'>;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'inventory_items', params.item.id);
+  try {
+    await updateDoc(ref, {
+      sku: params.updates.sku.trim().toUpperCase().slice(0, 32),
+      name: params.updates.name.trim().slice(0, 120),
+      category: params.updates.category,
+      unit: params.updates.unit.trim().slice(0, 24),
+      quantityOnHand: Math.max(0, Math.round(params.updates.quantityOnHand)),
+      reorderLevel: Math.max(0, Math.round(params.updates.reorderLevel)),
+      unitCostNgn: Math.max(0, Math.round(params.updates.unitCostNgn)),
+      supplierName: params.updates.supplierName.trim().slice(0, 120),
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Inventory',
+      action: `Edited SKU ${params.updates.sku.trim().toUpperCase()}`,
+      details: `${params.updates.name.trim()} · ${params.updates.quantityOnHand} ${params.updates.unit}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
+export async function deleteInventoryItemWorkflow(params: {
+  property: PropertyRecord;
+  item: InventoryItemRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'inventory_items', params.item.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Inventory',
+      action: `Deleted SKU ${params.item.sku}`,
+      details: `${params.item.name} removed from store catalog.`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
   }
 }
 
@@ -1989,6 +2331,27 @@ export async function closeShiftWorkflow(params: {
   }
 }
 
+export async function deleteShiftWorkflow(params: {
+  property: PropertyRecord;
+  shift: ShiftScheduleRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'shifts', params.shift.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Shifts & Attendance',
+      action: `Deleted Shift: ${params.shift.staffName}`,
+      details: `${params.shift.shiftDate} · ${params.shift.shiftWindow}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
+  }
+}
+
 export async function clockInStaff(params: {
   property: PropertyRecord;
   staff: StaffMemberRecord;
@@ -2029,6 +2392,27 @@ export async function clockOutAttendance(params: {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
+export async function deleteAttendanceWorkflow(params: {
+  property: PropertyRecord;
+  record: AttendanceRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'attendance', params.record.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Shifts & Attendance',
+      action: `Deleted Attendance Log: ${params.record.staffName}`,
+      details: `${params.record.date} · In: ${params.record.clockInTime}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
   }
 }
 
@@ -2227,6 +2611,60 @@ export async function resolveMaintenanceTicket(params: {
       OperationType.UPDATE,
       `properties/${params.property.id}/maintenance_tickets/${params.ticket.id}`
     );
+  }
+}
+
+export async function updateMaintenanceTicketWorkflow(params: {
+  property: PropertyRecord;
+  ticket: MaintenanceTicketRecord;
+  updates: Pick<
+    MaintenanceTicketRecord,
+    'locationLabel' | 'issueTitle' | 'category' | 'priority' | 'assignedTo' | 'estimatedCostNgn'
+  >;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'maintenance_tickets', params.ticket.id);
+  try {
+    await updateDoc(ref, {
+      locationLabel: params.updates.locationLabel.trim().slice(0, 80),
+      issueTitle: params.updates.issueTitle.trim().slice(0, 160),
+      category: params.updates.category,
+      priority: params.updates.priority,
+      assignedTo: params.updates.assignedTo.trim().slice(0, 80),
+      estimatedCostNgn: Math.max(0, Math.round(params.updates.estimatedCostNgn)),
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Maintenance',
+      action: `Edited Ticket: ${params.updates.locationLabel.trim()}`,
+      details: `${params.updates.issueTitle.trim()} (${params.updates.priority})`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
+export async function deleteMaintenanceTicketWorkflow(params: {
+  property: PropertyRecord;
+  ticket: MaintenanceTicketRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'maintenance_tickets', params.ticket.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Maintenance',
+      action: `Deleted Ticket: ${params.ticket.locationLabel}`,
+      details: params.ticket.issueTitle,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
   }
 }
 
@@ -3202,81 +3640,65 @@ async function syncPropertyAuthorizedEmailsAcrossCollections(
   nextEmails: string[]
 ): Promise<void> {
   const { email } = getActorContext();
-  const isBootstrapped = isBootstrappedAdminEmail(email);
   const propId = property.id;
   const safeEmails = sanitizeAuthorizedEmailList(nextEmails, property, email);
-  const ops: Array<(batch: ReturnType<typeof writeBatch>, now: ReturnType<typeof serverTimestamp>) => void> = [];
 
-  ops.push((batch, now) => {
-    batch.update(doc(db, 'properties', propId), {
-      authorizedEmails: safeEmails,
-      updatedAt: now,
-    });
+  // Update primary property document first so access is granted cleanly
+  await updateDoc(doc(db, 'properties', propId), {
+    authorizedEmails: safeEmails,
+    updatedAt: serverTimestamp(),
   });
 
-  const updatableSubs: Array<{
-    name: string;
-    canUpdateDoc: (data: Record<string, unknown>) => boolean;
-  }> = [
-    { name: 'rooms', canUpdateDoc: () => true },
-    { name: 'blocked_dates', canUpdateDoc: () => true },
-    { name: 'guests', canUpdateDoc: () => true },
-    {
-      name: 'reservations',
-      canUpdateDoc: (d) =>
-        isBootstrapped ||
-        !['checked_out', 'cancelled', 'no_show'].includes(String(d.status || '')),
-    },
-    {
-      name: 'housekeeping_tasks',
-      canUpdateDoc: (d) => isBootstrapped || String(d.status || '') !== 'inspected',
-    },
-    { name: 'pos_menu_items', canUpdateDoc: () => true },
-    { name: 'inventory_items', canUpdateDoc: () => true },
-    {
-      name: 'purchase_orders',
-      canUpdateDoc: (d) =>
-        isBootstrapped || !['received', 'cancelled'].includes(String(d.status || '')),
-    },
-    { name: 'staff_members', canUpdateDoc: () => true },
-    { name: 'user_accounts', canUpdateDoc: () => true },
-    { name: 'shifts', canUpdateDoc: () => true },
-    { name: 'attendance', canUpdateDoc: () => true },
-    {
-      name: 'payroll_runs',
-      canUpdateDoc: (d) => isBootstrapped || String(d.status || '') !== 'posted_to_ledger',
-    },
-    {
-      name: 'maintenance_tickets',
-      canUpdateDoc: (d) => isBootstrapped || String(d.status || '') !== 'resolved',
-    },
-    { name: 'ota_channels', canUpdateDoc: () => true },
-    { name: 'messages', canUpdateDoc: () => true },
+  const subNames = [
+    'rooms',
+    'blocked_dates',
+    'guests',
+    'reservations',
+    'housekeeping_tasks',
+    'pos_menu_items',
+    'inventory_items',
+    'purchase_orders',
+    'staff_members',
+    'user_accounts',
+    'shifts',
+    'attendance',
+    'payroll_runs',
+    'maintenance_tickets',
+    'ota_channels',
+    'messages',
   ];
 
-  for (const sub of updatableSubs) {
-    const snap = await getDocs(collection(db, 'properties', propId, sub.name));
-    for (const d of snap.docs) {
-      const data = d.data() as Record<string, unknown>;
-      if (!sub.canUpdateDoc(data)) continue;
-      ops.push((batch, now) => {
-        batch.update(d.ref, {
-          authorizedEmails: safeEmails,
-          updatedAt: now,
-        });
-      });
+  // Sync subcollections per collection so one legacy document can never fail user creation or updates
+  for (const subName of subNames) {
+    try {
+      const snap = await getDocs(collection(db, 'properties', propId, subName));
+      if (snap.empty) continue;
+      for (let i = 0; i < snap.docs.length; i += 250) {
+        const chunk = snap.docs.slice(i, i + 250);
+        const batch = writeBatch(db);
+        const now = serverTimestamp();
+        for (const d of chunk) {
+          batch.update(d.ref, {
+            authorizedEmails: safeEmails,
+            updatedAt: now,
+          });
+        }
+        try {
+          await batch.commit();
+        } catch {
+          for (const d of chunk) {
+            await updateDoc(d.ref, {
+              authorizedEmails: safeEmails,
+              updatedAt: serverTimestamp(),
+            }).catch((docErr) => {
+              console.warn(`Skipped email sync for ${subName}/${d.id}:`, docErr);
+            });
+          }
+        }
+      }
+    } catch (subErr) {
+      console.warn(`Unable to sync authorizedEmails for subcollection ${subName}:`, subErr);
     }
-  }
-
-  const CHUNK_SIZE = 350;
-  for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
-    const chunk = ops.slice(i, i + CHUNK_SIZE);
-    const batch = writeBatch(db);
-    const now = serverTimestamp();
-    for (const fn of chunk) {
-      fn(batch, now);
-    }
-    await batch.commit();
   }
 }
 

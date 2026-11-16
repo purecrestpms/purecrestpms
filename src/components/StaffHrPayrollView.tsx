@@ -32,7 +32,9 @@ import {
   createPropertyUserAccountWorkflow,
   createShiftSchedule,
   createStaffMember,
+  deleteAttendanceWorkflow,
   deletePropertyUserAccountWorkflow,
+  deleteShiftWorkflow,
   deleteStaffMemberWorkflow,
   prepareRichgatesProductionDatabaseWorkflow,
   runAndPostPayrollWorkflow,
@@ -66,8 +68,11 @@ import {
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
+type StaffAdminTab = 'users' | 'roster' | 'performance';
+
 interface StaffHrPayrollViewProps {
   section: Extract<NavSectionId, 'staff' | 'shifts_attendance' | 'payroll'>;
+  initialTab?: StaffAdminTab;
   property: PropertyRecord;
   activeRole: StaffRole;
   staffMembers: StaffMemberRecord[];
@@ -81,8 +86,6 @@ interface StaffHrPayrollViewProps {
   actorRole: string;
   onNotify: (msg: string) => void;
 }
-
-type StaffAdminTab = 'users' | 'roster' | 'performance';
 
 const PRIVILEGE_GROUPS = Array.from(new Set(PROPERTY_PRIVILEGE_OPTIONS.map((p) => p.group)));
 
@@ -98,6 +101,7 @@ function splitFullName(fullName: string): { firstName: string; lastName: string 
 
 export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   section,
+  initialTab,
   property,
   activeRole,
   staffMembers,
@@ -113,7 +117,13 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 }) => {
   const { cms } = useCms();
   const isAdminManager = activeRole === 'property_admin' || activeRole === 'pch_admin';
-  const [staffTab, setStaffTab] = useState<StaffAdminTab>('users');
+  const [staffTab, setStaffTab] = useState<StaffAdminTab>(initialTab || 'users');
+
+  useEffect(() => {
+    if (initialTab) {
+      setStaffTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Create Staff Roster State
   const [showStaffForm, setShowStaffForm] = useState(false);
@@ -180,6 +190,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const [confirmDeleteStaffId, setConfirmDeleteStaffId] = useState<string | null>(null);
   const [confirmUnassignAccId, setConfirmUnassignAccId] = useState<string | null>(null);
   const [confirmDeleteAccId, setConfirmDeleteAccId] = useState<string | null>(null);
+  const [confirmDeleteShiftId, setConfirmDeleteShiftId] = useState<string | null>(null);
+  const [confirmDeleteAttId, setConfirmDeleteAttId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
 
   const [shiftStaffId, setShiftStaffId] = useState(staffMembers[0]?.id || '');
@@ -388,6 +401,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     if (!editingStaffModal) return;
     const combined = `${editSFirstName.trim()} ${editSLastName.trim()}`.trim();
     if (!combined) return;
+    setActionError(null);
     setSavingStaffEdit(true);
     try {
       await updateStaffMemberWorkflow({
@@ -407,12 +421,15 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       });
       onNotify(`Updated staff record for ${combined}`);
       setEditingStaffModal(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setSavingStaffEdit(false);
     }
   };
 
   const handleDeleteStaff = async (staff: StaffMemberRecord) => {
+    setActionError(null);
     setBusyActionId(staff.id);
     try {
       await deleteStaffMemberWorkflow({
@@ -422,12 +439,15 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       });
       onNotify(`Deleted staff record ${staff.fullName} (${staff.staffCode})`);
       setConfirmDeleteStaffId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyActionId(null);
     }
   };
 
   const handleClearDemoStaffAndData = async () => {
+    setActionError(null);
     setClearingDemo(true);
     try {
       const res = await prepareRichgatesProductionDatabaseWorkflow({
@@ -438,6 +458,8 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         `Cleared ${res.deletedDocsCount} demo staff, shift, attendance, payroll & sample records; ${res.roomsResetCount} suites reset clean & vacant.`
       );
       setConfirmClearDemo(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setClearingDemo(false);
     }
@@ -447,43 +469,82 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     e.preventDefault();
     const combinedFullName = `${firstName.trim()} ${lastName.trim()}`.trim();
     if (!firstName.trim() || !lastName.trim()) return;
+    setActionError(null);
     const code = `RG-${String(staffMembers.length + 1).padStart(3, '0')}`;
-    await createStaffMember({
-      property,
-      staff: {
-        staffCode: code,
-        fullName: combinedFullName,
-        email: email.trim(),
-        phone: phone.trim(),
-        department,
-        role,
-        monthlyBaseSalaryNgn: Math.max(0, baseSalary),
-        monthlyAllowanceNgn: Math.max(0, allowance),
-        employmentStatus: 'active',
-      },
-      actorRole,
-    });
-    onNotify(`Onboarded ${combinedFullName} (${code})`);
-    setShowStaffForm(false);
-    setFirstName('');
-    setLastName('');
-    setEmail('');
+    try {
+      await createStaffMember({
+        property,
+        staff: {
+          staffCode: code,
+          fullName: combinedFullName,
+          email: email.trim(),
+          phone: phone.trim(),
+          department,
+          role,
+          monthlyBaseSalaryNgn: Math.max(0, baseSalary),
+          monthlyAllowanceNgn: Math.max(0, allowance),
+          employmentStatus: 'active',
+        },
+        actorRole,
+      });
+      onNotify(`Onboarded ${combinedFullName} (${code})`);
+      setShowStaffForm(false);
+      setFirstName('');
+      setLastName('');
+      setEmail('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const handleAddShift = async (e: React.FormEvent) => {
     e.preventDefault();
     const staff = staffMembers.find((s) => s.id === shiftStaffId) || staffMembers[0];
     if (!staff) return;
-    await createShiftSchedule({
-      property,
-      staff,
-      shiftDate,
-      shiftWindow,
-    });
-    onNotify(`Assigned ${shiftWindow} shift to ${staff.fullName}`);
+    setActionError(null);
+    try {
+      await createShiftSchedule({
+        property,
+        staff,
+        shiftDate,
+        shiftWindow,
+      });
+      onNotify(`Assigned ${shiftWindow} shift to ${staff.fullName}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleDeleteShift = async (sh: ShiftScheduleRecord) => {
+    setActionError(null);
+    setBusyActionId(sh.id);
+    try {
+      await deleteShiftWorkflow({ property, shift: sh, actorRole });
+      onNotify(`Deleted shift for ${sh.staffName} (${sh.shiftDate})`);
+      setConfirmDeleteShiftId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleDeleteAttendance = async (att: AttendanceRecord) => {
+    setActionError(null);
+    setBusyActionId(att.id);
+    try {
+      await deleteAttendanceWorkflow({ property, record: att, actorRole });
+      onNotify(`Deleted attendance log for ${att.staffName} (${att.date})`);
+      setConfirmDeleteAttId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyActionId(null);
+    }
   };
 
   const handleSaveSalary = async (staff: StaffMemberRecord) => {
+    setActionError(null);
     setSavingSalary(true);
     try {
       await updateStaffSalary({
@@ -495,12 +556,15 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       });
       onNotify(`Updated monthly salary for ${staff.fullName}`);
       setEditingStaffId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setSavingSalary(false);
     }
   };
 
   const handleRunPayroll = async () => {
+    setActionError(null);
     setRunningPayroll(true);
     try {
       await runAndPostPayrollWorkflow({
@@ -512,6 +576,8 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         actorRole,
       });
       onNotify(`Paid & posted ${payrollPeriod} Monthly Payroll (Pay Date ${payDate}) to Ledger`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setRunningPayroll(false);
     }
@@ -649,6 +715,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const handleCloseShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!closingShiftTarget) return;
+    setActionError(null);
     setClosingShiftBusy(true);
     try {
       await closeShiftWorkflow({
@@ -660,6 +727,8 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Closed ${closingShiftTarget.shiftWindow} shift for ${closingShiftTarget.staffName}`);
       setClosingShiftTarget(null);
       setHandoverNotes('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setClosingShiftBusy(false);
     }
@@ -744,6 +813,22 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {actionError && (
+        <div className="no-print bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-rose-700 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {section === 'shifts_attendance' && (
         <div className="hidden print-only border-b-2 border-slate-900 pb-4 mb-4">
           <div className="flex items-start justify-between gap-4">
@@ -1941,7 +2026,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                       </p>
                     )}
                   </div>
-                  <div className="no-print shrink-0">
+                  <div className="no-print shrink-0 flex items-center gap-1.5">
                     {sh.status === 'scheduled' ? (
                       <button
                         type="button"
@@ -1959,6 +2044,34 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>Closed</span>
                       </span>
+                    )}
+                    {isAdminManager && confirmDeleteShiftId !== sh.id && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteShiftId(sh.id)}
+                        className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-md cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                    {isAdminManager && confirmDeleteShiftId === sh.id && (
+                      <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteShiftId(null)}
+                          className="text-[10px] text-slate-600 px-1 cursor-pointer"
+                        >
+                          No
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyActionId === sh.id}
+                          onClick={() => void handleDeleteShift(sh)}
+                          className="text-[10px] font-semibold bg-rose-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                        >
+                          {busyActionId === sh.id ? '...' : 'Del'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1978,11 +2091,16 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 </h2>
               </div>
               <select
-                onChange={(e) => {
+                onChange={async (e) => {
                   const s = staffMembers.find((m) => m.id === e.target.value);
                   if (s) {
-                    clockInStaff({ property, staff: s });
-                    onNotify(`Clocked in ${s.fullName}`);
+                    setActionError(null);
+                    try {
+                      await clockInStaff({ property, staff: s });
+                      onNotify(`Clocked in ${s.fullName}`);
+                    } catch (err) {
+                      setActionError(err instanceof Error ? err.message : String(err));
+                    }
                     e.target.value = '';
                   }
                 }}
@@ -2010,20 +2128,55 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                       {att.clockOutTime ? ` · Out: ${att.clockOutTime}` : ''}
                     </p>
                   </div>
-                  {att.status !== 'clocked_out' ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        clockOutAttendance({ property, record: att });
-                        onNotify(`Clocked out ${att.staffName}`);
-                      }}
-                      className="px-2.5 py-1 border border-slate-200 hover:bg-slate-100 rounded text-slate-700 font-medium"
-                    >
-                      Clock Out
-                    </button>
-                  ) : (
-                    <span className="text-slate-500">Clocked Out</span>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {att.status !== 'clocked_out' ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setActionError(null);
+                          try {
+                            await clockOutAttendance({ property, record: att });
+                            onNotify(`Clocked out ${att.staffName}`);
+                          } catch (err) {
+                            setActionError(err instanceof Error ? err.message : String(err));
+                          }
+                        }}
+                        className="px-2.5 py-1 border border-slate-200 hover:bg-slate-100 rounded text-slate-700 font-medium cursor-pointer"
+                      >
+                        Clock Out
+                      </button>
+                    ) : (
+                      <span className="text-slate-500">Clocked Out</span>
+                    )}
+                    {isAdminManager && confirmDeleteAttId !== att.id && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteAttId(att.id)}
+                        className="no-print inline-flex items-center gap-1 px-2 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                    {isAdminManager && confirmDeleteAttId === att.id && (
+                      <div className="no-print inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteAttId(null)}
+                          className="text-[10px] text-slate-600 px-1 cursor-pointer"
+                        >
+                          No
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyActionId === att.id}
+                          onClick={() => void handleDeleteAttendance(att)}
+                          className="text-[10px] font-semibold bg-rose-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                        >
+                          {busyActionId === att.id ? '...' : 'Del'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

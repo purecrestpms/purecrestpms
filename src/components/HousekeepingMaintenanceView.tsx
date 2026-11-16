@@ -1,10 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Sparkles, Wrench } from 'lucide-react';
+import {
+  AlertTriangle,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  Wrench,
+  X,
+} from 'lucide-react';
 import {
   advanceHousekeepingTask,
   createHousekeepingTask,
   createMaintenanceTicket,
+  deleteHousekeepingTaskWorkflow,
+  deleteMaintenanceTicketWorkflow,
   resolveMaintenanceTicket,
+  updateHousekeepingTaskWorkflow,
+  updateMaintenanceTicketWorkflow,
 } from '../services/pmsService';
 import {
   formatNgn,
@@ -22,6 +34,7 @@ interface HousekeepingMaintenanceViewProps {
   rooms: RoomRecord[];
   housekeepingTasks: HousekeepingTaskRecord[];
   maintenanceTickets: MaintenanceTicketRecord[];
+  canManageRecords?: boolean;
   actorRole: string;
   onNotify: (msg: string) => void;
 }
@@ -32,10 +45,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
   rooms,
   housekeepingTasks,
   maintenanceTickets,
+  canManageRecords = false,
   actorRole,
   onNotify,
 }) => {
   const { cms } = useCms();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyRecordId, setBusyRecordId] = useState<string | null>(null);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id || '');
   const [taskType, setTaskType] = useState<HousekeepingTaskRecord['taskType']>('Checkout Turnover');
@@ -57,6 +73,28 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
   const [estimatedCostNgn, setEstimatedCostNgn] = useState(15000);
   const [markOutOfOrder, setMarkOutOfOrder] = useState(false);
 
+  // Edit & Delete Housekeeping Task State
+  const [editingTask, setEditingTask] = useState<HousekeepingTaskRecord | null>(null);
+  const [editTaskType, setEditTaskType] =
+    useState<HousekeepingTaskRecord['taskType']>('Checkout Turnover');
+  const [editTaskAssignedTo, setEditTaskAssignedTo] = useState('');
+  const [editTaskPriority, setEditTaskPriority] =
+    useState<HousekeepingTaskRecord['priority']>('High');
+  const [editTaskNotes, setEditTaskNotes] = useState('');
+  const [confirmDeleteTaskId, setConfirmDeleteTaskId] = useState<string | null>(null);
+
+  // Edit & Delete Maintenance Ticket State
+  const [editingTicket, setEditingTicket] = useState<MaintenanceTicketRecord | null>(null);
+  const [editTicketLocation, setEditTicketLocation] = useState('');
+  const [editTicketTitle, setEditTicketTitle] = useState('');
+  const [editTicketCategory, setEditTicketCategory] =
+    useState<MaintenanceTicketRecord['category']>('HVAC & AC');
+  const [editTicketPriority, setEditTicketPriority] =
+    useState<MaintenanceTicketRecord['priority']>('Medium');
+  const [editTicketAssignedTo, setEditTicketAssignedTo] = useState('');
+  const [editTicketCost, setEditTicketCost] = useState(0);
+  const [confirmDeleteTicketId, setConfirmDeleteTicketId] = useState<string | null>(null);
+
   const sortedRooms = [...rooms].sort((a, b) => a.roomNumber.localeCompare(b.roomNumber));
 
   useEffect(() => {
@@ -72,18 +110,72 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
     if (!room) return;
     const assignedName = `${assigneeFirstName.trim()} ${assigneeLastName.trim()}`.trim();
     if (!assignedName) return;
-    await createHousekeepingTask({
-      property,
-      room,
-      taskType,
-      assignedTo: assignedName,
-      priority: hkPriority,
-      notes: hkNotes.trim(),
-      actorRole,
-    });
-    onNotify(`Dispatched ${taskType} for Room ${room.roomNumber}`);
-    setShowTaskForm(false);
-    setHkNotes('');
+    setActionError(null);
+    try {
+      await createHousekeepingTask({
+        property,
+        room,
+        taskType,
+        assignedTo: assignedName,
+        priority: hkPriority,
+        notes: hkNotes.trim(),
+        actorRole,
+      });
+      onNotify(`Dispatched ${taskType} for Room ${room.roomNumber}`);
+      setShowTaskForm(false);
+      setHkNotes('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const openEditTaskModal = (task: HousekeepingTaskRecord) => {
+    setActionError(null);
+    setEditingTask(task);
+    setEditTaskType(task.taskType);
+    setEditTaskAssignedTo(task.assignedTo);
+    setEditTaskPriority(task.priority);
+    setEditTaskNotes(task.notes || '');
+  };
+
+  const handleSaveTaskEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTask) return;
+    setActionError(null);
+    setBusyRecordId(editingTask.id);
+    try {
+      await updateHousekeepingTaskWorkflow({
+        property,
+        task: editingTask,
+        updates: {
+          taskType: editTaskType,
+          assignedTo: editTaskAssignedTo.trim() || editingTask.assignedTo,
+          priority: editTaskPriority,
+          notes: editTaskNotes.trim(),
+        },
+        actorRole,
+      });
+      onNotify(`Updated housekeeping task for Room ${editingTask.roomNumber}`);
+      setEditingTask(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
+  };
+
+  const handleDeleteTask = async (task: HousekeepingTaskRecord) => {
+    setActionError(null);
+    setBusyRecordId(task.id);
+    try {
+      await deleteHousekeepingTaskWorkflow({ property, task, actorRole });
+      onNotify(`Deleted housekeeping task for Room ${task.roomNumber}`);
+      setConfirmDeleteTaskId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
   };
 
   const handleCreateMaintenance = async (e: React.FormEvent) => {
@@ -92,26 +184,104 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
     const label = locationLabel.trim() || (room ? `Room ${room.roomNumber}` : 'Main Facility');
     const techName = `${maintFirstName.trim()} ${maintLastName.trim()}`.trim();
     if (!issueTitle.trim() || !techName) return;
-    await createMaintenanceTicket({
-      property,
-      room,
-      locationLabel: label,
-      issueTitle: issueTitle.trim(),
-      category: maintCategory,
-      priority: maintPriority,
-      assignedTo: techName,
-      estimatedCostNgn: Math.max(0, estimatedCostNgn),
-      markRoomOutOfOrder: markOutOfOrder && Boolean(room),
-      actorRole,
-    });
-    onNotify(`Opened maintenance ticket for ${label}`);
-    setShowMaintForm(false);
-    setIssueTitle('');
-    setLocationLabel('');
+    setActionError(null);
+    try {
+      await createMaintenanceTicket({
+        property,
+        room,
+        locationLabel: label,
+        issueTitle: issueTitle.trim(),
+        category: maintCategory,
+        priority: maintPriority,
+        assignedTo: techName,
+        estimatedCostNgn: Math.max(0, estimatedCostNgn),
+        markRoomOutOfOrder: markOutOfOrder && Boolean(room),
+        actorRole,
+      });
+      onNotify(`Opened maintenance ticket for ${label}`);
+      setShowMaintForm(false);
+      setIssueTitle('');
+      setLocationLabel('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const openEditTicketModal = (ticket: MaintenanceTicketRecord) => {
+    setActionError(null);
+    setEditingTicket(ticket);
+    setEditTicketLocation(ticket.locationLabel);
+    setEditTicketTitle(ticket.issueTitle);
+    setEditTicketCategory(ticket.category);
+    setEditTicketPriority(ticket.priority);
+    setEditTicketAssignedTo(ticket.assignedTo);
+    setEditTicketCost(ticket.estimatedCostNgn);
+  };
+
+  const handleSaveTicketEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTicket) return;
+    if (editTicketLocation.trim().length < 2 || editTicketTitle.trim().length < 2) {
+      setActionError('Location and issue title must be at least 2 characters.');
+      return;
+    }
+    setActionError(null);
+    setBusyRecordId(editingTicket.id);
+    try {
+      await updateMaintenanceTicketWorkflow({
+        property,
+        ticket: editingTicket,
+        updates: {
+          locationLabel: editTicketLocation.trim(),
+          issueTitle: editTicketTitle.trim(),
+          category: editTicketCategory,
+          priority: editTicketPriority,
+          assignedTo: editTicketAssignedTo.trim() || editingTicket.assignedTo,
+          estimatedCostNgn: Math.max(0, editTicketCost),
+        },
+        actorRole,
+      });
+      onNotify(`Updated maintenance ticket for ${editTicketLocation.trim()}`);
+      setEditingTicket(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
+  };
+
+  const handleDeleteTicket = async (ticket: MaintenanceTicketRecord) => {
+    setActionError(null);
+    setBusyRecordId(ticket.id);
+    try {
+      await deleteMaintenanceTicketWorkflow({ property, ticket, actorRole });
+      onNotify(`Deleted maintenance ticket for ${ticket.locationLabel}`);
+      setConfirmDeleteTicketId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
   };
 
   return (
     <div className="space-y-6">
+      {actionError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-rose-700 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-xl font-bold text-slate-900">
@@ -286,6 +456,9 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                     <th className="py-3 px-4">Priority</th>
                     <th className="py-3 px-4">Notes</th>
                     <th className="py-3 px-4">Status &amp; Advance</th>
+                    {canManageRecords && (
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
@@ -308,15 +481,20 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                           {task.status === 'pending' && (
                             <button
                               type="button"
-                              onClick={() =>
-                                advanceHousekeepingTask({
-                                  property,
-                                  task,
-                                  nextStatus: 'in_progress',
-                                  actorRole,
-                                })
-                              }
-                              className="px-2.5 py-1 bg-slate-900 text-white rounded font-medium"
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await advanceHousekeepingTask({
+                                    property,
+                                    task,
+                                    nextStatus: 'in_progress',
+                                    actorRole,
+                                  });
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-slate-900 text-white rounded font-medium cursor-pointer"
                             >
                               Start Clean
                             </button>
@@ -324,15 +502,20 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                           {task.status === 'in_progress' && (
                             <button
                               type="button"
-                              onClick={() =>
-                                advanceHousekeepingTask({
-                                  property,
-                                  task,
-                                  nextStatus: 'completed',
-                                  actorRole,
-                                })
-                              }
-                              className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium"
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await advanceHousekeepingTask({
+                                    property,
+                                    task,
+                                    nextStatus: 'completed',
+                                    actorRole,
+                                  });
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium cursor-pointer"
                             >
                               Mark Clean
                             </button>
@@ -340,21 +523,68 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                           {task.status === 'completed' && (
                             <button
                               type="button"
-                              onClick={() =>
-                                advanceHousekeepingTask({
-                                  property,
-                                  task,
-                                  nextStatus: 'inspected',
-                                  actorRole,
-                                })
-                              }
-                              className="px-2.5 py-1 bg-emerald-700 text-white rounded font-medium"
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await advanceHousekeepingTask({
+                                    property,
+                                    task,
+                                    nextStatus: 'inspected',
+                                    actorRole,
+                                  });
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-emerald-700 text-white rounded font-medium cursor-pointer"
                             >
                               Verify Inspect
                             </button>
                           )}
                         </div>
                       </td>
+                      {canManageRecords && (
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openEditTaskModal(task)}
+                              className="inline-flex items-center gap-1 px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded cursor-pointer"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>Edit</span>
+                            </button>
+                            {confirmDeleteTaskId !== task.id ? (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteTaskId(task.id)}
+                                className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Delete</span>
+                              </button>
+                            ) : (
+                              <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteTaskId(null)}
+                                  className="text-[10px] text-slate-600 px-1 cursor-pointer"
+                                >
+                                  No
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyRecordId === task.id}
+                                  onClick={() => void handleDeleteTask(task)}
+                                  className="text-[10px] font-semibold bg-rose-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                >
+                                  {busyRecordId === task.id ? '...' : 'Del'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -519,6 +749,9 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                     <th className="py-3 px-4">Technician</th>
                     <th className="py-3 px-4 text-right">Est. Cost</th>
                     <th className="py-3 px-4">Workflow</th>
+                    {canManageRecords && (
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
@@ -546,15 +779,20 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                           {ticket.status === 'open' && (
                             <button
                               type="button"
-                              onClick={() =>
-                                resolveMaintenanceTicket({
-                                  property,
-                                  ticket,
-                                  nextStatus: 'in_progress',
-                                  actorRole,
-                                })
-                              }
-                              className="px-2.5 py-1 bg-slate-900 text-white rounded font-medium"
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await resolveMaintenanceTicket({
+                                    property,
+                                    ticket,
+                                    nextStatus: 'in_progress',
+                                    actorRole,
+                                  });
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-slate-900 text-white rounded font-medium cursor-pointer"
                             >
                               Start Work
                             </button>
@@ -562,22 +800,69 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                           {ticket.status !== 'resolved' && (
                             <button
                               type="button"
-                              onClick={() => {
-                                resolveMaintenanceTicket({
-                                  property,
-                                  ticket,
-                                  nextStatus: 'resolved',
-                                  actorRole,
-                                });
-                                onNotify(`Resolved maintenance on ${ticket.locationLabel}`);
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await resolveMaintenanceTicket({
+                                    property,
+                                    ticket,
+                                    nextStatus: 'resolved',
+                                    actorRole,
+                                  });
+                                  onNotify(`Resolved maintenance on ${ticket.locationLabel}`);
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
                               }}
-                              className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium"
+                              className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium cursor-pointer"
                             >
                               Resolve
                             </button>
                           )}
                         </div>
                       </td>
+                      {canManageRecords && (
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openEditTicketModal(ticket)}
+                              className="inline-flex items-center gap-1 px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded cursor-pointer"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>Edit</span>
+                            </button>
+                            {confirmDeleteTicketId !== ticket.id ? (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteTicketId(ticket.id)}
+                                className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Delete</span>
+                              </button>
+                            ) : (
+                              <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteTicketId(null)}
+                                  className="text-[10px] text-slate-600 px-1 cursor-pointer"
+                                >
+                                  No
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyRecordId === ticket.id}
+                                  onClick={() => void handleDeleteTicket(ticket)}
+                                  className="text-[10px] font-semibold bg-rose-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                >
+                                  {busyRecordId === ticket.id ? '...' : 'Del'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -585,6 +870,213 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
             </div>
           </div>
         </>
+      )}
+
+      {/* Edit Housekeeping Task Modal */}
+      {editingTask && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveTaskEdit}
+            className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-5 space-y-4 text-xs"
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
+              <h3 className="font-display text-base font-bold text-slate-900">
+                Edit Housekeeping Task — Room {editingTask.roomNumber}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingTask(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Task Type</label>
+                <select
+                  value={editTaskType}
+                  onChange={(e) =>
+                    setEditTaskType(e.target.value as HousekeepingTaskRecord['taskType'])
+                  }
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="Checkout Turnover">Checkout Turnover</option>
+                  <option value="Daily Stayover">Daily Stayover</option>
+                  <option value="Deep Clean">Deep Clean</option>
+                  <option value="VIP Inspection">VIP Inspection</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Assigned Attendant</label>
+                <input
+                  required
+                  type="text"
+                  value={editTaskAssignedTo}
+                  onChange={(e) => setEditTaskAssignedTo(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Priority</label>
+                <select
+                  value={editTaskPriority}
+                  onChange={(e) =>
+                    setEditTaskPriority(e.target.value as HousekeepingTaskRecord['priority'])
+                  }
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="Normal">Normal</option>
+                  <option value="High">High</option>
+                  <option value="Urgent">Urgent</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Instructions / Notes</label>
+                <input
+                  type="text"
+                  value={editTaskNotes}
+                  onChange={(e) => setEditTaskNotes(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingTask(null)}
+                className="px-3.5 py-2 text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busyRecordId === editingTask.id}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
+              >
+                {busyRecordId === editingTask.id ? 'Saving...' : 'Save Task'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Edit Maintenance Ticket Modal */}
+      {editingTicket && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveTicketEdit}
+            className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-5 space-y-4 text-xs"
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
+              <h3 className="font-display text-base font-bold text-slate-900">
+                Edit Maintenance Ticket
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingTicket(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Location *</label>
+                <input
+                  required
+                  type="text"
+                  minLength={2}
+                  value={editTicketLocation}
+                  onChange={(e) => setEditTicketLocation(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Issue Title *</label>
+                <input
+                  required
+                  type="text"
+                  minLength={2}
+                  value={editTicketTitle}
+                  onChange={(e) => setEditTicketTitle(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Category</label>
+                  <select
+                    value={editTicketCategory}
+                    onChange={(e) =>
+                      setEditTicketCategory(e.target.value as MaintenanceTicketRecord['category'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="HVAC & AC">HVAC &amp; AC</option>
+                    <option value="Plumbing">Plumbing</option>
+                    <option value="Electrical & Inverter">Electrical &amp; Inverter</option>
+                    <option value="Carpentry">Carpentry</option>
+                    <option value="Generator & Power">Generator &amp; Power</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Priority</label>
+                  <select
+                    value={editTicketPriority}
+                    onChange={(e) =>
+                      setEditTicketPriority(e.target.value as MaintenanceTicketRecord['priority'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                    <option value="Critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Technician</label>
+                  <input
+                    required
+                    type="text"
+                    value={editTicketAssignedTo}
+                    onChange={(e) => setEditTicketAssignedTo(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Est. Cost (₦)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editTicketCost}
+                    onChange={(e) => setEditTicketCost(Number(e.target.value))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingTicket(null)}
+                className="px-3.5 py-2 text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busyRecordId === editingTicket.id}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
+              >
+                {busyRecordId === editingTicket.id ? 'Saving...' : 'Save Ticket'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );

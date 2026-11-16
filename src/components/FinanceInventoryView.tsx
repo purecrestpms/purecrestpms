@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Download, FileText, Package, Plus, Printer, ShoppingCart } from 'lucide-react';
+import {
+  AlertTriangle,
+  Download,
+  FileText,
+  Package,
+  Pencil,
+  Plus,
+  Printer,
+  ShoppingCart,
+  Trash2,
+  X,
+} from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -7,7 +18,11 @@ import {
   createInventoryItem,
   createLedgerEntry,
   createPurchaseOrder,
+  deleteInventoryItemWorkflow,
+  deleteLedgerEntryWorkflow,
   receivePurchaseOrderWorkflow,
+  updateInventoryItemWorkflow,
+  updateLedgerEntryWorkflow,
 } from '../services/pmsService';
 import {
   formatNgn,
@@ -30,6 +45,7 @@ interface FinanceInventoryViewProps {
   ledgerEntries: LedgerEntryRecord[];
   inventoryItems: InventoryItemRecord[];
   purchaseOrders: PurchaseOrderRecord[];
+  canManageRecords?: boolean;
   actorRole: string;
   onNotify: (msg: string) => void;
 }
@@ -40,10 +56,13 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
   ledgerEntries,
   inventoryItems,
   purchaseOrders,
+  canManageRecords = false,
   actorRole,
   onNotify,
 }) => {
   const { cms } = useCms();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyRecordId, setBusyRecordId] = useState<string | null>(null);
   const [showLedgerForm, setShowLedgerForm] = useState(false);
   const [entryType, setEntryType] = useState<'revenue' | 'expense'>('expense');
   const [category, setCategory] =
@@ -69,6 +88,29 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
   const [poQty, setPoQty] = useState(5);
   const [poUnitCost, setPoUnitCost] = useState(25000);
   const [poExpectedDate, setPoExpectedDate] = useState('2026-11-18');
+
+  // Edit & Delete Ledger State
+  const [editingLedger, setEditingLedger] = useState<LedgerEntryRecord | null>(null);
+  const [editLEntryDate, setEditLEntryDate] = useState('');
+  const [editLType, setEditLType] = useState<'revenue' | 'expense'>('expense');
+  const [editLCat, setEditLCat] = useState<LedgerEntryRecord['category']>('Other');
+  const [editLDesc, setEditLDesc] = useState('');
+  const [editLAmount, setEditLAmount] = useState(0);
+  const [editLVat, setEditLVat] = useState(0);
+  const [editLMethod, setEditLMethod] = useState('Bank Transfer');
+  const [confirmDeleteLedgerId, setConfirmDeleteLedgerId] = useState<string | null>(null);
+
+  // Edit & Delete Inventory State
+  const [editingInv, setEditingInv] = useState<InventoryItemRecord | null>(null);
+  const [editISku, setEditISku] = useState('');
+  const [editIName, setEditIName] = useState('');
+  const [editICat, setEditICat] = useState<InventoryItemRecord['category']>('Kitchen & Pantry');
+  const [editIUnit, setEditIUnit] = useState('Units');
+  const [editIQty, setEditIQty] = useState(0);
+  const [editIReorder, setEditIReorder] = useState(0);
+  const [editICost, setEditICost] = useState(0);
+  const [editISupplier, setEditISupplier] = useState('');
+  const [confirmDeleteInvId, setConfirmDeleteInvId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!poItemId && inventoryItems[0]) {
@@ -198,70 +240,223 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
 
   const handleAddLedger = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description.trim()) return;
-    await createLedgerEntry({
-      property,
-      entry: {
-        entryDate: new Date().toISOString().slice(0, 10),
-        entryType,
-        category,
-        reference: `MAN-${Math.floor(100 + Math.random() * 899)}`,
-        description: description.trim(),
-        amountNgn: Math.max(0, amountNgn),
-        vatNgn: entryType === 'revenue' ? Math.round(amountNgn * 0.075) : 0,
-        paymentMethod,
-      },
-      actorRole,
-    });
-    onNotify(`Posted ${entryType} entry (${formatNgn(amountNgn)})`);
-    setShowLedgerForm(false);
-    setDescription('');
+    if (!description.trim() || description.trim().length < 2) {
+      setActionError('Description must be at least 2 characters.');
+      return;
+    }
+    setActionError(null);
+    try {
+      await createLedgerEntry({
+        property,
+        entry: {
+          entryDate: new Date().toISOString().slice(0, 10),
+          entryType,
+          category,
+          reference: `MAN-${Math.floor(100 + Math.random() * 899)}`,
+          description: description.trim(),
+          amountNgn: Math.max(0, amountNgn),
+          vatNgn: entryType === 'revenue' ? Math.round(amountNgn * 0.075) : 0,
+          paymentMethod,
+        },
+        actorRole,
+      });
+      onNotify(`Posted ${entryType} entry (${formatNgn(amountNgn)})`);
+      setShowLedgerForm(false);
+      setDescription('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const openEditLedgerModal = (entry: LedgerEntryRecord) => {
+    setActionError(null);
+    setEditingLedger(entry);
+    setEditLEntryDate(entry.entryDate);
+    setEditLType(entry.entryType);
+    setEditLCat(entry.category);
+    setEditLDesc(entry.description);
+    setEditLAmount(entry.amountNgn);
+    setEditLVat(entry.vatNgn);
+    setEditLMethod(entry.paymentMethod);
+  };
+
+  const handleSaveLedgerEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLedger) return;
+    if (editLDesc.trim().length < 2) {
+      setActionError('Ledger description must be at least 2 characters.');
+      return;
+    }
+    setActionError(null);
+    setBusyRecordId(editingLedger.id);
+    try {
+      await updateLedgerEntryWorkflow({
+        property,
+        entry: editingLedger,
+        updates: {
+          entryDate: editLEntryDate,
+          entryType: editLType,
+          category: editLCat,
+          description: editLDesc.trim(),
+          amountNgn: Math.max(0, editLAmount),
+          vatNgn: Math.max(0, editLVat),
+          paymentMethod: editLMethod,
+        },
+        actorRole,
+      });
+      onNotify(`Updated ledger entry ${editingLedger.reference || editingLedger.description}`);
+      setEditingLedger(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
+  };
+
+  const handleDeleteLedger = async (entry: LedgerEntryRecord) => {
+    setActionError(null);
+    setBusyRecordId(entry.id);
+    try {
+      await deleteLedgerEntryWorkflow({ property, entry, actorRole });
+      onNotify(`Deleted ledger entry ${entry.reference || entry.description}`);
+      setConfirmDeleteLedgerId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
   };
 
   const handleAddInventory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sku.trim() || !itemName.trim()) return;
-    await createInventoryItem({
-      property,
-      item: {
-        sku: sku.trim().toUpperCase(),
-        name: itemName.trim(),
-        category: invCategory,
-        unit: unit.trim(),
-        quantityOnHand: Math.max(0, qtyOnHand),
-        reorderLevel: Math.max(0, reorderLevel),
-        unitCostNgn: Math.max(0, unitCostNgn),
-        supplierName: supplierName.trim() || 'Local Enugu Vendor',
-      },
-      actorRole,
-    });
-    onNotify(`Added inventory SKU ${sku.toUpperCase()}`);
-    setShowInvForm(false);
-    setSku('');
-    setItemName('');
+    setActionError(null);
+    try {
+      await createInventoryItem({
+        property,
+        item: {
+          sku: sku.trim().toUpperCase(),
+          name: itemName.trim(),
+          category: invCategory,
+          unit: unit.trim(),
+          quantityOnHand: Math.max(0, qtyOnHand),
+          reorderLevel: Math.max(0, reorderLevel),
+          unitCostNgn: Math.max(0, unitCostNgn),
+          supplierName: supplierName.trim() || 'Local Enugu Vendor',
+        },
+        actorRole,
+      });
+      onNotify(`Added inventory SKU ${sku.toUpperCase()}`);
+      setShowInvForm(false);
+      setSku('');
+      setItemName('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const openEditInvModal = (item: InventoryItemRecord) => {
+    setActionError(null);
+    setEditingInv(item);
+    setEditISku(item.sku);
+    setEditIName(item.name);
+    setEditICat(item.category);
+    setEditIUnit(item.unit);
+    setEditIQty(item.quantityOnHand);
+    setEditIReorder(item.reorderLevel);
+    setEditICost(item.unitCostNgn);
+    setEditISupplier(item.supplierName);
+  };
+
+  const handleSaveInvEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingInv) return;
+    if (editISku.trim().length < 2 || editIName.trim().length < 2) {
+      setActionError('SKU and item name must be at least 2 characters.');
+      return;
+    }
+    setActionError(null);
+    setBusyRecordId(editingInv.id);
+    try {
+      await updateInventoryItemWorkflow({
+        property,
+        item: editingInv,
+        updates: {
+          sku: editISku.trim().toUpperCase(),
+          name: editIName.trim(),
+          category: editICat,
+          unit: editIUnit.trim() || 'Units',
+          quantityOnHand: Math.max(0, editIQty),
+          reorderLevel: Math.max(0, editIReorder),
+          unitCostNgn: Math.max(0, editICost),
+          supplierName: editISupplier.trim() || 'Local Vendor',
+        },
+        actorRole,
+      });
+      onNotify(`Updated inventory SKU ${editISku.trim().toUpperCase()}`);
+      setEditingInv(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
+  };
+
+  const handleDeleteInv = async (item: InventoryItemRecord) => {
+    setActionError(null);
+    setBusyRecordId(item.id);
+    try {
+      await deleteInventoryItemWorkflow({ property, item, actorRole });
+      onNotify(`Deleted inventory SKU ${item.sku} (${item.name})`);
+      setConfirmDeleteInvId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyRecordId(null);
+    }
   };
 
   const handleCreatePo = async (e: React.FormEvent) => {
     e.preventDefault();
+    setActionError(null);
     const linked = inventoryItems.find((i) => i.id === poItemId);
     const name = linked ? linked.name : 'General Supplies';
     const sup = poSupplier.trim() || linked?.supplierName || 'Ogbete Wholesale Ltd';
-    await createPurchaseOrder({
-      property,
-      supplierName: sup,
-      item: linked,
-      itemName: name,
-      quantity: Math.max(1, poQty),
-      unitCostNgn: Math.max(0, poUnitCost || linked?.unitCostNgn || 10000),
-      expectedDate: poExpectedDate,
-      actorRole,
-    });
-    onNotify(`Issued Purchase Order for ${name}`);
-    setShowPoForm(false);
+    try {
+      await createPurchaseOrder({
+        property,
+        supplierName: sup,
+        item: linked,
+        itemName: name,
+        quantity: Math.max(1, poQty),
+        unitCostNgn: Math.max(0, poUnitCost || linked?.unitCostNgn || 10000),
+        expectedDate: poExpectedDate,
+        actorRole,
+      });
+      onNotify(`Issued Purchase Order for ${name}`);
+      setShowPoForm(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (
     <div className="space-y-6">
+      {actionError && (
+        <div className="no-print bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-rose-700 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       {/* Print-Only Formal Letterhead */}
       {(section === 'accounting' || section === 'reports') && (
         <div className="hidden print-only border-b-2 border-slate-900 pb-4 mb-4">
@@ -485,6 +680,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                   <th className="py-3 px-4">Method</th>
                   <th className="py-3 px-4 text-right">VAT (₦)</th>
                   <th className="py-3 px-4 text-right">Amount (₦)</th>
+                  {canManageRecords && (
+                    <th className="no-print py-3 px-4 text-right">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
@@ -510,6 +708,48 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                       {entry.entryType === 'revenue' ? '+' : '-'}
                       {formatNgn(entry.amountNgn)}
                     </td>
+                    {canManageRecords && (
+                      <td className="no-print py-3 px-4 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openEditLedgerModal(entry)}
+                            className="inline-flex items-center gap-1 px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded cursor-pointer"
+                          >
+                            <Pencil className="w-3 h-3" />
+                            <span>Edit</span>
+                          </button>
+                          {confirmDeleteLedgerId !== entry.id ? (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteLedgerId(entry.id)}
+                              className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Delete</span>
+                            </button>
+                          ) : (
+                            <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteLedgerId(null)}
+                                className="text-[10px] text-slate-600 px-1 cursor-pointer"
+                              >
+                                No
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busyRecordId === entry.id}
+                                onClick={() => void handleDeleteLedger(entry)}
+                                className="text-[10px] font-semibold bg-rose-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                              >
+                                {busyRecordId === entry.id ? '...' : 'Del'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -628,6 +868,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                     <th className="py-3 px-4 text-right">On Hand</th>
                     <th className="py-3 px-4 text-right">Stock Value</th>
                     <th className="py-3 px-4">Adjust</th>
+                    {canManageRecords && (
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
@@ -663,32 +906,84 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() =>
-                                adjustInventoryQty({
-                                  property,
-                                  item,
-                                  newQty: item.quantityOnHand - 1,
-                                })
-                              }
-                              className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-100 font-mono-tabular"
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await adjustInventoryQty({
+                                    property,
+                                    item,
+                                    newQty: item.quantityOnHand - 1,
+                                  });
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
+                              }}
+                              className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-100 font-mono-tabular cursor-pointer"
                             >
                               -1
                             </button>
                             <button
                               type="button"
-                              onClick={() =>
-                                adjustInventoryQty({
-                                  property,
-                                  item,
-                                  newQty: item.quantityOnHand + 1,
-                                })
-                              }
-                              className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-100 font-mono-tabular"
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await adjustInventoryQty({
+                                    property,
+                                    item,
+                                    newQty: item.quantityOnHand + 1,
+                                  });
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
+                              }}
+                              className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-100 font-mono-tabular cursor-pointer"
                             >
                               +1
                             </button>
                           </div>
                         </td>
+                        {canManageRecords && (
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openEditInvModal(item)}
+                                className="inline-flex items-center gap-1 px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded cursor-pointer"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span>Edit</span>
+                              </button>
+                              {confirmDeleteInvId !== item.id ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteInvId(item.id)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded cursor-pointer"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              ) : (
+                                <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteInvId(null)}
+                                    className="text-[10px] text-slate-600 px-1 cursor-pointer"
+                                  >
+                                    No
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busyRecordId === item.id}
+                                    onClick={() => void handleDeleteInv(item)}
+                                    className="text-[10px] font-semibold bg-rose-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                  >
+                                    {busyRecordId === item.id ? '...' : 'Del'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -812,16 +1107,21 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                           {po.status !== 'received' && po.status !== 'cancelled' ? (
                             <button
                               type="button"
-                              onClick={() => {
-                                receivePurchaseOrderWorkflow({
-                                  property,
-                                  po,
-                                  linkedItem: linkedInv,
-                                  actorRole,
-                                });
-                                onNotify(`Received ${po.poNumber} into Store & Posted Expense`);
+                              onClick={async () => {
+                                setActionError(null);
+                                try {
+                                  await receivePurchaseOrderWorkflow({
+                                    property,
+                                    po,
+                                    linkedItem: linkedInv,
+                                    actorRole,
+                                  });
+                                  onNotify(`Received ${po.poNumber} into Store & Posted Expense`);
+                                } catch (err) {
+                                  setActionError(err instanceof Error ? err.message : String(err));
+                                }
                               }}
-                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium whitespace-nowrap"
+                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium whitespace-nowrap cursor-pointer"
                             >
                               Receive Stock &amp; Post Ledger
                             </button>
@@ -839,6 +1139,269 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
             </div>
           </div>
         </>
+      )}
+
+      {/* Edit Ledger Entry Modal */}
+      {editingLedger && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveLedgerEdit}
+            className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 space-y-4 text-xs"
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Edit Accounting Entry
+                </h3>
+                <p className="font-mono-tabular text-[11px] text-slate-500">
+                  Ref: {editingLedger.reference || editingLedger.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingLedger(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Entry Date *</label>
+                <input
+                  required
+                  type="date"
+                  value={editLEntryDate}
+                  onChange={(e) => setEditLEntryDate(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Entry Type</label>
+                <select
+                  value={editLType}
+                  onChange={(e) => setEditLType(e.target.value as 'revenue' | 'expense')}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="revenue">Revenue</option>
+                  <option value="expense">Expense</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Category</label>
+                <select
+                  value={editLCat}
+                  onChange={(e) =>
+                    setEditLCat(e.target.value as LedgerEntryRecord['category'])
+                  }
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="Room Accommodation">Room Accommodation</option>
+                  <option value="Restaurant & Bar">Restaurant &amp; Bar</option>
+                  <option value="Procurement">Procurement</option>
+                  <option value="Payroll">Payroll</option>
+                  <option value="Utilities & Diesel">Utilities &amp; Diesel</option>
+                  <option value="Maintenance">Maintenance</option>
+                  <option value="OTA Commission">OTA Commission</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Payment Method</label>
+                <select
+                  value={editLMethod}
+                  onChange={(e) => setEditLMethod(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Card POS">Card POS</option>
+                  <option value="Cash NGN">Cash NGN</option>
+                  <option value="Corporate Invoice">Corporate Invoice</option>
+                  <option value="Online Gateway">Online Gateway</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block font-medium text-slate-700 mb-1">Description *</label>
+                <input
+                  required
+                  type="text"
+                  minLength={2}
+                  value={editLDesc}
+                  onChange={(e) => setEditLDesc(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Amount (₦)</label>
+                <input
+                  required
+                  type="number"
+                  min={0}
+                  value={editLAmount}
+                  onChange={(e) => setEditLAmount(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">VAT (₦)</label>
+                <input
+                  required
+                  type="number"
+                  min={0}
+                  value={editLVat}
+                  onChange={(e) => setEditLVat(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingLedger(null)}
+                className="px-3.5 py-2 text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busyRecordId === editingLedger.id}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
+              >
+                {busyRecordId === editingLedger.id ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Edit Inventory SKU Modal */}
+      {editingInv && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveInvEdit}
+            className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 space-y-4 text-xs"
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Edit Inventory SKU — {editingInv.sku}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingInv(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">SKU Code *</label>
+                <input
+                  required
+                  type="text"
+                  minLength={2}
+                  value={editISku}
+                  onChange={(e) => setEditISku(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Item Name *</label>
+                <input
+                  required
+                  type="text"
+                  minLength={2}
+                  value={editIName}
+                  onChange={(e) => setEditIName(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Category</label>
+                <select
+                  value={editICat}
+                  onChange={(e) =>
+                    setEditICat(e.target.value as InventoryItemRecord['category'])
+                  }
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="Kitchen & Pantry">Kitchen &amp; Pantry</option>
+                  <option value="Bar & Beverage">Bar &amp; Beverage</option>
+                  <option value="Housekeeping Linen & Amenities">
+                    Housekeeping Linen &amp; Amenities
+                  </option>
+                  <option value="Engineering & Diesel">Engineering &amp; Diesel</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Unit</label>
+                <input
+                  type="text"
+                  value={editIUnit}
+                  onChange={(e) => setEditIUnit(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Quantity On Hand</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editIQty}
+                  onChange={(e) => setEditIQty(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Reorder Level</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editIReorder}
+                  onChange={(e) => setEditIReorder(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Unit Cost (₦)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editICost}
+                  onChange={(e) => setEditICost(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Supplier</label>
+                <input
+                  type="text"
+                  value={editISupplier}
+                  onChange={(e) => setEditISupplier(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingInv(null)}
+                className="px-3.5 py-2 text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busyRecordId === editingInv.id}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
+              >
+                {busyRecordId === editingInv.id ? 'Saving...' : 'Save SKU Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );

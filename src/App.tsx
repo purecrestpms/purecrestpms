@@ -161,6 +161,7 @@ const VALID_SECTIONS: NavSectionId[] = [
   'inventory',
   'procurement',
   'staff',
+  'user_management',
   'shifts_attendance',
   'payroll',
   'maintenance',
@@ -458,12 +459,19 @@ export default function App() {
         ? matchedUserAccount.role
         : activeRole;
 
-  const effectiveAllowedSections: NavSectionId[] =
+  const baseAllowedSections: NavSectionId[] =
     portalMode === 'pch-admin'
       ? ROLE_ALLOWED_SECTIONS.pch_admin
       : matchedUserAccount && matchedUserAccount.privileges.length > 0
         ? matchedUserAccount.privileges
         : ROLE_ALLOWED_SECTIONS[effectiveRole];
+
+  const effectiveAllowedSections: NavSectionId[] =
+    effectiveRole === 'pch_admin' ||
+    effectiveRole === 'property_admin' ||
+    baseAllowedSections.includes('staff')
+      ? Array.from(new Set([...baseAllowedSections, 'user_management']))
+      : baseAllowedSections;
 
   useEffect(() => {
     if (!effectiveAllowedSections.includes(activeSection)) {
@@ -1344,6 +1352,7 @@ export default function App() {
                   ledgerEntries={ledgerEntries}
                   posOrders={posOrders}
                   maintenanceTickets={maintenanceTickets}
+                  userAccounts={userAccounts}
                   activeLicense={activeLicense}
                   canManageRooms={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
                   actorRole={ROLE_LABELS[effectiveRole]}
@@ -1421,6 +1430,7 @@ export default function App() {
                   rooms={rooms}
                   housekeepingTasks={housekeepingTasks}
                   maintenanceTickets={maintenanceTickets}
+                  canManageRecords={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                 />
@@ -1475,17 +1485,20 @@ export default function App() {
                   ledgerEntries={ledgerEntries}
                   inventoryItems={inventoryItems}
                   purchaseOrders={purchaseOrders}
+                  canManageRecords={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                 />
               )}
 
               {(activeSection === 'staff' ||
+                activeSection === 'user_management' ||
                 activeSection === 'shifts_attendance' ||
                 activeSection === 'payroll') && (
                 <StaffHrPayrollView
                   key={`${activeSection}-${activeProperty.id}`}
-                  section={activeSection}
+                  section={activeSection === 'user_management' ? 'staff' : activeSection}
+                  initialTab={activeSection === 'user_management' ? 'users' : undefined}
                   property={activeProperty}
                   activeRole={effectiveRole}
                   staffMembers={staffMembers}

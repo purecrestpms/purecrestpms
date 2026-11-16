@@ -28,6 +28,7 @@ export type NavSectionId =
   | 'inventory'
   | 'procurement'
   | 'staff'
+  | 'user_management'
   | 'shifts_attendance'
   | 'payroll'
   | 'maintenance'
@@ -428,6 +429,14 @@ export interface ReservationRecord {
   idNumber?: string;
   keyIssued?: boolean;
   checkedInAtIso?: string;
+  checkOutTime?: string;
+  lateCheckoutFeeNgn?: number;
+  lateCheckoutApplied?: boolean;
+  checkedOutAtIso?: string;
+  cancellationType?: 'free' | 'paid';
+  cancellationFeeNgn?: number;
+  cancellationReason?: string;
+  cancelledAtIso?: string;
   externalUid?: string;
   createdAt?: { toDate?: () => Date } | string;
   authorizedEmails: string[];
@@ -446,18 +455,33 @@ export function matchesBookingSourceFilter(channel: string, filter: string): boo
 }
 
 export function getReservationPaymentSummary(
-  res: Pick<ReservationRecord, 'roomChargesNgn' | 'posChargesNgn' | 'paidNgn'>
+  res: Pick<ReservationRecord, 'roomChargesNgn' | 'posChargesNgn' | 'paidNgn'> &
+    Partial<
+      Pick<
+        ReservationRecord,
+        'status' | 'cancellationType' | 'cancellationFeeNgn' | 'lateCheckoutFeeNgn'
+      >
+    >
 ): {
   totalAmount: number;
   amountPaid: number;
   balance: number;
   paymentStatus: PaymentStatusLabel;
 } {
-  const totalAmount = Math.max(0, (res.roomChargesNgn || 0) + (res.posChargesNgn || 0));
+  const lateFee = Math.max(0, res.lateCheckoutFeeNgn || 0);
+  const cancelFee = Math.max(0, res.cancellationFeeNgn || 0);
+  const totalAmount =
+    res.status === 'cancelled'
+      ? res.cancellationType === 'paid'
+        ? Math.max(0, cancelFee + (res.posChargesNgn || 0))
+        : 0
+      : Math.max(0, (res.roomChargesNgn || 0) + (res.posChargesNgn || 0) + lateFee);
   const amountPaid = Math.max(0, res.paidNgn || 0);
   const balance = Math.max(0, totalAmount - amountPaid);
   let paymentStatus: PaymentStatusLabel = 'Unpaid';
   if (balance <= 0 && (totalAmount > 0 || amountPaid > 0)) {
+    paymentStatus = 'Paid';
+  } else if (res.status === 'cancelled' && res.cancellationType === 'free') {
     paymentStatus = 'Paid';
   } else if (amountPaid > 0) {
     paymentStatus = 'Partial';
@@ -828,6 +852,7 @@ export const PROPERTY_PRIVILEGE_OPTIONS: Array<{
   { id: 'shifts_attendance', label: 'Shifts & Attendance', group: 'Finance & HR' },
   { id: 'payroll', label: 'Monthly Payroll', group: 'Finance & HR' },
   { id: 'maintenance', label: 'Maintenance', group: 'Finance & HR' },
+  { id: 'user_management', label: 'User Management', group: 'Admin' },
   { id: 'ota_channels', label: 'Channel Manager & iCal', group: 'Admin' },
   { id: 'licensing', label: 'Software Licensing', group: 'Admin' },
   { id: 'profile', label: 'Property Profile', group: 'Admin' },
@@ -852,6 +877,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'inventory',
     'procurement',
     'staff',
+    'user_management',
     'shifts_attendance',
     'payroll',
     'maintenance',
@@ -882,6 +908,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'inventory',
     'procurement',
     'staff',
+    'user_management',
     'shifts_attendance',
     'payroll',
     'maintenance',
@@ -1406,6 +1433,12 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       title: 'Staff, User Accounts & Performance',
       subtitle: 'Create user accounts, assign roles & privileges, manage staff records, and review performance metrics',
       ctaLabel: 'Onboard Staff Member',
+    },
+    user_management: {
+      navLabel: 'User Management',
+      title: 'User Management, Roles & Privileges',
+      subtitle: 'Create property user accounts, assign or unassign roles, manage module privileges, and inspect staff performance',
+      ctaLabel: 'Create User Account',
     },
     shifts_attendance: {
       navLabel: 'Shifts & Attendance',

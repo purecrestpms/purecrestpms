@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowRight,
   BarChart3,
   BedDouble,
@@ -17,14 +18,20 @@ import {
   PlaneLanding,
   PlaneTakeoff,
   Search,
+  ShieldCheck,
   Sparkles,
+  Trash2,
   UserCheck,
+  Users,
   Wallet,
   Wrench,
   X,
 } from 'lucide-react';
 import { useCms } from '../context/CmsContext';
-import { transitionReservationStatus } from '../services/pmsService';
+import {
+  deleteReservationWorkflow,
+  transitionReservationStatus,
+} from '../services/pmsService';
 import {
   convertNgnToUsd,
   formatBookingSourceLabel,
@@ -45,6 +52,7 @@ import {
   PosOrderRecord,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
+  PropertyUserAccountRecord,
   RESERVATION_STATUS_LABELS,
   ReservationRecord,
   ReservationStatus,
@@ -62,6 +70,7 @@ interface DashboardViewProps {
   rooms: RoomRecord[];
   reservations: ReservationRecord[];
   guests?: GuestRecord[];
+  userAccounts?: PropertyUserAccountRecord[];
   ledgerEntries?: LedgerEntryRecord[];
   posOrders: PosOrderRecord[];
   maintenanceTickets: MaintenanceTicketRecord[];
@@ -86,6 +95,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   rooms,
   reservations,
   guests = [],
+  userAccounts = [],
   ledgerEntries = [],
   posOrders,
   maintenanceTickets,
@@ -107,6 +117,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [resSourceFilter, setResSourceFilter] = useState<'ALL' | string>('ALL');
   const [checkInTarget, setCheckInTarget] = useState<ReservationRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<ReservationRecord | null>(null);
+  const [cancelMode, setCancelMode] = useState<'free' | 'paid'>('free');
+  const [cancelFeeNgn, setCancelFeeNgn] = useState<number>(0);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelPayMethod, setCancelPayMethod] =
+    useState<ReservationRecord['paymentMethod']>('Bank Transfer');
+  const [collectCancelFeeNow, setCollectCancelFeeNow] = useState(true);
+  const [confirmDeleteResId, setConfirmDeleteResId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busyResId, setBusyResId] = useState<string | null>(null);
 
   const arrivalsTodayList = reservations.filter(
@@ -176,8 +194,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       .sort((a, b) => b.checkInDate.localeCompare(a.checkInDate));
   }, [reservations, rooms, resSearch, resStatusFilter, resPaymentFilter, resSourceFilter]);
 
+  const openCancelDialog = (res: ReservationRecord) => {
+    setActionError(null);
+    setCancelTarget(res);
+    setCancelMode('free');
+    setCancelFeeNgn(Math.max(10000, Math.round(res.nightlyRateNgn || 50000)));
+    setCancelReason('');
+    setCancelPayMethod(res.paymentMethod || 'Bank Transfer');
+    setCollectCancelFeeNow(true);
+  };
+
   const handleConfirmCancelOrNoShow = async (nextStatus: 'cancelled' | 'no_show') => {
     if (!cancelTarget) return;
+    if (nextStatus === 'cancelled' && cancelMode === 'paid' && cancelFeeNgn <= 0) {
+      setActionError('Enter a cancellation fee greater than ₦0 or select Free Cancellation.');
+      return;
+    }
+    setActionError(null);
     setBusyResId(cancelTarget.id);
     try {
       const targetRoom = rooms.find((rm) => rm.id === cancelTarget.roomId);
@@ -186,14 +219,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         reservation: cancelTarget,
         room: targetRoom,
         nextStatus,
+        cancellationType: nextStatus === 'cancelled' ? cancelMode : undefined,
+        cancellationFeeNgn:
+          nextStatus === 'cancelled' && cancelMode === 'paid' ? cancelFeeNgn : 0,
+        cancellationReason: cancelReason.trim(),
+        paymentMethod: cancelPayMethod,
+        collectCancellationFeeNow:
+          nextStatus === 'cancelled' && cancelMode === 'paid' && collectCancelFeeNow,
         actorRole,
       });
       onNotify?.(
         nextStatus === 'no_show'
           ? `Marked ${cancelTarget.bookingRef} (${cancelTarget.guestName}) as No-show`
-          : `Cancelled reservation ${cancelTarget.bookingRef} (${cancelTarget.guestName})`
+          : cancelMode === 'paid'
+            ? `Cancelled ${cancelTarget.bookingRef} with ${formatNgn(cancelFeeNgn)} cancellation fee`
+            : `Cancelled ${cancelTarget.bookingRef} (${cancelTarget.guestName}) — Free cancellation`
       );
       setCancelTarget(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyResId(null);
+    }
+  };
+
+  const handleDeleteReservation = async (res: ReservationRecord) => {
+    setActionError(null);
+    setBusyResId(res.id);
+    try {
+      const targetRoom = rooms.find((rm) => rm.id === res.roomId);
+      await deleteReservationWorkflow({
+        property,
+        reservation: res,
+        room: targetRoom,
+        actorRole,
+      });
+      onNotify?.(`Deleted reservation ${res.bookingRef} (${res.guestName})`);
+      setConfirmDeleteResId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyResId(null);
     }
@@ -315,8 +379,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     year: 'numeric',
   });
 
+  const activeAccountsCount = userAccounts.filter(
+    (a) => a.role !== 'unassigned' && a.active
+  ).length;
+  const unassignedAccountsCount = userAccounts.filter(
+    (a) => a.role === 'unassigned' || !a.active
+  ).length;
+
   return (
     <div className="space-y-6">
+      {actionError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-rose-700 hover:text-rose-900 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Property Header & Contact Strip + Quick Operations */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden grid grid-cols-1 lg:grid-cols-12">
         <div className="lg:col-span-4 relative min-h-[200px] bg-slate-900">
@@ -461,18 +548,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>{cms.dashboard.quickChannelManagerLabel || 'Channel Manager'}</span>
             </button>
             {canManageRooms && (
-              <button
-                type="button"
-                onClick={() => onNavigate('reports')}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#1c46be] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>{cms.pages.reports?.navLabel || 'Management Reports'}</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('user_management')}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>User Management ({userAccounts.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('reports')}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#1c46be] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>{cms.pages.reports?.navLabel || 'Management Reports'}</span>
+                </button>
+              </>
             )}
           </div>
         </div>
       </div>
+
+      {/* Property Admin User Management & Team Access Card */}
+      {canManageRooms && (
+        <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-5 h-5 text-emerald-700" />
+            </div>
+            <div>
+              <h2 className="font-display text-sm font-bold text-slate-900">
+                User Management &amp; Team Access
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Create user accounts, assign or revoke roles &amp; module privileges, and inspect staff records &amp; performance.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 mt-2 text-xs font-mono-tabular">
+                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-semibold">
+                  Total Accounts: {userAccounts.length}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">
+                  Active Assigned: {activeAccountsCount}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-800 font-semibold">
+                  Unassigned / Revoked: {unassignedAccountsCount}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => onNavigate('user_management')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Manage Users &amp; Roles</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('staff')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg cursor-pointer"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Staff Roster &amp; Performance</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 6 KPI Stat Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -995,7 +1141,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </td>
 
                     <td className="py-3 px-3.5 font-mono-tabular text-slate-800 whitespace-nowrap">
-                      {res.checkOutDate}
+                      <span>{res.checkOutDate}</span>
+                      {(res.checkOutTime || (res.lateCheckoutFeeNgn || 0) > 0) && (
+                        <span className="block text-[10px] font-semibold text-amber-700">
+                          {res.checkOutTime ? `Out ${res.checkOutTime}` : 'Late Out'}
+                          {(res.lateCheckoutFeeNgn || 0) > 0
+                            ? ` · +${formatNgn(res.lateCheckoutFeeNgn || 0)}`
+                            : ''}
+                        </span>
+                      )}
                     </td>
 
                     <td className="py-3 px-3.5 text-center font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
@@ -1055,6 +1209,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       >
                         {statusLabel}
                       </span>
+                      {res.status === 'cancelled' && res.cancellationType && (
+                        <span className="block text-[10px] font-medium text-rose-700 mt-0.5">
+                          {res.cancellationType === 'paid'
+                            ? `Fee: ${formatNgn(res.cancellationFeeNgn || 0)}`
+                            : 'Free Cancellation'}
+                        </span>
+                      )}
                     </td>
 
                     <td className="py-3 px-3.5 font-mono-tabular text-slate-600 whitespace-nowrap">
@@ -1092,12 +1253,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             <button
                               type="button"
                               disabled={busyResId === res.id}
-                              onClick={() => setCancelTarget(res)}
+                              onClick={() => openCancelDialog(res)}
                               className="px-2.5 py-1 text-[11px] font-medium text-rose-700 border border-rose-200 bg-white hover:bg-rose-50 rounded-md whitespace-nowrap shrink-0 cursor-pointer"
                             >
                               Cancel
                             </button>
                           </>
+                        )}
+                        {canManageRooms && confirmDeleteResId !== res.id && (
+                          <button
+                            type="button"
+                            disabled={busyResId === res.id}
+                            onClick={() => setConfirmDeleteResId(res.id)}
+                            title="Delete reservation record"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-rose-700 border border-rose-200 bg-rose-50 hover:bg-rose-100 rounded-md whitespace-nowrap shrink-0 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Delete</span>
+                          </button>
+                        )}
+                        {canManageRooms && confirmDeleteResId === res.id && (
+                          <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteResId(null)}
+                              className="px-1.5 py-0.5 text-[10px] text-slate-600 cursor-pointer"
+                            >
+                              No
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyResId === res.id}
+                              onClick={() => void handleDeleteReservation(res)}
+                              className="px-2 py-0.5 text-[10px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                            >
+                              {busyResId === res.id ? '...' : 'Confirm'}
+                            </button>
+                          </div>
                         )}
                       </div>
                     </td>
@@ -1192,14 +1384,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Cancel / No-Show Confirmation Modal */}
       {cancelTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-5 space-y-4 shadow-xl">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-xl text-xs">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-bold text-slate-900">
                   Cancel or Mark No-Show
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {cancelTarget.bookingRef} · {cancelTarget.guestName} ({cancelTarget.roomNumber})
+                  {cancelTarget.bookingRef} · {cancelTarget.guestName} ({cancelTarget.roomNumber || 'Unassigned'})
                 </p>
               </div>
               <button
@@ -1211,13 +1403,103 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </button>
             </div>
 
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Choose whether to cancel this reservation or record the guest as a No-show. Any reserved hold on{' '}
+            <p className="text-slate-600 leading-relaxed">
+              Select free cancellation or apply a cancellation fee before releasing{' '}
               <span className="font-mono-tabular font-semibold text-slate-800">
-                {cancelTarget.roomNumber}
-              </span>{' '}
-              will be released automatically.
+                {cancelTarget.roomNumber || 'the suite hold'}
+              </span>
+              .
             </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCancelMode('free')}
+                className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
+                  cancelMode === 'free'
+                    ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="block font-bold">Free Cancellation</span>
+                <span className="block text-[11px] opacity-80 mt-0.5">
+                  ₦0 cancellation fee · Zero folio charge
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCancelMode('paid')}
+                className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
+                  cancelMode === 'paid'
+                    ? 'border-rose-600 bg-rose-50 text-rose-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="block font-bold">Cancellation with Cost</span>
+                <span className="block text-[11px] opacity-80 mt-0.5">
+                  Apply cancellation fee in ₦ to reservation bill
+                </span>
+              </button>
+            </div>
+
+            {cancelMode === 'paid' && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Cancellation Cost (₦ NGN) *
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={500}
+                      value={cancelFeeNgn}
+                      onChange={(e) => setCancelFeeNgn(Math.max(0, Number(e.target.value)))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 bg-white font-mono-tabular font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Payment Method
+                    </label>
+                    <select
+                      value={cancelPayMethod}
+                      onChange={(e) =>
+                        setCancelPayMethod(e.target.value as ReservationRecord['paymentMethod'])
+                      }
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 bg-white"
+                    >
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Card POS">Card POS</option>
+                      <option value="Cash NGN">Cash NGN</option>
+                      <option value="Corporate Invoice">Corporate Invoice</option>
+                      <option value="Online Gateway">Online Gateway</option>
+                    </select>
+                  </div>
+                </div>
+                <label className="inline-flex items-center gap-2 font-medium text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={collectCancelFeeNow}
+                    onChange={(e) => setCollectCancelFeeNow(e.target.checked)}
+                    className="rounded border-slate-300 text-emerald-600"
+                  />
+                  <span>Collect cancellation fee now &amp; post to Revenue Ledger</span>
+                </label>
+              </div>
+            )}
+
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">
+                Cancellation Reason / Note (Optional)
+              </label>
+              <input
+                type="text"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-1.5"
+              />
+            </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
@@ -1241,7 +1523,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 onClick={() => void handleConfirmCancelOrNoShow('cancelled')}
                 className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg disabled:opacity-50 cursor-pointer"
               >
-                {busyResId === cancelTarget.id ? 'Updating...' : 'Cancel Reservation'}
+                {busyResId === cancelTarget.id
+                  ? 'Updating...'
+                  : cancelMode === 'paid'
+                    ? `Cancel (${formatNgn(cancelFeeNgn)})`
+                    : 'Confirm Free Cancel'}
               </button>
             </div>
           </div>

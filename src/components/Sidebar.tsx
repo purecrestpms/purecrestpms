@@ -108,6 +108,7 @@ const NAV_GROUPS: Array<{
   {
     group: 'Channels & Admin',
     items: [
+      { id: 'user_management', label: 'User Management', icon: ShieldCheck },
       { id: 'ota_channels', label: 'Channel Manager & iCal', icon: Globe },
       { id: 'properties_admin', label: 'Multi-Property Admin', icon: Building2 },
       { id: 'licensing', label: 'Software Licensing', icon: KeyRound },
