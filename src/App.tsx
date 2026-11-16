@@ -1,12 +1,15 @@
 import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from 'react';
 import {
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut,
   User,
 } from 'firebase/auth';
-import { collection, doc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, enableNetwork, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import {
   AlertTriangle,
   Bell,
@@ -47,6 +50,7 @@ import {
   db,
   googleProvider,
   isBootstrappedAdminEmail,
+  isFirestoreOfflineError,
   testConnection,
 } from './firebase';
 import {
@@ -195,6 +199,32 @@ function detectInitialSection(): NavSectionId {
   return 'dashboard';
 }
 
+function formatAuthErrorMessage(err: unknown): string {
+  const code = (err as { code?: string })?.code || '';
+  const raw = err instanceof Error ? err.message : String(err);
+  if (code === 'auth/unauthorized-domain' || raw.includes('auth/unauthorized-domain')) {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+    return `Domain "${host}" is not authorized in Firebase Authentication. Add "${host}" under Firebase Console -> Authentication -> Settings -> Authorized domains.`;
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Email/Password sign-in is not yet enabled in Firebase Console -> Authentication -> Sign-in method. Enable Email/Password there or use Continue with Google.';
+  }
+  if (
+    code === 'auth/invalid-credential' ||
+    code === 'auth/wrong-password' ||
+    code === 'auth/user-not-found'
+  ) {
+    return 'Invalid email or password. Use "Forgot password?" to reset, or sign in with Google.';
+  }
+  if (code === 'auth/invalid-email') {
+    return 'Please enter a valid email address.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Too many login attempts. Wait a moment or reset your password.';
+  }
+  return raw;
+}
+
 export default function App() {
   const { cms, setCms } = useCms();
   const [authReady, setAuthReady] = useState(false);
@@ -202,6 +232,7 @@ export default function App() {
   const [portalMode, setPortalMode] = useState<PortalMode>(detectInitialPortal);
   const [staffRole, setStaffRole] = useState<StaffRole>('front_desk');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [seeding, setSeeding] = useState(false);
@@ -327,34 +358,36 @@ export default function App() {
     setDbError(null);
     setSeeding(true);
     try {
+      await enableNetwork(db).catch(() => undefined);
       const createdPropId = await seedRichgatesIfNeeded(customPropertyId);
       if (createdPropId) {
         setActivePropertyId(createdPropId);
         notify('Provisioned Richgates Apartments, Enugu (8 Suites) & Property License');
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setDbError(msg);
-      console.error('Seed error:', msg);
+      if (isFirestoreOfflineError(err)) {
+        setDbError(
+          'Unable to reach Cloud Firestore right now. Check your internet connection and click Retry Connection.'
+        );
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        setDbError(msg);
+        console.error('Seed error:', msg);
+      }
     } finally {
       setSeeding(false);
     }
   };
 
   useEffect(() => {
-    testConnection();
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    void testConnection();
+    const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setAuthReady(true);
       setDbError(null);
       setPropsLoaded(false);
       if (!u) {
         autoSeedAttemptedRef.current = null;
-        return;
-      }
-      if (isBootstrappedAdminEmail(u.email) && autoSeedAttemptedRef.current !== u.uid) {
-        autoSeedAttemptedRef.current = u.uid;
-        await runBootstrapSeed(RICHGATES_PROPERTY_ID);
       }
     });
     return () => unsub();
@@ -411,6 +444,12 @@ export default function App() {
         );
 
     const onSnapshotErr = (path: string) => (err: unknown) => {
+      if (isFirestoreOfflineError(err)) {
+        setDbError(
+          'Reconnecting to Cloud Firestore... Check your internet connection or click Retry Connection.'
+        );
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Firestore snapshot error [${path}]:`, msg);
       setDbError(`Firestore (${path}): ${msg}`);
@@ -421,7 +460,12 @@ export default function App() {
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PropertyRecord);
         setProperties(list);
-        setPropsLoaded(true);
+        if (!snap.metadata.fromCache) {
+          setDbError(null);
+        }
+        if (!snap.metadata.fromCache || list.length > 0) {
+          setPropsLoaded(true);
+        }
         setActivePropertyId((curr) => {
           if (list.length === 0) return curr;
           const host = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
@@ -436,7 +480,10 @@ export default function App() {
           }
           return !list.some((p) => p.id === curr) ? list[0].id : curr;
         });
-        if (list.length === 0 && autoSeedAttemptedRef.current !== user.uid) {
+        const needsBootstrapSeed = isAdmin
+          ? !list.some((p) => p.id === RICHGATES_PROPERTY_ID)
+          : list.length === 0;
+        if (!snap.metadata.fromCache && needsBootstrapSeed && autoSeedAttemptedRef.current !== user.uid) {
           autoSeedAttemptedRef.current = user.uid;
           void runBootstrapSeed(isAdmin ? RICHGATES_PROPERTY_ID : `rg-${user.uid.slice(0, 10)}`);
         }
@@ -656,6 +703,7 @@ export default function App() {
 
   const handleGoogleSignIn = async (portal: PortalMode, chosenStaffRole?: StaffRole) => {
     setAuthError(null);
+    setAuthNotice(null);
     setIsSigningIn(true);
     try {
       handlePortalSelection(portal);
@@ -667,9 +715,60 @@ export default function App() {
         await signInWithRedirect(auth, googleProvider);
         return;
       }
-      setAuthError(
-        err instanceof Error ? err.message : 'Unable to complete Google sign-in.'
+      setAuthError(formatAuthErrorMessage(err));
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleEmailPasswordSignIn = async (
+    portal: PortalMode,
+    email: string,
+    password: string,
+    chosenStaffRole?: StaffRole
+  ) => {
+    setAuthError(null);
+    setAuthNotice(null);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setAuthError('Enter both your email and password, or click Continue with Google.');
+      return;
+    }
+    setIsSigningIn(true);
+    try {
+      handlePortalSelection(portal);
+      if (chosenStaffRole) setStaffRole(chosenStaffRole);
+      const cred = await signInWithEmailAndPassword(auth, trimmedEmail, password);
+      if (!cred.user.emailVerified) {
+        await sendEmailVerification(cred.user);
+        await signOut(auth);
+        setAuthNotice(
+          `Verification email sent to ${cred.user.email}. Click the link in your inbox to verify your account, then sign in again.`
+        );
+      }
+    } catch (err) {
+      setAuthError(formatAuthErrorMessage(err));
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handlePasswordReset = async (email: string) => {
+    setAuthError(null);
+    setAuthNotice(null);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setAuthError('Enter your account email above, then click Forgot password.');
+      return;
+    }
+    setIsSigningIn(true);
+    try {
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      setAuthNotice(
+        `Password reset email sent to ${trimmedEmail}. Check your inbox or spam folder to set a new password.`
       );
+    } catch (err) {
+      setAuthError(formatAuthErrorMessage(err));
     } finally {
       setIsSigningIn(false);
     }
@@ -691,11 +790,18 @@ export default function App() {
     return (
       <PortalGateway
         selectedPortal={portalMode}
-        onSelectPortal={handlePortalSelection}
+        onSelectPortal={(nextPortal) => {
+          setAuthError(null);
+          setAuthNotice(null);
+          handlePortalSelection(nextPortal);
+        }}
         selectedStaffRole={staffRole}
         onSelectStaffRole={setStaffRole}
         onGoogleSignIn={handleGoogleSignIn}
+        onEmailPasswordSignIn={handleEmailPasswordSignIn}
+        onPasswordReset={handlePasswordReset}
         authError={authError}
+        authNotice={authNotice}
         isSigningIn={isSigningIn}
       />
     );
@@ -881,12 +987,13 @@ export default function App() {
             <span className="font-mono-tabular break-all">{dbError}</span>
             <button
               type="button"
-              onClick={() =>
-                runBootstrapSeed(
+              onClick={() => {
+                autoSeedAttemptedRef.current = null;
+                void runBootstrapSeed(
                   isBootstrappedAdmin ? RICHGATES_PROPERTY_ID : `rg-${user.uid.slice(0, 10)}`
-                )
-              }
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-700 text-white rounded font-semibold shrink-0"
+                );
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-700 text-white rounded font-semibold shrink-0 cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Retry Connection</span>

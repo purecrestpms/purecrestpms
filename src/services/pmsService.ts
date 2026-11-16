@@ -17,6 +17,7 @@ import {
   auth,
   db,
   handleFirestoreError,
+  withFirestoreRetry,
 } from '../firebase';
 import { mergeCmsWithDefaults } from '../context/CmsContext';
 import { buildRichgatesSeedPayload, generateLicenseKey, RICHGATES_PROPERTY_ID } from '../data/seedData';
@@ -102,7 +103,7 @@ export async function seedRichgatesIfNeeded(customPropertyId?: string): Promise<
     customPropertyId || (isBootstrapped ? RICHGATES_PROPERTY_ID : `rg-${uid.slice(0, 10)}`);
   const propRef = doc(db, 'properties', targetPropId);
   try {
-    const snap = await getDoc(propRef);
+    const snap = await withFirestoreRetry(() => getDoc(propRef), 4, 800);
     if (snap.exists()) return null;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, `properties/${targetPropId}`);
@@ -155,7 +156,7 @@ export async function seedRichgatesIfNeeded(customPropertyId?: string): Promise<
   }
 
   try {
-    await batch.commit();
+    await withFirestoreRetry(() => batch.commit(), 3, 800);
     return targetPropId;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `properties/${targetPropId}/seed`);
@@ -2696,7 +2697,7 @@ export async function saveCmsContentWorkflow(params: {
   };
 
   try {
-    const existingSnap = await getDoc(cmsRef);
+    const existingSnap = await withFirestoreRetry(() => getDoc(cmsRef), 3, 700);
     if (existingSnap.exists()) {
       const existingData = existingSnap.data() as Record<string, unknown> | undefined;
       if (existingData?.ownerUid && existingData?.createdAt) {

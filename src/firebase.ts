@@ -2,10 +2,14 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   doc,
+  enableNetwork,
   Firestore,
   getDocFromServer,
   getFirestore,
   initializeFirestore,
+  memoryLocalCache,
+  persistentLocalCache,
+  persistentMultipleTabManager,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -16,12 +20,24 @@ function createFirestoreInstance(): Firestore {
     return initializeFirestore(
       app,
       {
-        experimentalForceLongPolling: true,
+        experimentalAutoDetectLongPolling: true,
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
       },
       firebaseConfig.firestoreDatabaseId
     );
   } catch {
-    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    try {
+      return initializeFirestore(
+        app,
+        {
+          experimentalAutoDetectLongPolling: true,
+          localCache: memoryLocalCache(),
+        },
+        firebaseConfig.firestoreDatabaseId
+      );
+    } catch {
+      return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    }
   }
 }
 
@@ -66,6 +82,38 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export function isFirestoreOfflineError(error: unknown): boolean {
+  const code = (error as { code?: string })?.code;
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    code === 'unavailable' ||
+    msg.includes('client is offline') ||
+    msg.includes('could not reach cloud firestore') ||
+    msg.includes('network error')
+  );
+}
+
+export async function withFirestoreRetry<T>(
+  operation: () => Promise<T>,
+  maxAttempts = 3,
+  baseDelayMs = 700
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isFirestoreOfflineError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+      await enableNetwork(db).catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
@@ -94,15 +142,10 @@ export function handleFirestoreError(
 
 export async function testConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await withFirestoreRetry(() => getDocFromServer(doc(db, 'test', 'connection')), 2, 500);
     return true;
   } catch (error) {
-    const code = (error as { code?: string })?.code;
-    if (
-      code === 'unavailable' ||
-      (error instanceof Error && error.message.includes('the client is offline'))
-    ) {
-      console.warn('Firestore connection check retrying via long polling:', error);
+    if (isFirestoreOfflineError(error)) {
       return false;
     }
     return true;
