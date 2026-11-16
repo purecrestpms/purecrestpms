@@ -426,6 +426,32 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidPropertyUserAccount(data, propertyId) {
+      return data.keys().hasAll([
+        'propertyId', 'firstName', 'lastName', 'fullName', 'email', 'department', 'role', 'privileges', 'active', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'propertyId', 'firstName', 'lastName', 'fullName', 'email', 'phone', 'department', 'role', 'privileges', 'active', 'linkedStaffId', 'authProvisioned', 'lastRoleUpdatedIso', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.propertyId == propertyId &&
+      data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 60 &&
+      data.lastName is string && data.lastName.size() >= 1 && data.lastName.size() <= 60 &&
+      data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+      (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+      data.department in ['Management', 'Front Desk', 'Housekeeping', 'Kitchen & F&B', 'Accounts', 'Engineering & Security'] &&
+      data.role in ['property_admin', 'front_desk', 'housekeeping', 'fnb_kitchen', 'accountant', 'maintenance', 'unassigned'] &&
+      data.privileges is list && data.privileges.size() <= 30 && (data.privileges.size() == 0 || data.privileges[0] is string) &&
+      data.active is bool &&
+      (!('linkedStaffId' in data) || (data.linkedStaffId is string && data.linkedStaffId.size() <= 128)) &&
+      (!('authProvisioned' in data) || data.authProvisioned is bool) &&
+      (!('lastRoleUpdatedIso' in data) || (data.lastRoleUpdatedIso is string && data.lastRoleUpdatedIso.size() <= 40)) &&
+      isAuthorizedEmailList(data.authorizedEmails) &&
+      data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     function isValidShift(data, propertyId) {
       return data.keys().hasAll(['propertyId', 'staffId', 'staffName', 'department', 'shiftDate', 'shiftWindow', 'status', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.keys().hasOnly(['propertyId', 'staffId', 'staffName', 'department', 'shiftDate', 'shiftWindow', 'status', 'handoverNotes', 'closedBy', 'closedAtIso', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
@@ -653,7 +679,7 @@ service cloud.firestore {
           isValidRoom(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['roomNumber', 'name', 'roomType', 'section', 'maxGuests', 'occupancyStatus', 'housekeepingStatus', 'currentGuestName', 'currentReservationId', 'nightlyRateNgn', 'imageUrl', 'amenities', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['roomNumber', 'name', 'roomType', 'section', 'maxGuests', 'occupancyStatus', 'housekeepingStatus', 'currentGuestName', 'currentReservationId', 'nightlyRateNgn', 'imageUrl', 'amenities', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(roomId) && isBootstrappedAdmin();
       }
@@ -669,9 +695,9 @@ service cloud.firestore {
           isValidGuest(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'nationality', 'idType', 'idNumber', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'nationality', 'idType', 'idNumber', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(guestId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Reservations
@@ -686,10 +712,10 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
               !(existing().status in ['checked_out', 'cancelled', 'no_show']) &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'externalUid', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(reservationId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Housekeeping Tasks
@@ -704,10 +730,10 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
               existing().status != 'inspected' &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['roomNumber', 'status', 'assignedTo', 'priority', 'notes', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['roomNumber', 'status', 'assignedTo', 'priority', 'notes', 'authorizedEmails', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(taskId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(taskId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Restaurant POS & Kitchen Orders
@@ -725,7 +751,7 @@ service cloud.firestore {
               incoming().diff(existing()).affectedKeys().hasOnly(['kitchenStatus', 'paymentStatus', 'paymentMethod', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(orderId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(orderId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: POS Menu Items
@@ -739,7 +765,7 @@ service cloud.firestore {
           isValidPosMenuItem(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
       }
@@ -754,7 +780,7 @@ service cloud.firestore {
         allow update: if isValidId(propertyId) && isValidId(entryId) && isBootstrappedAdmin() &&
           isValidLedgerEntry(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
-        allow delete: if isValidId(propertyId) && isValidId(entryId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(entryId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Inventory Items
@@ -768,9 +794,9 @@ service cloud.firestore {
           isValidInventoryItem(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['quantityOnHand', 'reorderLevel', 'unitCostNgn', 'supplierName', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['quantityOnHand', 'reorderLevel', 'unitCostNgn', 'supplierName', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(itemId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Procurement Purchase Orders
@@ -785,10 +811,10 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
               !(existing().status in ['received', 'cancelled']) &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'authorizedEmails', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(poId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(poId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Staff Members
@@ -802,9 +828,25 @@ service cloud.firestore {
           isValidStaffMember(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['employmentStatus', 'monthlyBaseSalaryNgn', 'monthlyAllowanceNgn', 'department', 'role', 'phone', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'employmentStatus', 'monthlyBaseSalaryNgn', 'monthlyAllowanceNgn', 'department', 'role', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(staffId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(staffId) && isPropertyOperator(propertyId);
+      }
+
+      // Subcollection: Property User Accounts, Roles & Privileges
+      match /user_accounts/{accountId} {
+        allow get: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId);
+        allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
+        allow create: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId) &&
+          isValidPropertyUserAccount(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        allow update: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId) &&
+          isValidPropertyUserAccount(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+            isBootstrappedAdmin() ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['firstName', 'lastName', 'fullName', 'phone', 'department', 'role', 'privileges', 'active', 'linkedStaffId', 'authProvisioned', 'lastRoleUpdatedIso', 'authorizedEmails', 'updatedAt'])
+          );
+        allow delete: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Shifts
@@ -818,9 +860,9 @@ service cloud.firestore {
           isValidShift(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'shiftWindow', 'handoverNotes', 'closedBy', 'closedAtIso', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'shiftWindow', 'handoverNotes', 'closedBy', 'closedAtIso', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(shiftId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(shiftId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Attendance
@@ -834,9 +876,9 @@ service cloud.firestore {
           isValidAttendance(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['clockOutTime', 'status', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['clockOutTime', 'status', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(recordId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(recordId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Payroll Runs
@@ -851,10 +893,10 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
               existing().status != 'posted_to_ledger' &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'authorizedEmails', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(runId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(runId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Maintenance Tickets
@@ -869,10 +911,10 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
               existing().status != 'resolved' &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedTo', 'estimatedCostNgn', 'priority', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedTo', 'estimatedCostNgn', 'priority', 'authorizedEmails', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(ticketId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(ticketId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: OTA Online Booking Integrations
@@ -886,7 +928,7 @@ service cloud.firestore {
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'icalImportUrl', 'icalExportUrl', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
       }
@@ -902,7 +944,7 @@ service cloud.firestore {
           isValidBlockedDate(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['startDate', 'endDate', 'reason', 'category', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['startDate', 'endDate', 'reason', 'category', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(blockId) && isPropertyOperator(propertyId);
       }
@@ -918,9 +960,9 @@ service cloud.firestore {
           isValidPropertyMessage(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['readByEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['readByEmails', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(messageId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(messageId) && isPropertyOperator(propertyId);
       }
     }
 

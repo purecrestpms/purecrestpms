@@ -9,6 +9,8 @@ export type StaffRole =
   | 'accountant'
   | 'maintenance';
 
+export type AssignablePropertyRole = Exclude<StaffRole, 'pch_admin'> | 'unassigned';
+
 export type NavSectionId =
   | 'dashboard'
   | 'rooms'
@@ -619,6 +621,25 @@ export interface StaffMemberRecord {
   ownerUid: string;
 }
 
+export interface PropertyUserAccountRecord {
+  id: string;
+  propertyId: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  email: string;
+  phone?: string;
+  department: DepartmentName;
+  role: AssignablePropertyRole;
+  privileges: NavSectionId[];
+  active: boolean;
+  linkedStaffId?: string;
+  authProvisioned?: boolean;
+  lastRoleUpdatedIso?: string;
+  authorizedEmails: string[];
+  ownerUid: string;
+}
+
 export interface ShiftScheduleRecord {
   id: string;
   propertyId: string;
@@ -771,6 +792,47 @@ export const ROLE_LABELS: Record<StaffRole, string> = {
   accountant: 'Finance & Payroll Officer',
   maintenance: 'Engineering & Maintenance',
 };
+
+export const ASSIGNABLE_ROLE_LABELS: Record<AssignablePropertyRole, string> = {
+  property_admin: 'Property Admin (GM)',
+  front_desk: 'Front Desk & Reservations',
+  housekeeping: 'Housekeeping Lead',
+  fnb_kitchen: 'Restaurant POS & Kitchen',
+  accountant: 'Finance & Payroll Officer',
+  maintenance: 'Engineering & Maintenance',
+  unassigned: 'Unassigned (No Role)',
+};
+
+export const PROPERTY_PRIVILEGE_OPTIONS: Array<{
+  id: NavSectionId;
+  label: string;
+  group: string;
+}> = [
+  { id: 'dashboard', label: 'Executive Dashboard', group: 'Operations' },
+  { id: 'reservations', label: 'Reservations', group: 'Operations' },
+  { id: 'calendar', label: 'Calendar & Blocks', group: 'Operations' },
+  { id: 'arrivals', label: 'Arrivals', group: 'Operations' },
+  { id: 'in_house', label: 'In-House Guests', group: 'Operations' },
+  { id: 'walk_in', label: 'Walk-In Check-In', group: 'Operations' },
+  { id: 'front_desk', label: 'Front Desk & Folios', group: 'Operations' },
+  { id: 'rooms', label: 'Rooms & Rates', group: 'Operations' },
+  { id: 'guests', label: 'Guest Profiles', group: 'Operations' },
+  { id: 'housekeeping', label: 'Housekeeping', group: 'Operations' },
+  { id: 'messages', label: 'Messages & Alerts', group: 'Operations' },
+  { id: 'pos_kitchen', label: 'Restaurant POS & KDS', group: 'Food & Supply' },
+  { id: 'inventory', label: 'Store Inventory', group: 'Food & Supply' },
+  { id: 'procurement', label: 'Procurement & POs', group: 'Food & Supply' },
+  { id: 'accounting', label: 'Accounting Ledger', group: 'Finance & HR' },
+  { id: 'reports', label: 'Financial Reports', group: 'Finance & HR' },
+  { id: 'staff', label: 'Staff, Users & Performance', group: 'Finance & HR' },
+  { id: 'shifts_attendance', label: 'Shifts & Attendance', group: 'Finance & HR' },
+  { id: 'payroll', label: 'Monthly Payroll', group: 'Finance & HR' },
+  { id: 'maintenance', label: 'Maintenance', group: 'Finance & HR' },
+  { id: 'ota_channels', label: 'Channel Manager & iCal', group: 'Admin' },
+  { id: 'licensing', label: 'Software Licensing', group: 'Admin' },
+  { id: 'profile', label: 'Property Profile', group: 'Admin' },
+  { id: 'training_help', label: 'Docs & Help', group: 'Support' },
+];
 
 export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
   pch_admin: [
@@ -1340,9 +1402,9 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       ctaLabel: 'New Purchase Order',
     },
     staff: {
-      navLabel: 'Staff Directory',
-      title: 'Staff Management & Directory',
-      subtitle: 'Manage property employees, department roles, and monthly compensation',
+      navLabel: 'Staff, Users & Performance',
+      title: 'Staff, User Accounts & Performance',
+      subtitle: 'Create user accounts, assign roles & privileges, manage staff records, and review performance metrics',
       ctaLabel: 'Onboard Staff Member',
     },
     shifts_attendance: {

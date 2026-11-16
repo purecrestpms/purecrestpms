@@ -1,3 +1,10 @@
+import { getApps, initializeApp } from 'firebase/app';
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  signOut,
+  updateProfile,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -9,6 +16,7 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   BOOTSTRAPPED_ADMIN_EMAILS,
@@ -23,12 +31,15 @@ import { mergeCmsWithDefaults } from '../context/CmsContext';
 import { buildRichgatesSeedPayload, generateLicenseKey, RICHGATES_PROPERTY_ID } from '../data/seedData';
 import { deterministicOtaReservationId, ParsedIcalEvent, parseIcalEvents } from '../utils/icalParser';
 import {
+  ASSIGNABLE_ROLE_LABELS,
+  AssignablePropertyRole,
   AttendanceRecord,
   BlockedDateRecord,
   ChannelCurrency,
   CmsContent,
   convertCurrencyToNgn,
   DEFAULT_CMS_CONTENT,
+  DepartmentName,
   getFxRateToNgn,
   GuestRecord,
   HousekeepingTaskRecord,
@@ -37,6 +48,7 @@ import {
   LicenseRecord,
   MaintenanceTicketRecord,
   MessageRecipientScope,
+  NavSectionId,
   OtaIntegrationRecord,
   PayrollRunRecord,
   PlanInquiryRecord,
@@ -45,11 +57,14 @@ import {
   PosOrderRecord,
   PropertyMessageRecord,
   PropertyRecord,
+  PropertyUserAccountRecord,
   PurchaseOrderRecord,
   ReservationRecord,
   RICHGATES_MAX_ROOMS,
   RICHGATES_OFFICIAL_ROOMS,
   RICHGATES_PROPERTY_INFO,
+  ROLE_ALLOWED_SECTIONS,
+  ROLE_TO_DEPARTMENT,
   RoomRecord,
   RoomSection,
   ShiftScheduleRecord,
@@ -400,7 +415,7 @@ export async function transitionReservationStatus(params: {
         roomId: params.reservation.roomId,
         roomNumber: params.reservation.roomNumber,
         taskType: 'Checkout Turnover',
-        assignedTo: 'Ngozi Ugwu',
+        assignedTo: 'Housekeeping Team',
         priority: 'High',
         status: 'pending',
         notes: `Auto-generated on checkout of ${params.reservation.guestName} (${params.reservation.bookingRef})`,
@@ -3159,11 +3174,473 @@ export async function resetCmsContentWorkflow(params: {
   });
 }
 
+const DEMO_SEED_EMAILS_TO_STRIP = new Set(['gm@richgatesenugu.com']);
+
+function sanitizeAuthorizedEmailList(
+  emails: string[],
+  property: PropertyRecord,
+  fallbackEmail: string
+): string[] {
+  const cleaned = Array.from(
+    new Set(
+      emails
+        .map((e) => e.trim().toLowerCase())
+        .filter((e) => e && !DEMO_SEED_EMAILS_TO_STRIP.has(e))
+    )
+  );
+  if (cleaned.length === 0) {
+    const fallback = (property.adminEmail || fallbackEmail || BOOTSTRAPPED_ADMIN_EMAIL)
+      .trim()
+      .toLowerCase();
+    return [fallback];
+  }
+  return cleaned.slice(0, 25);
+}
+
+async function syncPropertyAuthorizedEmailsAcrossCollections(
+  property: PropertyRecord,
+  nextEmails: string[]
+): Promise<void> {
+  const { email } = getActorContext();
+  const isBootstrapped = isBootstrappedAdminEmail(email);
+  const propId = property.id;
+  const safeEmails = sanitizeAuthorizedEmailList(nextEmails, property, email);
+  const ops: Array<(batch: ReturnType<typeof writeBatch>, now: ReturnType<typeof serverTimestamp>) => void> = [];
+
+  ops.push((batch, now) => {
+    batch.update(doc(db, 'properties', propId), {
+      authorizedEmails: safeEmails,
+      updatedAt: now,
+    });
+  });
+
+  const updatableSubs: Array<{
+    name: string;
+    canUpdateDoc: (data: Record<string, unknown>) => boolean;
+  }> = [
+    { name: 'rooms', canUpdateDoc: () => true },
+    { name: 'blocked_dates', canUpdateDoc: () => true },
+    { name: 'guests', canUpdateDoc: () => true },
+    {
+      name: 'reservations',
+      canUpdateDoc: (d) =>
+        isBootstrapped ||
+        !['checked_out', 'cancelled', 'no_show'].includes(String(d.status || '')),
+    },
+    {
+      name: 'housekeeping_tasks',
+      canUpdateDoc: (d) => isBootstrapped || String(d.status || '') !== 'inspected',
+    },
+    { name: 'pos_menu_items', canUpdateDoc: () => true },
+    { name: 'inventory_items', canUpdateDoc: () => true },
+    {
+      name: 'purchase_orders',
+      canUpdateDoc: (d) =>
+        isBootstrapped || !['received', 'cancelled'].includes(String(d.status || '')),
+    },
+    { name: 'staff_members', canUpdateDoc: () => true },
+    { name: 'user_accounts', canUpdateDoc: () => true },
+    { name: 'shifts', canUpdateDoc: () => true },
+    { name: 'attendance', canUpdateDoc: () => true },
+    {
+      name: 'payroll_runs',
+      canUpdateDoc: (d) => isBootstrapped || String(d.status || '') !== 'posted_to_ledger',
+    },
+    {
+      name: 'maintenance_tickets',
+      canUpdateDoc: (d) => isBootstrapped || String(d.status || '') !== 'resolved',
+    },
+    { name: 'ota_channels', canUpdateDoc: () => true },
+    { name: 'messages', canUpdateDoc: () => true },
+  ];
+
+  for (const sub of updatableSubs) {
+    const snap = await getDocs(collection(db, 'properties', propId, sub.name));
+    for (const d of snap.docs) {
+      const data = d.data() as Record<string, unknown>;
+      if (!sub.canUpdateDoc(data)) continue;
+      ops.push((batch, now) => {
+        batch.update(d.ref, {
+          authorizedEmails: safeEmails,
+          updatedAt: now,
+        });
+      });
+    }
+  }
+
+  const CHUNK_SIZE = 350;
+  for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+    const chunk = ops.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    const now = serverTimestamp();
+    for (const fn of chunk) {
+      fn(batch, now);
+    }
+    await batch.commit();
+  }
+}
+
+async function provisionStaffAuthAccount(
+  email: string,
+  password: string,
+  fullName: string
+): Promise<{ provisioned: boolean; note?: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanPassword = password.trim();
+  if (!cleanPassword) {
+    return { provisioned: false };
+  }
+  const secApp =
+    getApps().find((appInstance) => appInstance.name === 'AccountProvisioner') ||
+    initializeApp(firebaseConfig, 'AccountProvisioner');
+  const secAuth = getAuth(secApp);
+  try {
+    const cred = await createUserWithEmailAndPassword(secAuth, cleanEmail, cleanPassword);
+    if (fullName.trim()) {
+      await updateProfile(cred.user, { displayName: fullName.trim() }).catch(() => undefined);
+    }
+    await signOut(secAuth).catch(() => undefined);
+    return {
+      provisioned: true,
+      note: 'Firebase Email/Password credentials created.',
+    };
+  } catch (err) {
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'auth/email-already-in-use') {
+      await signOut(secAuth).catch(() => undefined);
+      return {
+        provisioned: true,
+        note: 'Existing Firebase account linked to this property role.',
+      };
+    }
+    await signOut(secAuth).catch(() => undefined);
+    throw err;
+  }
+}
+
+function buildUserAccountDocId(email: string): string {
+  const safe = email
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 96);
+  return `usr_${safe || cleanId('acc')}`;
+}
+
+export async function createPropertyUserAccountWorkflow(params: {
+  property: PropertyRecord;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  department: DepartmentName;
+  role: AssignablePropertyRole;
+  privileges: NavSectionId[];
+  password?: string;
+  alsoCreateStaffRecord?: boolean;
+  monthlyBaseSalaryNgn?: number;
+  monthlyAllowanceNgn?: number;
+  actorRole: string;
+}): Promise<{ accountId: string; authNote?: string }> {
+  const { uid } = getActorContext();
+  const cleanFirst = params.firstName.trim().slice(0, 60);
+  const cleanLast = params.lastName.trim().slice(0, 60);
+  const cleanEmail = params.email.trim().toLowerCase().slice(0, 120);
+  if (!cleanFirst || !cleanLast || !cleanEmail) {
+    throw new Error('First name, last name, and email address are required.');
+  }
+
+  const fullName = `${cleanFirst} ${cleanLast}`.trim().slice(0, 120);
+  const isUnassigned = params.role === 'unassigned';
+  const effectivePrivileges: NavSectionId[] =
+    params.role === 'unassigned'
+      ? []
+      : params.privileges.length > 0
+        ? Array.from(new Set(params.privileges)).slice(0, 30)
+        : [...ROLE_ALLOWED_SECTIONS[params.role]];
+  const isActive = !isUnassigned && effectivePrivileges.length > 0;
+
+  let authProvisioned = false;
+  let authNote: string | undefined;
+  if (params.password && params.password.trim().length > 0) {
+    const authRes = await provisionStaffAuthAccount(cleanEmail, params.password, fullName);
+    authProvisioned = authRes.provisioned;
+    authNote = authRes.note;
+  }
+
+  const accountId = buildUserAccountDocId(cleanEmail);
+  const nextEmails = isActive
+    ? sanitizeAuthorizedEmailList(
+        [...params.property.authorizedEmails, cleanEmail],
+        params.property,
+        cleanEmail
+      )
+    : sanitizeAuthorizedEmailList(params.property.authorizedEmails, params.property, '');
+
+  let linkedStaffId = '';
+  if (params.alsoCreateStaffRecord && !isUnassigned) {
+    linkedStaffId = cleanId('stf');
+    const staffCode = `RG-${Math.floor(100 + Math.random() * 899)}`;
+    const staffRef = doc(db, 'properties', params.property.id, 'staff_members', linkedStaffId);
+    try {
+      await setDoc(staffRef, {
+        propertyId: params.property.id,
+        staffCode,
+        fullName,
+        email: cleanEmail,
+        phone: (params.phone || '').trim().slice(0, 32),
+        department: params.department,
+        role: params.role,
+        monthlyBaseSalaryNgn: Math.max(0, Math.round(params.monthlyBaseSalaryNgn ?? 150000)),
+        monthlyAllowanceNgn: Math.max(0, Math.round(params.monthlyAllowanceNgn ?? 35000)),
+        employmentStatus: 'active',
+        authorizedEmails: nextEmails,
+        ownerUid: uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, staffRef.path);
+    }
+  }
+
+  const accountRef = doc(db, 'properties', params.property.id, 'user_accounts', accountId);
+  try {
+    await setDoc(accountRef, {
+      propertyId: params.property.id,
+      firstName: cleanFirst,
+      lastName: cleanLast,
+      fullName,
+      email: cleanEmail,
+      ...(params.phone?.trim() ? { phone: params.phone.trim().slice(0, 32) } : {}),
+      department: params.department,
+      role: params.role,
+      privileges: effectivePrivileges,
+      active: isActive,
+      ...(linkedStaffId ? { linkedStaffId } : {}),
+      authProvisioned,
+      lastRoleUpdatedIso: new Date().toISOString(),
+      authorizedEmails: nextEmails,
+      ownerUid: uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    if (isActive) {
+      await syncPropertyAuthorizedEmailsAcrossCollections(params.property, nextEmails);
+    }
+
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'User Management',
+      action: `Created Account: ${fullName} (${ASSIGNABLE_ROLE_LABELS[params.role]})`,
+      details: `${cleanEmail} · ${params.department} · ${effectivePrivileges.length} module privilege(s)`,
+      authorizedEmails: nextEmails,
+    });
+
+    return { accountId, authNote };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, accountRef.path);
+  }
+}
+
+export async function updatePropertyUserRolePrivilegesWorkflow(params: {
+  property: PropertyRecord;
+  account: PropertyUserAccountRecord;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  department: DepartmentName;
+  role: AssignablePropertyRole;
+  privileges: NavSectionId[];
+  active: boolean;
+  actorRole: string;
+}) {
+  const cleanFirst = (params.firstName ?? params.account.firstName).trim().slice(0, 60);
+  const cleanLast = (params.lastName ?? params.account.lastName).trim().slice(0, 60);
+  const fullName = `${cleanFirst} ${cleanLast}`.trim().slice(0, 120) || params.account.fullName;
+  const isUnassigned = params.role === 'unassigned';
+  const effectivePrivileges: NavSectionId[] = isUnassigned
+    ? []
+    : Array.from(new Set(params.privileges)).slice(0, 30);
+  const nextActive = !isUnassigned && params.active && effectivePrivileges.length > 0;
+  const accountEmail = params.account.email.trim().toLowerCase();
+
+  const shouldRetainInProperty =
+    isBootstrappedAdminEmail(accountEmail) ||
+    params.property.adminEmail.trim().toLowerCase() === accountEmail;
+
+  const baseEmails = params.property.authorizedEmails.map((e) => e.toLowerCase());
+  const updatedEmails = nextActive
+    ? [...baseEmails, accountEmail]
+    : baseEmails.filter((e) => e !== accountEmail || shouldRetainInProperty);
+  const nextEmails = sanitizeAuthorizedEmailList(updatedEmails, params.property, '');
+
+  const ref = doc(db, 'properties', params.property.id, 'user_accounts', params.account.id);
+  try {
+    await updateDoc(ref, {
+      firstName: cleanFirst || params.account.firstName,
+      lastName: cleanLast || params.account.lastName,
+      fullName,
+      ...(params.phone !== undefined ? { phone: params.phone.trim().slice(0, 32) } : {}),
+      department: params.department,
+      role: params.role,
+      privileges: effectivePrivileges,
+      active: nextActive,
+      lastRoleUpdatedIso: new Date().toISOString(),
+      authorizedEmails: nextEmails,
+      updatedAt: serverTimestamp(),
+    });
+
+    if (params.account.linkedStaffId && !isUnassigned) {
+      const staffRef = doc(
+        db,
+        'properties',
+        params.property.id,
+        'staff_members',
+        params.account.linkedStaffId
+      );
+      await updateDoc(staffRef, {
+        fullName,
+        department: params.department,
+        role: params.role,
+        updatedAt: serverTimestamp(),
+      }).catch(() => undefined);
+    }
+
+    await syncPropertyAuthorizedEmailsAcrossCollections(params.property, nextEmails);
+
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'User Management',
+      action: isUnassigned
+        ? `Unassigned Role: ${fullName}`
+        : `Updated Role & Privileges: ${fullName}`,
+      details: `${accountEmail} -> ${ASSIGNABLE_ROLE_LABELS[params.role]} (${effectivePrivileges.length} privileges, ${nextActive ? 'Active' : 'Inactive'})`,
+      authorizedEmails: nextEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
+export async function unassignPropertyUserRoleWorkflow(params: {
+  property: PropertyRecord;
+  account: PropertyUserAccountRecord;
+  actorRole: string;
+}) {
+  await updatePropertyUserRolePrivilegesWorkflow({
+    property: params.property,
+    account: params.account,
+    department: params.account.department || ROLE_TO_DEPARTMENT.front_desk,
+    role: 'unassigned',
+    privileges: [],
+    active: false,
+    actorRole: params.actorRole,
+  });
+}
+
+export async function deletePropertyUserAccountWorkflow(params: {
+  property: PropertyRecord;
+  account: PropertyUserAccountRecord;
+  actorRole: string;
+}) {
+  const accountEmail = params.account.email.trim().toLowerCase();
+  const shouldRetain =
+    isBootstrappedAdminEmail(accountEmail) ||
+    params.property.adminEmail.trim().toLowerCase() === accountEmail;
+  const nextEmails = sanitizeAuthorizedEmailList(
+    params.property.authorizedEmails
+      .map((e) => e.toLowerCase())
+      .filter((e) => e !== accountEmail || shouldRetain),
+    params.property,
+    ''
+  );
+
+  const ref = doc(db, 'properties', params.property.id, 'user_accounts', params.account.id);
+  try {
+    await deleteDoc(ref);
+    await syncPropertyAuthorizedEmailsAcrossCollections(params.property, nextEmails);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'User Management',
+      action: `Deleted User Account: ${params.account.fullName}`,
+      details: `Removed ${accountEmail} and revoked property workspace access.`,
+      authorizedEmails: nextEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
+  }
+}
+
+export async function updateStaffMemberWorkflow(params: {
+  property: PropertyRecord;
+  staff: StaffMemberRecord;
+  updates: Partial<
+    Pick<
+      StaffMemberRecord,
+      | 'fullName'
+      | 'email'
+      | 'phone'
+      | 'department'
+      | 'role'
+      | 'monthlyBaseSalaryNgn'
+      | 'monthlyAllowanceNgn'
+      | 'employmentStatus'
+    >
+  >;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'staff_members', params.staff.id);
+  try {
+    await updateDoc(ref, {
+      ...params.updates,
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'HR & Staff',
+      action: `Updated Staff Record: ${params.updates.fullName || params.staff.fullName}`,
+      details: `${params.updates.department || params.staff.department} · ${params.updates.role || params.staff.role} · ${params.updates.employmentStatus || params.staff.employmentStatus}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
+export async function deleteStaffMemberWorkflow(params: {
+  property: PropertyRecord;
+  staff: StaffMemberRecord;
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'staff_members', params.staff.id);
+  try {
+    await deleteDoc(ref);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'HR & Staff',
+      action: `Deleted Staff Record: ${params.staff.fullName} (${params.staff.staffCode})`,
+      details: `Removed from ${params.staff.department} roster.`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, ref.path);
+  }
+}
+
 export async function prepareRichgatesProductionDatabaseWorkflow(params: {
   property: PropertyRecord;
   actorRole: string;
 }): Promise<{ roomsResetCount: number; deletedDocsCount: number }> {
   const propId = params.property.id;
+  const { email } = getActorContext();
   const subcollectionsToClear = [
     'guests',
     'reservations',
@@ -3172,13 +3649,34 @@ export async function prepareRichgatesProductionDatabaseWorkflow(params: {
     'pos_orders',
     'ledger_entries',
     'messages',
+    'staff_members',
+    'shifts',
+    'attendance',
+    'payroll_runs',
+    'maintenance_tickets',
+    'inventory_items',
+    'purchase_orders',
   ] as const;
+
+  const cleanedAuthorizedEmails = sanitizeAuthorizedEmailList(
+    params.property.authorizedEmails,
+    params.property,
+    email
+  );
 
   const ops: Array<(batch: ReturnType<typeof writeBatch>, now: ReturnType<typeof serverTimestamp>) => void> = [];
   let roomsResetCount = 0;
   let deletedDocsCount = 0;
 
   try {
+    // 0. Strip any legacy demo email (e.g. gm@richgatesenugu.com) from property document
+    ops.push((batch, now) => {
+      batch.update(doc(db, 'properties', propId), {
+        authorizedEmails: cleanedAuthorizedEmails,
+        updatedAt: now,
+      });
+    });
+
     // 1. Preserve all rooms and reset occupancy/housekeeping state to clean & vacant
     const roomsSnap = await getDocs(collection(db, 'properties', propId, 'rooms'));
     for (const roomDoc of roomsSnap.docs) {
@@ -3189,12 +3687,13 @@ export async function prepareRichgatesProductionDatabaseWorkflow(params: {
           housekeepingStatus: 'clean',
           currentGuestName: '',
           currentReservationId: '',
+          authorizedEmails: cleanedAuthorizedEmails,
           updatedAt: now,
         });
       });
     }
 
-    // 2. Delete all demo guest profiles, reservations, blocks, tasks, POS orders, ledger entries & sample messages
+    // 2. Delete all demo guest profiles, reservations, blocks, tasks, POS orders, ledger entries, demo staff, shifts, attendance, payroll & maintenance
     for (const subName of subcollectionsToClear) {
       const snap = await getDocs(collection(db, 'properties', propId, subName));
       for (const d of snap.docs) {
@@ -3205,19 +3704,50 @@ export async function prepareRichgatesProductionDatabaseWorkflow(params: {
       }
     }
 
-    // 3. Reset OTA channel imported counter to 0 without removing channel configuration
-    const otaSnap = await getDocs(collection(db, 'properties', propId, 'ota_channels'));
-    for (const otaDoc of otaSnap.docs) {
+    // 3. Delete any legacy demo user accounts (such as gm@richgatesenugu.com) while preserving admin-created real users
+    const userAccSnap = await getDocs(collection(db, 'properties', propId, 'user_accounts'));
+    for (const uDoc of userAccSnap.docs) {
+      const data = uDoc.data() as Partial<PropertyUserAccountRecord>;
+      const uEmail = String(data.email || '').trim().toLowerCase();
+      if (DEMO_SEED_EMAILS_TO_STRIP.has(uEmail)) {
+        deletedDocsCount += 1;
+        ops.push((batch) => {
+          batch.delete(uDoc.ref);
+        });
+      } else {
+        ops.push((batch, now) => {
+          batch.update(uDoc.ref, {
+            authorizedEmails: cleanedAuthorizedEmails,
+            updatedAt: now,
+          });
+        });
+      }
+    }
+
+    // 4. Sync cleaned authorizedEmails to pos_menu_items and reset OTA channel counters
+    const menuSnap = await getDocs(collection(db, 'properties', propId, 'pos_menu_items'));
+    for (const menuDoc of menuSnap.docs) {
       ops.push((batch, now) => {
-        batch.update(otaDoc.ref, {
-          bookingsImported: 0,
+        batch.update(menuDoc.ref, {
+          authorizedEmails: cleanedAuthorizedEmails,
           updatedAt: now,
         });
       });
     }
 
-    // Execute in batches <= 400 ops
-    const CHUNK_SIZE = 400;
+    const otaSnap = await getDocs(collection(db, 'properties', propId, 'ota_channels'));
+    for (const otaDoc of otaSnap.docs) {
+      ops.push((batch, now) => {
+        batch.update(otaDoc.ref, {
+          bookingsImported: 0,
+          authorizedEmails: cleanedAuthorizedEmails,
+          updatedAt: now,
+        });
+      });
+    }
+
+    // Execute in batches <= 350 ops
+    const CHUNK_SIZE = 350;
     for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
       const chunk = ops.slice(i, i + CHUNK_SIZE);
       const batch = writeBatch(db);
@@ -3232,9 +3762,9 @@ export async function prepareRichgatesProductionDatabaseWorkflow(params: {
       propertyId: propId,
       actorRole: params.actorRole,
       module: 'Production Preparation',
-      action: 'Cleared Demo Guests & Prepared Production DB',
-      details: `Preserved ${roomsResetCount} rooms (vacant/clean) and removed ${deletedDocsCount} demo guest/booking/folio records for Cloudflare production.`,
-      authorizedEmails: params.property.authorizedEmails,
+      action: 'Cleared Demo Staff, Guests & Sample Operational Data',
+      details: `Preserved ${roomsResetCount} rooms (vacant/clean) & POS menu; removed ${deletedDocsCount} demo staff, shifts, attendance, payroll, guest, booking, and folio records.`,
+      authorizedEmails: cleanedAuthorizedEmails,
     });
 
     return { roomsResetCount, deletedDocsCount };

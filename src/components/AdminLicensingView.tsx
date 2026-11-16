@@ -33,8 +33,10 @@ import {
 import {
   AuditLogRecord,
   BlockedDateRecord,
+  buildAllSubdomainLinks,
   formatNgn,
   formatUsd,
+  getConnectedRootDomain,
   getPortalUrl,
   getPropertySubdomainSlug,
   LicenseRecord,
@@ -49,6 +51,7 @@ import {
   ROLE_ALLOWED_SECTIONS,
   ROLE_LABELS,
   RoomRecord,
+  saveConnectedRootDomain,
   sortRoomsByNumber,
   StaffRole,
 } from '../types/pms';
@@ -118,6 +121,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [licDurationDays, setLicDurationDays] = useState(365);
   const [licAutoActivate, setLicAutoActivate] = useState(true);
   const [activationKeyInput, setActivationKeyInput] = useState('');
+  const [connectedDomainInput, setConnectedDomainInput] = useState(() => getConnectedRootDomain());
+  const [savedRootDomain, setSavedRootDomain] = useState(() => getConnectedRootDomain());
   const [activationPropId, setActivationPropId] = useState(property.id);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -1794,60 +1799,105 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
             </div>
           </div>
 
-          {/* Direct Custom Subdomain Routing (admin.pchpms.com & property.pchpms.com/staff) */}
+          {/* Direct Custom Subdomain Routing (Cloudflare Domain & Subdomain Generator) */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <Globe className="w-4 h-4 text-[#1c46be]" />
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Direct Custom Domains (admin.pchpms.com, richgates.pchpms.com &amp; /staff)
-              </h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-[#1c46be]" />
+                <h2 className="font-display text-sm font-bold text-slate-900">
+                  Cloudflare Connected Domain &amp; Subdomain Routing ({savedRootDomain})
+                </h2>
+              </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const next = saveConnectedRootDomain(connectedDomainInput);
+                  setConnectedDomainInput(next);
+                  setSavedRootDomain(next);
+                  onNotify(`Updated Cloudflare domain links for ${next}`);
+                }}
+                className="flex items-center gap-2"
+              >
+                <label className="text-[11px] font-medium text-slate-600 whitespace-nowrap">
+                  Connected Domain:
+                </label>
+                <input
+                  type="text"
+                  value={connectedDomainInput}
+                  onChange={(e) => setConnectedDomainInput(e.target.value)}
+                  className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono-tabular w-44"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 bg-[#1c46be] hover:bg-[#17399c] text-white rounded-lg text-xs font-semibold"
+                >
+                  Apply Domain
+                </button>
+              </form>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              The application routes each property by subdomain, with Staff access nested directly under each property&apos;s own domain (<code className="font-mono-tabular">/staff</code>):
+              The application detects each subdomain automatically on load, with property staff portals hosted under{' '}
+              <code className="font-mono-tabular">/staff</code> on each property&apos;s own subdomain:
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-xs">
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
-                <p className="font-mono-tabular font-bold text-[#1c46be]">app.pchpms.com</p>
-                <p className="font-semibold text-slate-900">Homepage &amp; Pricing</p>
-                <p className="text-slate-600">
-                  Public product showcase, software plans, purchase orders &amp; contact form.
-                </p>
-              </div>
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
-                <p className="font-mono-tabular font-bold text-[#1c46be]">admin.pchpms.com</p>
-                <p className="font-semibold text-slate-900">PCH Super Admin Console</p>
-                <p className="text-slate-600">
-                  Central PCH console to manage Richgates, onboard new properties, issue license keys, and edit CMS.
-                </p>
-              </div>
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
-                <p className="font-mono-tabular font-bold text-emerald-700">richgates.pchpms.com</p>
-                <p className="font-semibold text-slate-900">Richgates Property Admin</p>
-                <p className="text-slate-600">
-                  Opens Richgates Property Admin login and locks the workspace to Richgates Apartments.
-                </p>
-              </div>
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
-                <p className="font-mono-tabular font-bold text-slate-800">richgates.pchpms.com/staff</p>
-                <p className="font-semibold text-slate-900">Property Staff Portal (/staff)</p>
-                <p className="text-slate-600">
-                  Routes Front Desk, Housekeeping, Kitchen, Accounts, and Engineering teams under that property&apos;s domain.
-                </p>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              {buildAllSubdomainLinks(savedRootDomain, properties).map((linkItem) => (
+                <div
+                  key={linkItem.id}
+                  className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="font-semibold text-slate-900">{linkItem.label}</p>
+                    <p className="font-mono-tabular font-bold text-[#1c46be] truncate">
+                      {linkItem.url}
+                    </p>
+                    <p className="text-[11px] text-slate-600">{linkItem.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(linkItem.url, linkItem.id)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-[11px] font-medium shrink-0"
+                  >
+                    {copiedKey === linkItem.id ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ))}
             </div>
             <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-4">
               <li>
-                In <strong>Cloudflare Dashboard → Workers &amp; Pages → pch-pms → Custom domains</strong>, click{' '}
-                <strong>Set up a custom domain</strong> and add <code className="font-mono-tabular">app.pchpms.com</code>, <code className="font-mono-tabular">admin.pchpms.com</code>, and{' '}
-                <code className="font-mono-tabular">richgates.pchpms.com</code> (plus any future <code className="font-mono-tabular">&lt;property&gt;.pchpms.com</code>).
+                Deploy this app to Cloudflare Pages (<code className="font-mono-tabular">npm run build</code> → output <code className="font-mono-tabular">dist</code>, project <code className="font-mono-tabular">pch-pms</code>).
               </li>
               <li>
-                In your Cloudflare DNS for <code className="font-mono-tabular">pchpms.com</code>, ensure each subdomain has a{' '}
-                <strong>CNAME</strong> record pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (Proxied orange cloud ON, SSL mode <strong>Full (strict)</strong>). No separate DNS record is needed for <code className="font-mono-tabular">/staff</code>.
+                In <strong>Cloudflare Dashboard → Workers &amp; Pages → pch-pms → Custom domains</strong>, add{' '}
+                <code className="font-mono-tabular">app.{savedRootDomain}</code>,{' '}
+                <code className="font-mono-tabular">admin.{savedRootDomain}</code>, and{' '}
+                {properties.map((p, idx) => (
+                  <React.Fragment key={p.id}>
+                    {idx > 0 ? ', ' : ''}
+                    <code className="font-mono-tabular">
+                      {getPropertySubdomainSlug(p)}.{savedRootDomain}
+                    </code>
+                  </React.Fragment>
+                ))}
+                .
+              </li>
+              <li>
+                In <strong>Cloudflare DNS ({savedRootDomain})</strong>, ensure each subdomain has a proxied{' '}
+                <strong>CNAME</strong> pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (orange cloud ON, SSL mode <strong>Full (strict)</strong>). No separate DNS record is needed for <code className="font-mono-tabular">/staff</code>.
               </li>
               <li>
                 In <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, add{' '}
-                <code className="font-mono-tabular">app.pchpms.com</code>, <code className="font-mono-tabular">admin.pchpms.com</code>, and <code className="font-mono-tabular">richgates.pchpms.com</code> so Google Sign-In works on both Property Admin and <code className="font-mono-tabular">/staff</code>.
+                <code className="font-mono-tabular">app.{savedRootDomain}</code>,{' '}
+                <code className="font-mono-tabular">admin.{savedRootDomain}</code>, and each property subdomain so Google Sign-In works everywhere.
               </li>
             </ol>
           </div>

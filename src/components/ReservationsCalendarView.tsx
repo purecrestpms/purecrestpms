@@ -426,7 +426,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search RM-1, Deluxe Studio, Chinedu, Deep Clean..."
+                placeholder="Search RM-1, Deluxe Studio, Booking Ref..."
                 className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
               />
             </div>

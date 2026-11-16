@@ -39,8 +39,8 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id || '');
   const [taskType, setTaskType] = useState<HousekeepingTaskRecord['taskType']>('Checkout Turnover');
-  const [assigneeFirstName, setAssigneeFirstName] = useState('Ngozi');
-  const [assigneeLastName, setAssigneeLastName] = useState('Ugwu');
+  const [assigneeFirstName, setAssigneeFirstName] = useState('');
+  const [assigneeLastName, setAssigneeLastName] = useState('');
   const [hkPriority, setHkPriority] = useState<HousekeepingTaskRecord['priority']>('High');
   const [hkNotes, setHkNotes] = useState('');
 
@@ -52,8 +52,8 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
     useState<MaintenanceTicketRecord['category']>('HVAC & AC');
   const [maintPriority, setMaintPriority] =
     useState<MaintenanceTicketRecord['priority']>('Medium');
-  const [maintFirstName, setMaintFirstName] = useState('Ifeanyi');
-  const [maintLastName, setMaintLastName] = useState('Okolie');
+  const [maintFirstName, setMaintFirstName] = useState('');
+  const [maintLastName, setMaintLastName] = useState('');
   const [estimatedCostNgn, setEstimatedCostNgn] = useState(15000);
   const [markOutOfOrder, setMarkOutOfOrder] = useState(false);
 

@@ -1,13 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
+  AlertTriangle,
+  Award,
   Calendar,
   CheckCircle2,
   Clock,
+  Eye,
   FileText,
+  KeyRound,
   Lock,
   Pencil,
   Plus,
   Printer,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  UserCheck,
+  UserMinus,
+  UserPlus,
   Users,
   Wallet,
   X,
@@ -18,46 +29,93 @@ import {
   clockInStaff,
   clockOutAttendance,
   closeShiftWorkflow,
+  createPropertyUserAccountWorkflow,
   createShiftSchedule,
   createStaffMember,
+  deletePropertyUserAccountWorkflow,
+  deleteStaffMemberWorkflow,
+  prepareRichgatesProductionDatabaseWorkflow,
   runAndPostPayrollWorkflow,
+  unassignPropertyUserRoleWorkflow,
+  updatePropertyUserRolePrivilegesWorkflow,
+  updateStaffMemberWorkflow,
   updateStaffSalary,
 } from '../services/pmsService';
 import {
+  ALL_DEPARTMENTS,
+  ASSIGNABLE_ROLE_LABELS,
+  AssignablePropertyRole,
   AttendanceRecord,
+  DepartmentName,
   formatNgn,
+  HousekeepingTaskRecord,
+  MaintenanceTicketRecord,
   NavSectionId,
   PayrollRunRecord,
+  PosOrderRecord,
+  PROPERTY_PRIVILEGE_OPTIONS,
   PropertyRecord,
+  PropertyUserAccountRecord,
   RICHGATES_PROPERTY_INFO,
+  ROLE_ALLOWED_SECTIONS,
   ROLE_LABELS,
+  ROLE_TO_DEPARTMENT,
   ShiftScheduleRecord,
   StaffMemberRecord,
+  StaffRole,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
 interface StaffHrPayrollViewProps {
   section: Extract<NavSectionId, 'staff' | 'shifts_attendance' | 'payroll'>;
   property: PropertyRecord;
+  activeRole: StaffRole;
   staffMembers: StaffMemberRecord[];
+  userAccounts: PropertyUserAccountRecord[];
   shifts: ShiftScheduleRecord[];
   attendance: AttendanceRecord[];
   payrollRuns: PayrollRunRecord[];
+  housekeepingTasks: HousekeepingTaskRecord[];
+  maintenanceTickets: MaintenanceTicketRecord[];
+  posOrders: PosOrderRecord[];
   actorRole: string;
   onNotify: (msg: string) => void;
+}
+
+type StaffAdminTab = 'users' | 'roster' | 'performance';
+
+const PRIVILEGE_GROUPS = Array.from(new Set(PROPERTY_PRIVILEGE_OPTIONS.map((p) => p.group)));
+
+function splitFullName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: '', lastName: '' };
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' '),
+  };
 }
 
 export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   section,
   property,
+  activeRole,
   staffMembers,
+  userAccounts,
   shifts,
   attendance,
   payrollRuns,
+  housekeepingTasks,
+  maintenanceTickets,
+  posOrders,
   actorRole,
   onNotify,
 }) => {
   const { cms } = useCms();
+  const isAdminManager = activeRole === 'property_admin' || activeRole === 'pch_admin';
+  const [staffTab, setStaffTab] = useState<StaffAdminTab>('users');
+
+  // Create Staff Roster State
   const [showStaffForm, setShowStaffForm] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -68,6 +126,61 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const [role, setRole] = useState<StaffMemberRecord['role']>('front_desk');
   const [baseSalary, setBaseSalary] = useState(150000);
   const [allowance, setAllowance] = useState(35000);
+
+  // User Accounts, Roles & Privileges State
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [userFilter, setUserFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
+  const [uFirstName, setUFirstName] = useState('');
+  const [uLastName, setULastName] = useState('');
+  const [uEmail, setUEmail] = useState('');
+  const [uPhone, setUPhone] = useState('+234 ');
+  const [uDepartment, setUDepartment] = useState<DepartmentName>('Front Desk');
+  const [uRole, setURole] = useState<AssignablePropertyRole>('front_desk');
+  const [uPrivileges, setUPrivileges] = useState<NavSectionId[]>([
+    ...ROLE_ALLOWED_SECTIONS.front_desk,
+  ]);
+  const [uPassword, setUPassword] = useState('');
+  const [uCreateStaff, setUCreateStaff] = useState(true);
+  const [uBaseSalary, setUBaseSalary] = useState(150000);
+  const [uAllowance, setUAllowance] = useState(35000);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [userActionError, setUserActionError] = useState<string | null>(null);
+
+  // Edit User Role & Privileges Modal
+  const [editingAccount, setEditingAccount] = useState<PropertyUserAccountRecord | null>(null);
+  const [editUFirstName, setEditUFirstName] = useState('');
+  const [editULastName, setEditULastName] = useState('');
+  const [editUPhone, setEditUPhone] = useState('');
+  const [editUDept, setEditUDept] = useState<DepartmentName>('Front Desk');
+  const [editURole, setEditURole] = useState<AssignablePropertyRole>('front_desk');
+  const [editUPrivileges, setEditUPrivileges] = useState<NavSectionId[]>([]);
+  const [editUActive, setEditUActive] = useState(true);
+  const [savingUserEdit, setSavingUserEdit] = useState(false);
+
+  // Edit Staff Record Modal
+  const [editingStaffModal, setEditingStaffModal] = useState<StaffMemberRecord | null>(null);
+  const [editSFirstName, setEditSFirstName] = useState('');
+  const [editSLastName, setEditSLastName] = useState('');
+  const [editSEmail, setEditSEmail] = useState('');
+  const [editSPhone, setEditSPhone] = useState('');
+  const [editSDept, setEditSDept] = useState<DepartmentName>('Front Desk');
+  const [editSRole, setEditSRole] = useState<StaffMemberRecord['role']>('front_desk');
+  const [editSStatus, setEditSStatus] =
+    useState<StaffMemberRecord['employmentStatus']>('active');
+  const [editSBase, setEditSBase] = useState(0);
+  const [editSAllowance, setEditSAllowance] = useState(0);
+  const [savingStaffEdit, setSavingStaffEdit] = useState(false);
+
+  // Staff Detail & Performance Modal
+  const [viewingStaffDetail, setViewingStaffDetail] = useState<StaffMemberRecord | null>(null);
+
+  // Inline Confirmations (no window.confirm)
+  const [confirmClearDemo, setConfirmClearDemo] = useState(false);
+  const [clearingDemo, setClearingDemo] = useState(false);
+  const [confirmDeleteStaffId, setConfirmDeleteStaffId] = useState<string | null>(null);
+  const [confirmUnassignAccId, setConfirmUnassignAccId] = useState<string | null>(null);
+  const [confirmDeleteAccId, setConfirmDeleteAccId] = useState<string | null>(null);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
 
   const [shiftStaffId, setShiftStaffId] = useState(staffMembers[0]?.id || '');
   const [shiftDate, setShiftDate] = useState(new Date().toISOString().slice(0, 10));
@@ -103,6 +216,232 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       setShiftStaffId(staffMembers[0].id);
     }
   }, [staffMembers, shiftStaffId]);
+
+  const handleSelectCreateRole = (nextRole: AssignablePropertyRole) => {
+    setURole(nextRole);
+    if (nextRole === 'unassigned') {
+      setUPrivileges([]);
+      setUCreateStaff(false);
+    } else {
+      setUDepartment(ROLE_TO_DEPARTMENT[nextRole]);
+      setUPrivileges([...ROLE_ALLOWED_SECTIONS[nextRole]]);
+    }
+  };
+
+  const toggleCreatePrivilege = (priv: NavSectionId) => {
+    setUPrivileges((prev) =>
+      prev.includes(priv) ? prev.filter((item) => item !== priv) : [...prev, priv]
+    );
+  };
+
+  const handleCreateUserAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserActionError(null);
+    if (!uFirstName.trim() || !uLastName.trim() || !uEmail.trim()) {
+      setUserActionError('First name, last name, and work email are required.');
+      return;
+    }
+    setCreatingUser(true);
+    try {
+      const res = await createPropertyUserAccountWorkflow({
+        property,
+        firstName: uFirstName,
+        lastName: uLastName,
+        email: uEmail,
+        phone: uPhone,
+        department: uDepartment,
+        role: uRole,
+        privileges: uPrivileges,
+        password: uPassword,
+        alsoCreateStaffRecord: uCreateStaff,
+        monthlyBaseSalaryNgn: uBaseSalary,
+        monthlyAllowanceNgn: uAllowance,
+        actorRole,
+      });
+      onNotify(
+        `Saved user account for ${uFirstName.trim()} ${uLastName.trim()} (${ASSIGNABLE_ROLE_LABELS[uRole]})${res.authNote ? ` · ${res.authNote}` : ''}`
+      );
+      setShowUserForm(false);
+      setUFirstName('');
+      setULastName('');
+      setUEmail('');
+      setUPhone('+234 ');
+      setUPassword('');
+      setURole('front_desk');
+      setUDepartment('Front Desk');
+      setUPrivileges([...ROLE_ALLOWED_SECTIONS.front_desk]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setUserActionError(msg);
+    } finally {
+      setCreatingUser(false);
+    }
+  };
+
+  const openEditUserModal = (acc: PropertyUserAccountRecord) => {
+    setEditingAccount(acc);
+    setEditUFirstName(acc.firstName);
+    setEditULastName(acc.lastName);
+    setEditUPhone(acc.phone || '');
+    setEditUDept(acc.department);
+    setEditURole(acc.role);
+    setEditUPrivileges([...acc.privileges]);
+    setEditUActive(acc.active);
+    setUserActionError(null);
+  };
+
+  const handleEditRoleSelect = (nextRole: AssignablePropertyRole) => {
+    setEditURole(nextRole);
+    if (nextRole === 'unassigned') {
+      setEditUPrivileges([]);
+      setEditUActive(false);
+    } else {
+      setEditUDept(ROLE_TO_DEPARTMENT[nextRole]);
+      if (editUPrivileges.length === 0) {
+        setEditUPrivileges([...ROLE_ALLOWED_SECTIONS[nextRole]]);
+      }
+      setEditUActive(true);
+    }
+  };
+
+  const handleSaveUserEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAccount) return;
+    setSavingUserEdit(true);
+    setUserActionError(null);
+    try {
+      await updatePropertyUserRolePrivilegesWorkflow({
+        property,
+        account: editingAccount,
+        firstName: editUFirstName,
+        lastName: editULastName,
+        phone: editUPhone,
+        department: editUDept,
+        role: editURole,
+        privileges: editUPrivileges,
+        active: editUActive,
+        actorRole,
+      });
+      onNotify(
+        `Updated role & privileges for ${editUFirstName.trim()} ${editULastName.trim()}`
+      );
+      setEditingAccount(null);
+    } catch (err) {
+      setUserActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingUserEdit(false);
+    }
+  };
+
+  const handleUnassignAccount = async (acc: PropertyUserAccountRecord) => {
+    setBusyActionId(acc.id);
+    setUserActionError(null);
+    try {
+      await unassignPropertyUserRoleWorkflow({
+        property,
+        account: acc,
+        actorRole,
+      });
+      onNotify(`Removed role & unassigned ${acc.fullName}`);
+      setConfirmUnassignAccId(null);
+    } catch (err) {
+      setUserActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleDeleteAccount = async (acc: PropertyUserAccountRecord) => {
+    setBusyActionId(acc.id);
+    setUserActionError(null);
+    try {
+      await deletePropertyUserAccountWorkflow({
+        property,
+        account: acc,
+        actorRole,
+      });
+      onNotify(`Deleted user account ${acc.email}`);
+      setConfirmDeleteAccId(null);
+    } catch (err) {
+      setUserActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const openEditStaffModal = (staff: StaffMemberRecord) => {
+    const parsed = splitFullName(staff.fullName);
+    setEditingStaffModal(staff);
+    setEditSFirstName(parsed.firstName);
+    setEditSLastName(parsed.lastName);
+    setEditSEmail(staff.email || '');
+    setEditSPhone(staff.phone || '');
+    setEditSDept(staff.department);
+    setEditSRole(staff.role);
+    setEditSStatus(staff.employmentStatus);
+    setEditSBase(staff.monthlyBaseSalaryNgn);
+    setEditSAllowance(staff.monthlyAllowanceNgn);
+  };
+
+  const handleSaveStaffModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStaffModal) return;
+    const combined = `${editSFirstName.trim()} ${editSLastName.trim()}`.trim();
+    if (!combined) return;
+    setSavingStaffEdit(true);
+    try {
+      await updateStaffMemberWorkflow({
+        property,
+        staff: editingStaffModal,
+        updates: {
+          fullName: combined,
+          email: editSEmail.trim(),
+          phone: editSPhone.trim(),
+          department: editSDept,
+          role: editSRole,
+          employmentStatus: editSStatus,
+          monthlyBaseSalaryNgn: Math.max(0, Math.round(editSBase)),
+          monthlyAllowanceNgn: Math.max(0, Math.round(editSAllowance)),
+        },
+        actorRole,
+      });
+      onNotify(`Updated staff record for ${combined}`);
+      setEditingStaffModal(null);
+    } finally {
+      setSavingStaffEdit(false);
+    }
+  };
+
+  const handleDeleteStaff = async (staff: StaffMemberRecord) => {
+    setBusyActionId(staff.id);
+    try {
+      await deleteStaffMemberWorkflow({
+        property,
+        staff,
+        actorRole,
+      });
+      onNotify(`Deleted staff record ${staff.fullName} (${staff.staffCode})`);
+      setConfirmDeleteStaffId(null);
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleClearDemoStaffAndData = async () => {
+    setClearingDemo(true);
+    try {
+      const res = await prepareRichgatesProductionDatabaseWorkflow({
+        property,
+        actorRole,
+      });
+      onNotify(
+        `Cleared ${res.deletedDocsCount} demo staff, shift, attendance, payroll & sample records; ${res.roomsResetCount} suites reset clean & vacant.`
+      );
+      setConfirmClearDemo(false);
+    } finally {
+      setClearingDemo(false);
+    }
+  };
 
   const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -177,6 +516,121 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       setRunningPayroll(false);
     }
   };
+
+  const filteredAccounts = useMemo(() => {
+    if (userFilter === 'assigned') {
+      return userAccounts.filter((a) => a.role !== 'unassigned' && a.active);
+    }
+    if (userFilter === 'unassigned') {
+      return userAccounts.filter((a) => a.role === 'unassigned' || !a.active);
+    }
+    return userAccounts;
+  }, [userAccounts, userFilter]);
+
+  const staffPerformanceRows = useMemo(() => {
+    return staffMembers.map((staff) => {
+      const staffNameLower = staff.fullName.trim().toLowerCase();
+      const staffEmailLower = (staff.email || '').trim().toLowerCase();
+      const linkedAccount = userAccounts.find(
+        (acc) =>
+          acc.linkedStaffId === staff.id ||
+          (staffEmailLower && acc.email.trim().toLowerCase() === staffEmailLower)
+      );
+
+      const staffShifts = shifts.filter(
+        (sh) => sh.staffId === staff.id || sh.staffName.trim().toLowerCase() === staffNameLower
+      );
+      const completedShifts = staffShifts.filter((sh) => sh.status === 'completed').length;
+      const missedShifts = staffShifts.filter((sh) => sh.status === 'missed').length;
+
+      const staffAtt = attendance.filter(
+        (a) => a.staffId === staff.id || a.staffName.trim().toLowerCase() === staffNameLower
+      );
+      const onTimeOrOut = staffAtt.filter(
+        (a) => a.status === 'present' || a.status === 'clocked_out'
+      ).length;
+      const lateCount = staffAtt.filter((a) => a.status === 'late').length;
+
+      const assignedHk = housekeepingTasks.filter(
+        (t) => t.assignedTo.trim().toLowerCase() === staffNameLower
+      );
+      const completedHk = assignedHk.filter(
+        (t) => t.status === 'completed' || t.status === 'inspected'
+      ).length;
+
+      const assignedMnt = maintenanceTickets.filter(
+        (m) => m.assignedTo.trim().toLowerCase() === staffNameLower
+      );
+      const resolvedMnt = assignedMnt.filter((m) => m.status === 'resolved').length;
+
+      const totalTasks = assignedHk.length + assignedMnt.length;
+      const doneTasks = completedHk + resolvedMnt;
+
+      const scores: number[] = [];
+      if (staffShifts.length > 0) {
+        scores.push(Math.round((completedShifts / staffShifts.length) * 100));
+      }
+      if (staffAtt.length > 0) {
+        scores.push(Math.round((onTimeOrOut / staffAtt.length) * 100));
+      }
+      if (totalTasks > 0) {
+        scores.push(Math.round((doneTasks / totalTasks) * 100));
+      }
+      const overallScore =
+        scores.length > 0
+          ? Math.round(scores.reduce((sum, v) => sum + v, 0) / scores.length)
+          : null;
+
+      return {
+        staff,
+        linkedAccount,
+        staffShifts,
+        completedShifts,
+        missedShifts,
+        staffAtt,
+        onTimeOrOut,
+        lateCount,
+        assignedHk,
+        completedHk,
+        assignedMnt,
+        resolvedMnt,
+        totalTasks,
+        doneTasks,
+        overallScore,
+      };
+    });
+  }, [staffMembers, userAccounts, shifts, attendance, housekeepingTasks, maintenanceTickets]);
+
+  const perfSummary = useMemo(() => {
+    const totalShifts = shifts.length;
+    const closedShifts = shifts.filter((s) => s.status === 'completed').length;
+    const shiftRate = totalShifts > 0 ? Math.round((closedShifts / totalShifts) * 100) : 0;
+
+    const totalAtt = attendance.length;
+    const goodAtt = attendance.filter(
+      (a) => a.status === 'present' || a.status === 'clocked_out'
+    ).length;
+    const attRate = totalAtt > 0 ? Math.round((goodAtt / totalAtt) * 100) : 0;
+
+    const totalOpsTasks = housekeepingTasks.length + maintenanceTickets.length;
+    const doneOpsTasks =
+      housekeepingTasks.filter((t) => t.status === 'completed' || t.status === 'inspected')
+        .length + maintenanceTickets.filter((m) => m.status === 'resolved').length;
+
+    return {
+      activeUsers: userAccounts.filter((a) => a.role !== 'unassigned' && a.active).length,
+      unassignedUsers: userAccounts.filter((a) => a.role === 'unassigned' || !a.active).length,
+      shiftRate,
+      closedShifts,
+      totalShifts,
+      attRate,
+      goodAtt,
+      totalAtt,
+      doneOpsTasks,
+      totalOpsTasks,
+      servedOrders: posOrders.filter((o) => o.kitchenStatus === 'served').length,
+    };
+  }, [userAccounts, shifts, attendance, housekeepingTasks, maintenanceTickets, posOrders]);
 
   const activeStaff = staffMembers.filter((s) => s.employmentStatus === 'active');
   const previewGross = activeStaff.reduce(
@@ -320,7 +774,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         <div>
           <h1 className="font-display text-xl font-bold text-slate-900">
             {section === 'staff'
-              ? `${cms.pages.staff.title} (${staffMembers.length} Employees)`
+              ? `${cms.pages.staff.title} (${userAccounts.length} Accounts · ${staffMembers.length} Staff)`
               : cms.pages[section].title}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -328,15 +782,40 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
           </p>
         </div>
 
-        {section === 'staff' && (
-          <button
-            type="button"
-            onClick={() => setShowStaffForm((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>{cms.pages.staff.ctaLabel || 'Onboard Staff Member'}</span>
-          </button>
+        {section === 'staff' && isAdminManager && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setStaffTab('users');
+                setShowUserForm((v) => !v);
+                setUserActionError(null);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Create User Account</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setStaffTab('roster');
+                setShowStaffForm((v) => !v);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{cms.pages.staff.ctaLabel || 'Onboard Staff Member'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmClearDemo((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Clear Demo Staff &amp; Data</span>
+            </button>
+          </div>
         )}
 
         {section === 'shifts_attendance' && (
@@ -368,7 +847,6 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 type="text"
                 value={payrollPeriod}
                 onChange={(e) => setPayrollPeriod(e.target.value)}
-                placeholder="e.g. November 2026"
                 className="border border-slate-200 rounded-lg px-3 py-2 w-36 bg-white"
               />
             </div>
@@ -408,184 +886,978 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         )}
       </div>
 
-      {/* SECTION: STAFF DIRECTORY */}
+      {/* SECTION: USER ACCOUNTS, STAFF RECORDS & PERFORMANCE */}
       {section === 'staff' && (
-        <>
-          {showStaffForm && (
-            <form
-              onSubmit={handleAddStaff}
-              className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 text-xs"
-            >
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Onboard Property Staff
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">First Name *</label>
-                  <input
-                    required
-                    type="text"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
-                  <input
-                    required
-                    type="text"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Work Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Phone</label>
-                  <input
-                    type="text"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Department</label>
-                  <select
-                    value={department}
-                    onChange={(e) =>
-                      setDepartment(e.target.value as StaffMemberRecord['department'])
-                    }
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="Management">Management</option>
-                    <option value="Front Desk">Front Desk</option>
-                    <option value="Housekeeping">Housekeeping</option>
-                    <option value="Kitchen & F&B">Kitchen &amp; F&amp;B</option>
-                    <option value="Accounts">Accounts</option>
-                    <option value="Engineering & Security">Engineering &amp; Security</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Role</label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as StaffMemberRecord['role'])}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="front_desk">Front Desk &amp; Reservations</option>
-                    <option value="housekeeping">Housekeeping Lead</option>
-                    <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
-                    <option value="accountant">Finance &amp; Payroll Officer</option>
-                    <option value="maintenance">Engineering &amp; Maintenance</option>
-                    <option value="property_admin">Property Admin (GM)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Base Salary (₦)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={5000}
-                    value={baseSalary}
-                    onChange={(e) => setBaseSalary(Number(e.target.value))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Allowance (₦)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={5000}
-                    value={allowance}
-                    onChange={(e) => setAllowance(Number(e.target.value))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
+        <div className="space-y-6">
+          {/* Inline Clear Demo Staff & Data Confirmation */}
+          {confirmClearDemo && isAdminManager && (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-rose-900 text-sm">
+                    Delete all demo staff records and sample operational data in {property.name}?
+                  </p>
+                  <p className="text-rose-800 leading-relaxed">
+                    Removes all sample staff records, shifts, attendance, payroll runs, guests,
+                    bookings, housekeeping tasks, POS orders, inventory, maintenance tickets,
+                    ledger entries, and legacy <span className="font-mono-tabular">gm@richgatesenugu.com</span> access.
+                    Your 8 suites (RM-1 to RM-8), POS menu, OTA channels, and newly created user accounts remain preserved.
+                  </p>
                 </div>
               </div>
-              <div className="flex justify-end gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setShowStaffForm(false)}
-                  className="px-4 py-2 text-slate-600"
+                  onClick={() => setConfirmClearDemo(false)}
+                  className="px-3.5 py-2 border border-rose-200 bg-white text-slate-700 font-semibold rounded-lg cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
-                  type="submit"
-                  className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg"
+                  type="button"
+                  disabled={clearingDemo}
+                  onClick={handleClearDemoStaffAndData}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
                 >
-                  Save Staff Record
+                  {clearingDemo ? 'Clearing...' : 'Confirm Delete Demo Data'}
                 </button>
               </div>
-            </form>
+            </div>
           )}
 
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center gap-2">
-              <Users className="w-4 h-4 text-slate-700" />
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Employee Roster
-              </h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
-                    <th className="py-3 px-4">Code</th>
-                    <th className="py-3 px-4">Staff Member</th>
-                    <th className="py-3 px-4">Department &amp; Role</th>
-                    <th className="py-3 px-4 text-right">Base Salary</th>
-                    <th className="py-3 px-4 text-right">Allowance</th>
-                    <th className="py-3 px-4 text-right">Gross Monthly</th>
-                    <th className="py-3 px-4">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {staffMembers.map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-50">
-                      <td className="py-3 px-4 font-mono-tabular font-semibold text-slate-900">
-                        {s.staffCode}
-                      </td>
-                      <td className="py-3 px-4">
-                        <p className="font-semibold text-slate-900">{s.fullName}</p>
-                        <p className="text-[11px] text-slate-500">
-                          {s.email || s.phone || '—'}
-                        </p>
-                      </td>
-                      <td className="py-3 px-4">
-                        <p className="font-medium text-slate-800">{s.department}</p>
-                        <p className="text-[11px] text-slate-500">{ROLE_LABELS[s.role]}</p>
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular">
-                        {formatNgn(s.monthlyBaseSalaryNgn)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular">
-                        {formatNgn(s.monthlyAllowanceNgn)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular font-semibold text-slate-900">
-                        {formatNgn(s.monthlyBaseSalaryNgn + s.monthlyAllowanceNgn)}
-                      </td>
-                      <td className="py-3 px-4 font-medium text-emerald-700 capitalize">
-                        {s.employmentStatus.replace('_', ' ')}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {/* Tab Navigation */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
+            {isAdminManager && (
+              <button
+                type="button"
+                onClick={() => setStaffTab('users')}
+                className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                  staffTab === 'users'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>User Accounts, Roles &amp; Privileges ({userAccounts.length})</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setStaffTab('roster')}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                staffTab === 'roster' || !isAdminManager
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Staff Records &amp; Roster ({staffMembers.length})</span>
+            </button>
+            {isAdminManager && (
+              <button
+                type="button"
+                onClick={() => setStaffTab('performance')}
+                className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                  staffTab === 'performance'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span>Staff Performance &amp; Analytics</span>
+              </button>
+            )}
           </div>
-        </>
+
+          {userActionError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-800 flex items-center justify-between gap-2">
+              <span>{userActionError}</span>
+              <button
+                type="button"
+                onClick={() => setUserActionError(null)}
+                className="text-red-700 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* TAB 1: USER ACCOUNTS, ROLES & PRIVILEGES */}
+          {isAdminManager && staffTab === 'users' && (
+            <div className="space-y-5">
+              {showUserForm && (
+                <form
+                  onSubmit={handleCreateUserAccount}
+                  className="bg-white border border-slate-200 rounded-xl p-5 space-y-5 text-xs"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div>
+                      <h2 className="font-display text-sm font-bold text-slate-900">
+                        Create User Account, Role &amp; Module Privileges
+                      </h2>
+                      <p className="text-[11px] text-slate-500">
+                        Provision credentials, assign a role (or leave unassigned), and select exact module privileges.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowUserForm(false)}
+                      className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+                      <input
+                        required
+                        type="text"
+                        value={uFirstName}
+                        onChange={(e) => setUFirstName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                      <input
+                        required
+                        type="text"
+                        value={uLastName}
+                        onChange={(e) => setULastName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Account Email *</label>
+                      <input
+                        required
+                        type="email"
+                        value={uEmail}
+                        onChange={(e) => setUEmail(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Phone Number</label>
+                      <input
+                        type="text"
+                        value={uPhone}
+                        onChange={(e) => setUPhone(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Department</label>
+                      <select
+                        value={uDepartment}
+                        onChange={(e) => setUDepartment(e.target.value as DepartmentName)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                      >
+                        {ALL_DEPARTMENTS.map((dept) => (
+                          <option key={dept} value={dept}>
+                            {dept}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Assign Role</label>
+                      <select
+                        value={uRole}
+                        onChange={(e) =>
+                          handleSelectCreateRole(e.target.value as AssignablePropertyRole)
+                        }
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                      >
+                        <option value="front_desk">Front Desk &amp; Reservations</option>
+                        <option value="housekeeping">Housekeeping Lead</option>
+                        <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
+                        <option value="accountant">Finance &amp; Payroll Officer</option>
+                        <option value="maintenance">Engineering &amp; Maintenance</option>
+                        <option value="property_admin">Property Admin (GM)</option>
+                        <option value="unassigned">Unassigned (No Role / Pending)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Sign-In Password (Optional, min 6 chars)
+                      </label>
+                      <input
+                        type="password"
+                        minLength={6}
+                        value={uPassword}
+                        onChange={(e) => setUPassword(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                      <span className="text-[10px] text-slate-500 mt-0.5 block">
+                        Leave blank if user signs in via Google Workspace/Gmail.
+                      </span>
+                    </div>
+                    {uRole !== 'unassigned' && (
+                      <div className="sm:col-span-2 flex flex-wrap items-center gap-4 pt-5">
+                        <label className="inline-flex items-center gap-2 font-medium text-slate-800 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={uCreateStaff}
+                            onChange={(e) => setUCreateStaff(e.target.checked)}
+                            className="rounded border-slate-300 text-emerald-600"
+                          />
+                          <span>Also add employee to Staff Roster &amp; Payroll</span>
+                        </label>
+                        {uCreateStaff && (
+                          <div className="flex items-center gap-2">
+                            <div>
+                              <label className="block text-[10px] text-slate-500">Base Salary (₦)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                step={5000}
+                                value={uBaseSalary}
+                                onChange={(e) => setUBaseSalary(Number(e.target.value))}
+                                className="w-28 border border-slate-200 rounded px-2 py-1 font-mono-tabular"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-500">Allowance (₦)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                step={5000}
+                                value={uAllowance}
+                                onChange={(e) => setUAllowance(Number(e.target.value))}
+                                className="w-28 border border-slate-200 rounded px-2 py-1 font-mono-tabular"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Privileges Matrix */}
+                  <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/60 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-slate-900">
+                          Module Privileges ({uPrivileges.length} selected)
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          Controls which sections this user can open when signed into Richgates PMS.
+                        </p>
+                      </div>
+                      {uRole !== 'unassigned' && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setUPrivileges([...ROLE_ALLOWED_SECTIONS[uRole]])}
+                            className="px-2.5 py-1 border border-slate-200 bg-white rounded text-[11px] font-medium text-slate-700 cursor-pointer"
+                          >
+                            Reset Role Defaults
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setUPrivileges(PROPERTY_PRIVILEGE_OPTIONS.map((p) => p.id))
+                            }
+                            className="px-2.5 py-1 border border-slate-200 bg-white rounded text-[11px] font-medium text-slate-700 cursor-pointer"
+                          >
+                            Select All
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setUPrivileges([])}
+                            className="px-2.5 py-1 border border-slate-200 bg-white rounded text-[11px] font-medium text-slate-700 cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {uRole === 'unassigned' ? (
+                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        Account will be created with no assigned role and zero active privileges until you assign a role.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {PRIVILEGE_GROUPS.map((groupName) => (
+                          <div
+                            key={groupName}
+                            className="bg-white border border-slate-200 rounded-lg p-3 space-y-1.5"
+                          >
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                              {groupName}
+                            </p>
+                            {PROPERTY_PRIVILEGE_OPTIONS.filter((p) => p.group === groupName).map(
+                              (opt) => (
+                                <label
+                                  key={opt.id}
+                                  className="flex items-center gap-2 text-[11px] text-slate-700 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={uPrivileges.includes(opt.id)}
+                                    onChange={() => toggleCreatePrivilege(opt.id)}
+                                    className="rounded border-slate-300 text-emerald-600"
+                                  />
+                                  <span>{opt.label}</span>
+                                </label>
+                              )
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowUserForm(false)}
+                      className="px-4 py-2 text-slate-600 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={creatingUser}
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      {creatingUser ? 'Saving Account...' : 'Create User Account'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* User Accounts Filter & List */}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                    <h2 className="font-display text-sm font-bold text-slate-900">
+                      Property User Accounts, Roles &amp; Privileges
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs">
+                    {(
+                      [
+                        { id: 'all', label: `All (${userAccounts.length})` },
+                        {
+                          id: 'assigned',
+                          label: `Assigned (${userAccounts.filter((a) => a.role !== 'unassigned' && a.active).length})`,
+                        },
+                        {
+                          id: 'unassigned',
+                          label: `Unassigned (${userAccounts.filter((a) => a.role === 'unassigned' || !a.active).length})`,
+                        },
+                      ] as const
+                    ).map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setUserFilter(f.id)}
+                        className={`px-3 py-1.5 rounded-lg font-medium cursor-pointer ${
+                          userFilter === f.id
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
+                        <th className="py-3 px-4">User</th>
+                        <th className="py-3 px-4">Department &amp; Assigned Role</th>
+                        <th className="py-3 px-4">Module Privileges</th>
+                        <th className="py-3 px-4">Access Status</th>
+                        <th className="py-3 px-4 text-right">Role &amp; Account Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {filteredAccounts.map((acc) => {
+                        const isUnassigned = acc.role === 'unassigned' || !acc.active;
+                        return (
+                          <tr key={acc.id} className="hover:bg-slate-50 align-top">
+                            <td className="py-3 px-4">
+                              <p className="font-semibold text-slate-900">{acc.fullName}</p>
+                              <p className="font-mono-tabular text-[11px] text-slate-500">
+                                {acc.email}
+                              </p>
+                              {acc.phone && (
+                                <p className="font-mono-tabular text-[10px] text-slate-400">
+                                  {acc.phone}
+                                </p>
+                              )}
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-medium text-slate-800">{acc.department}</p>
+                              <span
+                                className={`inline-block mt-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  acc.role === 'unassigned'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-emerald-50 text-emerald-800'
+                                }`}
+                              >
+                                {ASSIGNABLE_ROLE_LABELS[acc.role]}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 max-w-xs">
+                              {acc.privileges.length === 0 ? (
+                                <span className="text-[11px] text-slate-400 italic">
+                                  No module privileges assigned
+                                </span>
+                              ) : (
+                                <div className="flex flex-wrap gap-1">
+                                  {acc.privileges.slice(0, 5).map((p) => (
+                                    <span
+                                      key={p}
+                                      className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded text-[10px]"
+                                    >
+                                      {PROPERTY_PRIVILEGE_OPTIONS.find((o) => o.id === p)?.label ||
+                                        p}
+                                    </span>
+                                  ))}
+                                  {acc.privileges.length > 5 && (
+                                    <span className="px-1.5 py-0.5 bg-slate-200 text-slate-800 rounded text-[10px] font-semibold">
+                                      +{acc.privileges.length - 5} more
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 px-4">
+                              {isUnassigned ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold text-[11px]">
+                                  <ShieldAlert className="w-3 h-3" />
+                                  <span>Unassigned / Revoked</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold text-[11px]">
+                                  <UserCheck className="w-3 h-3" />
+                                  <span>Active ({acc.privileges.length})</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-right space-y-1.5">
+                              <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditUserModal(acc)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded cursor-pointer"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                  <span>Assign / Edit Role</span>
+                                </button>
+                                {acc.role !== 'unassigned' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfirmUnassignAccId(acc.id);
+                                      setConfirmDeleteAccId(null);
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold rounded cursor-pointer"
+                                  >
+                                    <UserMinus className="w-3 h-3" />
+                                    <span>Delete Role</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConfirmDeleteAccId(acc.id);
+                                    setConfirmUnassignAccId(null);
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded cursor-pointer"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              </div>
+
+                              {confirmUnassignAccId === acc.id && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-left space-y-1.5">
+                                  <p className="text-[11px] font-medium text-amber-900">
+                                    Remove role &amp; revoke access for {acc.fullName}? Account stays as Unassigned.
+                                  </p>
+                                  <div className="flex justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmUnassignAccId(null)}
+                                      className="px-2 py-1 text-[11px] text-slate-600 cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busyActionId === acc.id}
+                                      onClick={() => handleUnassignAccount(acc)}
+                                      className="px-2.5 py-1 text-[11px] bg-amber-700 text-white font-semibold rounded cursor-pointer"
+                                    >
+                                      {busyActionId === acc.id ? 'Removing...' : 'Confirm Unassign'}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {confirmDeleteAccId === acc.id && (
+                                <div className="bg-rose-50 border border-rose-200 rounded-lg p-2 text-left space-y-1.5">
+                                  <p className="text-[11px] font-medium text-rose-900">
+                                    Permanently delete user account {acc.email}?
+                                  </p>
+                                  <div className="flex justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteAccId(null)}
+                                      className="px-2 py-1 text-[11px] text-slate-600 cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busyActionId === acc.id}
+                                      onClick={() => handleDeleteAccount(acc)}
+                                      className="px-2.5 py-1 text-[11px] bg-rose-600 text-white font-semibold rounded cursor-pointer"
+                                    >
+                                      {busyActionId === acc.id ? 'Deleting...' : 'Confirm Delete'}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {filteredAccounts.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="py-10 text-center text-xs text-slate-500">
+                            No user accounts in this filter yet. Click &ldquo;Create User Account&rdquo; above to add property admins or staff users and assign their roles &amp; privileges.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: STAFF RECORDS & ROSTER */}
+          {(staffTab === 'roster' || !isAdminManager) && (
+            <>
+              {showStaffForm && isAdminManager && (
+                <form
+                  onSubmit={handleAddStaff}
+                  className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 text-xs"
+                >
+                  <h2 className="font-display text-sm font-bold text-slate-900">
+                    Onboard Property Staff
+                  </h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+                      <input
+                        required
+                        type="text"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                      <input
+                        required
+                        type="text"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Work Email</label>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                      <input
+                        type="text"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Department</label>
+                      <select
+                        value={department}
+                        onChange={(e) =>
+                          setDepartment(e.target.value as StaffMemberRecord['department'])
+                        }
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                      >
+                        {ALL_DEPARTMENTS.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Role</label>
+                      <select
+                        value={role}
+                        onChange={(e) => setRole(e.target.value as StaffMemberRecord['role'])}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                      >
+                        <option value="front_desk">Front Desk &amp; Reservations</option>
+                        <option value="housekeeping">Housekeeping Lead</option>
+                        <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
+                        <option value="accountant">Finance &amp; Payroll Officer</option>
+                        <option value="maintenance">Engineering &amp; Maintenance</option>
+                        <option value="property_admin">Property Admin (GM)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Base Salary (₦)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={5000}
+                        value={baseSalary}
+                        onChange={(e) => setBaseSalary(Number(e.target.value))}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Allowance (₦)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={5000}
+                        value={allowance}
+                        onChange={(e) => setAllowance(Number(e.target.value))}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowStaffForm(false)}
+                      className="px-4 py-2 text-slate-600 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      Save Staff Record
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-slate-700" />
+                    <h2 className="font-display text-sm font-bold text-slate-900">
+                      Employee Roster &amp; Records
+                    </h2>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    {activeStaff.length} active of {staffMembers.length} total
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
+                        <th className="py-3 px-4">Code</th>
+                        <th className="py-3 px-4">Staff Member</th>
+                        <th className="py-3 px-4">Department &amp; Role</th>
+                        <th className="py-3 px-4 text-right">Base Salary</th>
+                        <th className="py-3 px-4 text-right">Allowance</th>
+                        <th className="py-3 px-4 text-right">Gross Monthly</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {staffMembers.map((s) => (
+                        <tr key={s.id} className="hover:bg-slate-50 align-top">
+                          <td className="py-3 px-4 font-mono-tabular font-semibold text-slate-900">
+                            {s.staffCode}
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="font-semibold text-slate-900">{s.fullName}</p>
+                            <p className="text-[11px] text-slate-500">
+                              {s.email || s.phone || '—'}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="font-medium text-slate-800">{s.department}</p>
+                            <p className="text-[11px] text-slate-500">{ROLE_LABELS[s.role]}</p>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular">
+                            {formatNgn(s.monthlyBaseSalaryNgn)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular">
+                            {formatNgn(s.monthlyAllowanceNgn)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular font-semibold text-slate-900">
+                            {formatNgn(s.monthlyBaseSalaryNgn + s.monthlyAllowanceNgn)}
+                          </td>
+                          <td className="py-3 px-4 font-medium capitalize">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                s.employmentStatus === 'active'
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : s.employmentStatus === 'on_leave'
+                                    ? 'bg-amber-50 text-amber-700'
+                                    : 'bg-rose-50 text-rose-700'
+                              }`}
+                            >
+                              {s.employmentStatus.replace('_', ' ')}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right space-y-1.5">
+                            <div className="inline-flex flex-wrap justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setViewingStaffDetail(s)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Record</span>
+                              </button>
+                              {isAdminManager && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditStaffModal(s)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded cursor-pointer"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteStaffId(s.id)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span>Delete</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+
+                            {confirmDeleteStaffId === s.id && (
+                              <div className="bg-rose-50 border border-rose-200 rounded-lg p-2 text-left space-y-1.5">
+                                <p className="text-[11px] font-medium text-rose-900">
+                                  Delete staff record for {s.fullName}?
+                                </p>
+                                <div className="flex justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteStaffId(null)}
+                                    className="px-2 py-1 text-[11px] text-slate-600 cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busyActionId === s.id}
+                                    onClick={() => handleDeleteStaff(s)}
+                                    className="px-2.5 py-1 text-[11px] bg-rose-600 text-white font-semibold rounded cursor-pointer"
+                                  >
+                                    {busyActionId === s.id ? 'Deleting...' : 'Confirm Delete'}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {staffMembers.length === 0 && (
+                        <tr>
+                          <td colSpan={8} className="py-10 text-center text-xs text-slate-500">
+                            No staff records on roster yet. Onboard staff directly or check &ldquo;Also add employee to Staff Roster&rdquo; when creating a user account.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* TAB 3: STAFF PERFORMANCE & ANALYTICS */}
+          {isAdminManager && staffTab === 'performance' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
+                  <p className="text-xs text-slate-500">Active User Accounts</p>
+                  <p className="font-mono-tabular text-2xl font-bold text-slate-900 mt-1">
+                    {perfSummary.activeUsers}
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {perfSummary.unassignedUsers} unassigned / paused
+                  </p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
+                  <p className="text-xs text-slate-500">Shift Completion Rate</p>
+                  <p className="font-mono-tabular text-2xl font-bold text-emerald-700 mt-1">
+                    {perfSummary.shiftRate}%
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {perfSummary.closedShifts} closed of {perfSummary.totalShifts} shifts
+                  </p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
+                  <p className="text-xs text-slate-500">Attendance On-Time Rate</p>
+                  <p className="font-mono-tabular text-2xl font-bold text-slate-900 mt-1">
+                    {perfSummary.attRate}%
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {perfSummary.goodAtt} present/completed of {perfSummary.totalAtt} logs
+                  </p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
+                  <p className="text-xs text-slate-500">Tasks &amp; Tickets Completed</p>
+                  <p className="font-mono-tabular text-2xl font-bold text-slate-900 mt-1">
+                    {perfSummary.doneOpsTasks} / {perfSummary.totalOpsTasks}
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {perfSummary.servedOrders} POS orders served
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Award className="w-4 h-4 text-emerald-700" />
+                    <h2 className="font-display text-sm font-bold text-slate-900">
+                      Individual Staff Records &amp; Operational Performance
+                    </h2>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Computed from live shifts, attendance logs, housekeeping &amp; maintenance tasks
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
+                        <th className="py-3 px-4">Staff Member</th>
+                        <th className="py-3 px-4">Role &amp; Account</th>
+                        <th className="py-3 px-4 text-right">Shifts (Done/Total)</th>
+                        <th className="py-3 px-4 text-right">Attendance (On-Time/Logs)</th>
+                        <th className="py-3 px-4 text-right">Tasks &amp; Tickets Done</th>
+                        <th className="py-3 px-4 text-right">Performance Score</th>
+                        <th className="py-3 px-4 text-right">Full Record</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {staffPerformanceRows.map((row) => (
+                        <tr key={row.staff.id} className="hover:bg-slate-50">
+                          <td className="py-3 px-4">
+                            <p className="font-semibold text-slate-900">{row.staff.fullName}</p>
+                            <p className="font-mono-tabular text-[11px] text-slate-500">
+                              {row.staff.staffCode} · {row.staff.department}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="font-medium text-slate-800">
+                              {ROLE_LABELS[row.staff.role]}
+                            </p>
+                            <p className="text-[11px] text-slate-500">
+                              {row.linkedAccount
+                                ? `${ASSIGNABLE_ROLE_LABELS[row.linkedAccount.role]} (${row.linkedAccount.privileges.length} priv.)`
+                                : 'No portal login linked'}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular">
+                            {row.completedShifts} / {row.staffShifts.length}
+                            {row.missedShifts > 0 && (
+                              <span className="block text-[10px] text-rose-600">
+                                {row.missedShifts} missed
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular">
+                            {row.onTimeOrOut} / {row.staffAtt.length}
+                            {row.lateCount > 0 && (
+                              <span className="block text-[10px] text-amber-700">
+                                {row.lateCount} late
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular">
+                            {row.doneTasks} / {row.totalTasks}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular">
+                            {row.overallScore === null ? (
+                              <span className="text-slate-400">No activity yet</span>
+                            ) : (
+                              <span
+                                className={`px-2 py-0.5 rounded font-bold ${
+                                  row.overallScore >= 85
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : row.overallScore >= 65
+                                      ? 'bg-amber-50 text-amber-800'
+                                      : 'bg-rose-50 text-rose-700'
+                                }`}
+                              >
+                                {row.overallScore}%
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => setViewingStaffDetail(row.staff)}
+                              className="inline-flex items-center gap-1 px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>View Record</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {staffPerformanceRows.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="py-10 text-center text-xs text-slate-500">
+                            No staff records available yet. Add employees in the Staff Roster or User Accounts tab to track real-time performance.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* SECTION: SHIFTS & ATTENDANCE */}
@@ -1116,7 +2388,6 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 rows={3}
                 value={handoverNotes}
                 onChange={(e) => setHandoverNotes(e.target.value)}
-                placeholder="e.g. Keys verified, POS terminal settled, handover completed to incoming desk..."
                 className="w-full border border-slate-200 rounded-lg px-3 py-2"
               />
             </div>
@@ -1141,6 +2412,566 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
           </form>
         </div>
       )}
+
+      {/* Edit User Account Role & Privileges Modal */}
+      {editingAccount && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={handleSaveUserEdit}
+            className="bg-white border border-slate-200 rounded-xl max-w-3xl w-full p-6 space-y-4 text-xs my-8"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Manage Role &amp; Privileges — {editingAccount.fullName}
+                </h3>
+                <p className="font-mono-tabular text-[11px] text-slate-500">
+                  {editingAccount.email}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingAccount(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+                <input
+                  required
+                  type="text"
+                  value={editUFirstName}
+                  onChange={(e) => setEditUFirstName(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                <input
+                  required
+                  type="text"
+                  value={editULastName}
+                  onChange={(e) => setEditULastName(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                <input
+                  type="text"
+                  value={editUPhone}
+                  onChange={(e) => setEditUPhone(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Department</label>
+                <select
+                  value={editUDept}
+                  onChange={(e) => setEditUDept(e.target.value as DepartmentName)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  {ALL_DEPARTMENTS.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Assigned Role</label>
+                <select
+                  value={editURole}
+                  onChange={(e) =>
+                    handleEditRoleSelect(e.target.value as AssignablePropertyRole)
+                  }
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="front_desk">Front Desk &amp; Reservations</option>
+                  <option value="housekeeping">Housekeeping Lead</option>
+                  <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
+                  <option value="accountant">Finance &amp; Payroll Officer</option>
+                  <option value="maintenance">Engineering &amp; Maintenance</option>
+                  <option value="property_admin">Property Admin (GM)</option>
+                  <option value="unassigned">Unassigned (Delete Role / Revoke)</option>
+                </select>
+              </div>
+              <div className="flex items-end pb-2">
+                <label className="inline-flex items-center gap-2 font-medium text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    disabled={editURole === 'unassigned'}
+                    checked={editUActive && editURole !== 'unassigned'}
+                    onChange={(e) => setEditUActive(e.target.checked)}
+                    className="rounded border-slate-300 text-emerald-600"
+                  />
+                  <span>Account Active</span>
+                </label>
+              </div>
+            </div>
+
+            {editURole !== 'unassigned' ? (
+              <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/70 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-slate-900">
+                    Granted Module Privileges ({editUPrivileges.length} selected)
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditUPrivileges([...ROLE_ALLOWED_SECTIONS[editURole]])}
+                      className="px-2.5 py-1 border border-slate-200 bg-white rounded text-[11px] font-medium cursor-pointer"
+                    >
+                      Apply Role Defaults
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditUPrivileges(PROPERTY_PRIVILEGE_OPTIONS.map((p) => p.id))
+                      }
+                      className="px-2.5 py-1 border border-slate-200 bg-white rounded text-[11px] font-medium cursor-pointer"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditUPrivileges([])}
+                      className="px-2.5 py-1 border border-slate-200 bg-white rounded text-[11px] font-medium cursor-pointer"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-64 overflow-y-auto pr-1">
+                  {PRIVILEGE_GROUPS.map((groupName) => (
+                    <div
+                      key={groupName}
+                      className="bg-white border border-slate-200 rounded-lg p-3 space-y-1.5"
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        {groupName}
+                      </p>
+                      {PROPERTY_PRIVILEGE_OPTIONS.filter((p) => p.group === groupName).map(
+                        (opt) => (
+                          <label
+                            key={opt.id}
+                            className="flex items-center gap-2 text-[11px] text-slate-700 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={editUPrivileges.includes(opt.id)}
+                              onChange={() =>
+                                setEditUPrivileges((prev) =>
+                                  prev.includes(opt.id)
+                                    ? prev.filter((x) => x !== opt.id)
+                                    : [...prev, opt.id]
+                                )
+                              }
+                              className="rounded border-slate-300 text-emerald-600"
+                            />
+                            <span>{opt.label}</span>
+                          </label>
+                        )
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-900">
+                Setting role to Unassigned removes all module privileges and blocks property workspace login until a role is reassigned.
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingAccount(null)}
+                className="px-4 py-2 text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingUserEdit}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+              >
+                {savingUserEdit ? 'Saving...' : 'Save Role & Privileges'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Edit Staff Record Modal */}
+      {editingStaffModal && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveStaffModal}
+            className="bg-white border border-slate-200 rounded-xl max-w-xl w-full p-6 space-y-4 text-xs"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Edit Staff Record — {editingStaffModal.staffCode}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Update employment status, department, role, and compensation
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingStaffModal(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+                <input
+                  required
+                  type="text"
+                  value={editSFirstName}
+                  onChange={(e) => setEditSFirstName(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                <input
+                  required
+                  type="text"
+                  value={editSLastName}
+                  onChange={(e) => setEditSLastName(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Work Email</label>
+                <input
+                  type="email"
+                  value={editSEmail}
+                  onChange={(e) => setEditSEmail(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                <input
+                  type="text"
+                  value={editSPhone}
+                  onChange={(e) => setEditSPhone(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Department</label>
+                <select
+                  value={editSDept}
+                  onChange={(e) => setEditSDept(e.target.value as DepartmentName)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  {ALL_DEPARTMENTS.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Role</label>
+                <select
+                  value={editSRole}
+                  onChange={(e) => setEditSRole(e.target.value as StaffMemberRecord['role'])}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="front_desk">Front Desk &amp; Reservations</option>
+                  <option value="housekeeping">Housekeeping Lead</option>
+                  <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
+                  <option value="accountant">Finance &amp; Payroll Officer</option>
+                  <option value="maintenance">Engineering &amp; Maintenance</option>
+                  <option value="property_admin">Property Admin (GM)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Base Salary (₦)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={5000}
+                  value={editSBase}
+                  onChange={(e) => setEditSBase(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Allowance (₦)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={2500}
+                  value={editSAllowance}
+                  onChange={(e) => setEditSAllowance(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block font-medium text-slate-700 mb-1">Employment Status</label>
+                <select
+                  value={editSStatus}
+                  onChange={(e) =>
+                    setEditSStatus(e.target.value as StaffMemberRecord['employmentStatus'])
+                  }
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="active">Active</option>
+                  <option value="on_leave">On Leave</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingStaffModal(null)}
+                className="px-4 py-2 text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingStaffEdit}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+              >
+                {savingStaffEdit ? 'Saving...' : 'Save Staff Record'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Staff Record & Performance Detail Modal */}
+      {viewingStaffDetail && (() => {
+        const detailRow = staffPerformanceRows.find(
+          (r) => r.staff.id === viewingStaffDetail.id
+        );
+        const gross =
+          viewingStaffDetail.monthlyBaseSalaryNgn + viewingStaffDetail.monthlyAllowanceNgn;
+        const pension = Math.round(gross * 0.08);
+        const paye = Math.round(gross * 0.09);
+        const net = gross - pension - paye;
+
+        return (
+          <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white border border-slate-200 rounded-2xl max-w-3xl w-full p-6 space-y-5 text-xs my-8">
+              <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                <div>
+                  <p className="font-mono-tabular text-[11px] font-semibold text-emerald-700">
+                    {viewingStaffDetail.staffCode} · {viewingStaffDetail.department}
+                  </p>
+                  <h3 className="font-display text-lg font-bold text-slate-900">
+                    {viewingStaffDetail.fullName} — Staff Record &amp; Performance
+                  </h3>
+                  <p className="text-slate-500">
+                    {ROLE_LABELS[viewingStaffDetail.role]} ·{' '}
+                    {viewingStaffDetail.email || 'No email'} ·{' '}
+                    {viewingStaffDetail.phone || 'No phone'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingStaffDetail(null)}
+                  className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-[11px] text-slate-500">Performance Score</p>
+                  <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
+                    {detailRow?.overallScore === null || detailRow?.overallScore === undefined
+                      ? '—'
+                      : `${detailRow.overallScore}%`}
+                  </p>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-[11px] text-slate-500">Shifts Closed</p>
+                  <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
+                    {detailRow?.completedShifts ?? 0} / {detailRow?.staffShifts.length ?? 0}
+                  </p>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-[11px] text-slate-500">Attendance On-Time</p>
+                  <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
+                    {detailRow?.onTimeOrOut ?? 0} / {detailRow?.staffAtt.length ?? 0}
+                  </p>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-[11px] text-slate-500">Tasks &amp; Tickets</p>
+                  <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
+                    {detailRow?.doneTasks ?? 0} / {detailRow?.totalTasks ?? 0}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-slate-200 rounded-xl p-4 space-y-2">
+                  <h4 className="font-display text-xs font-bold text-slate-900">
+                    Monthly Compensation &amp; Payroll Profile
+                  </h4>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Base Salary</span>
+                    <span className="font-mono-tabular font-semibold">
+                      {formatNgn(viewingStaffDetail.monthlyBaseSalaryNgn)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Allowance</span>
+                    <span className="font-mono-tabular font-semibold">
+                      {formatNgn(viewingStaffDetail.monthlyAllowanceNgn)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-100 pt-1.5">
+                    <span className="text-slate-600">Gross Monthly</span>
+                    <span className="font-mono-tabular font-bold">{formatNgn(gross)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-500">
+                    <span>Pension (8%) + PAYE (9%)</span>
+                    <span className="font-mono-tabular">-{formatNgn(pension + paye)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-100 pt-1.5 font-bold text-emerald-700">
+                    <span>Estimated Net Take-Home</span>
+                    <span className="font-mono-tabular">{formatNgn(net)}</span>
+                  </div>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-display text-xs font-bold text-slate-900">
+                      Portal User Account &amp; Privileges
+                    </h4>
+                    {detailRow?.linkedAccount && isAdminManager && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const acc = detailRow.linkedAccount!;
+                          setViewingStaffDetail(null);
+                          openEditUserModal(acc);
+                        }}
+                        className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                      >
+                        Edit Role/Privileges
+                      </button>
+                    )}
+                  </div>
+                  {detailRow?.linkedAccount ? (
+                    <>
+                      <p className="font-mono-tabular text-slate-700">
+                        {detailRow.linkedAccount.email}
+                      </p>
+                      <p>
+                        Role:{' '}
+                        <span className="font-semibold text-slate-900">
+                          {ASSIGNABLE_ROLE_LABELS[detailRow.linkedAccount.role]}
+                        </span>{' '}
+                        · {detailRow.linkedAccount.active ? 'Active' : 'Unassigned / Paused'}
+                      </p>
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {detailRow.linkedAccount.privileges.map((priv) => (
+                          <span
+                            key={priv}
+                            className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded text-[10px]"
+                          >
+                            {PROPERTY_PRIVILEGE_OPTIONS.find((o) => o.id === priv)?.label || priv}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-slate-500">
+                      No portal login linked to this staff record yet. Create an account under User
+                      Accounts, Roles &amp; Privileges to grant PMS access.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-slate-200 rounded-xl p-4 space-y-2 max-h-48 overflow-y-auto">
+                  <h4 className="font-display text-xs font-bold text-slate-900">
+                    Recent Shifts &amp; Handover Logs ({detailRow?.staffShifts.length ?? 0})
+                  </h4>
+                  {(detailRow?.staffShifts || []).slice(0, 6).map((sh) => (
+                    <div key={sh.id} className="border-b border-slate-100 pb-1.5">
+                      <p className="font-semibold text-slate-800">
+                        {sh.shiftDate} · {sh.shiftWindow} ({sh.status})
+                      </p>
+                      {sh.handoverNotes && (
+                        <p className="text-[11px] text-slate-500 italic">{sh.handoverNotes}</p>
+                      )}
+                    </div>
+                  ))}
+                  {(detailRow?.staffShifts.length ?? 0) === 0 && (
+                    <p className="text-slate-500">No shifts recorded for this staff member yet.</p>
+                  )}
+                </div>
+
+                <div className="border border-slate-200 rounded-xl p-4 space-y-2 max-h-48 overflow-y-auto">
+                  <h4 className="font-display text-xs font-bold text-slate-900">
+                    Recent Attendance &amp; Assigned Tasks
+                  </h4>
+                  {(detailRow?.staffAtt || []).slice(0, 4).map((att) => (
+                    <div key={att.id} className="border-b border-slate-100 pb-1">
+                      <p className="font-mono-tabular text-slate-800">
+                        {att.date} · In {att.clockInTime}
+                        {att.clockOutTime ? ` · Out ${att.clockOutTime}` : ''} ({att.status})
+                      </p>
+                    </div>
+                  ))}
+                  {(detailRow?.assignedHk || []).slice(0, 3).map((t) => (
+                    <div key={t.id} className="border-b border-slate-100 pb-1">
+                      <p className="text-slate-700">
+                        Housekeeping {t.roomNumber}: {t.taskType} ({t.status})
+                      </p>
+                    </div>
+                  ))}
+                  {(detailRow?.assignedMnt || []).slice(0, 3).map((m) => (
+                    <div key={m.id} className="border-b border-slate-100 pb-1">
+                      <p className="text-slate-700">
+                        Maintenance {m.locationLabel}: {m.issueTitle} ({m.status})
+                      </p>
+                    </div>
+                  ))}
+                  {(detailRow?.staffAtt.length ?? 0) === 0 &&
+                    (detailRow?.totalTasks ?? 0) === 0 && (
+                      <p className="text-slate-500">No attendance or task activity recorded yet.</p>
+                    )}
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setViewingStaffDetail(null)}
+                  className="px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg cursor-pointer"
+                >
+                  Close Record
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

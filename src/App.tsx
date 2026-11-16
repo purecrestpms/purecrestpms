@@ -69,6 +69,7 @@ import {
   AttendanceRecord,
   AuditLogRecord,
   BlockedDateRecord,
+  extractApexDomain,
   extractPropertySubdomainSlug,
   getPortalUrl,
   getPropertySubdomainSlug,
@@ -87,6 +88,7 @@ import {
   PosOrderRecord,
   PropertyMessageRecord,
   PropertyRecord,
+  PropertyUserAccountRecord,
   PurchaseOrderRecord,
   ReservationRecord,
   ROLE_ALLOWED_SECTIONS,
@@ -189,7 +191,13 @@ function detectInitialPortal(): PortalMode {
   }
   if (path.includes('pch-admin')) return 'pch-admin';
   const host = window.location.hostname.toLowerCase();
-  if (host === 'app.pchpms.com' || host === 'www.pchpms.com' || host === 'pchpms.com') {
+  const apex = extractApexDomain(host);
+  if (
+    host === 'app.pchpms.com' ||
+    host === 'www.pchpms.com' ||
+    host === 'pchpms.com' ||
+    (apex && (host === apex || host === `app.${apex}` || host === `www.${apex}`))
+  ) {
     return 'home';
   }
   if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
@@ -294,6 +302,7 @@ export default function App() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItemRecord[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRecord[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMemberRecord[]>([]);
+  const [userAccounts, setUserAccounts] = useState<PropertyUserAccountRecord[]>([]);
   const [shifts, setShifts] = useState<ShiftScheduleRecord[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>([]);
@@ -313,9 +322,13 @@ export default function App() {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const host = window.location.hostname.toLowerCase();
+    const apex = extractApexDomain(host);
     const isPropSubdomain = Boolean(extractPropertySubdomainSlug(host));
     const isAppDomain =
-      host === 'app.pchpms.com' || host === 'www.pchpms.com' || host === 'pchpms.com';
+      host === 'app.pchpms.com' ||
+      host === 'www.pchpms.com' ||
+      host === 'pchpms.com' ||
+      Boolean(apex && (host === apex || host === `app.${apex}` || host === `www.${apex}`));
     const isAdminSubdomain =
       host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.');
 
@@ -431,14 +444,34 @@ export default function App() {
         ? 'property_admin'
         : staffRole;
 
+  const isSignedInBootstrapped = Boolean(user && isBootstrappedAdminEmail(user.email));
+  const signedInEmailLower = (user?.email || '').trim().toLowerCase();
+  const matchedUserAccount =
+    !isSignedInBootstrapped && portalMode !== 'pch-admin' && signedInEmailLower
+      ? userAccounts.find((a) => a.email.trim().toLowerCase() === signedInEmailLower)
+      : undefined;
+
+  const effectiveRole: StaffRole =
+    portalMode === 'pch-admin'
+      ? 'pch_admin'
+      : matchedUserAccount && matchedUserAccount.role !== 'unassigned'
+        ? matchedUserAccount.role
+        : activeRole;
+
+  const effectiveAllowedSections: NavSectionId[] =
+    portalMode === 'pch-admin'
+      ? ROLE_ALLOWED_SECTIONS.pch_admin
+      : matchedUserAccount && matchedUserAccount.privileges.length > 0
+        ? matchedUserAccount.privileges
+        : ROLE_ALLOWED_SECTIONS[effectiveRole];
+
   useEffect(() => {
-    const allowed = ROLE_ALLOWED_SECTIONS[activeRole];
-    if (!allowed.includes(activeSection)) {
-      const fallback = allowed[0] || 'dashboard';
+    if (!effectiveAllowedSections.includes(activeSection)) {
+      const fallback = effectiveAllowedSections[0] || 'dashboard';
       setActiveSection(fallback);
       syncUrlParams(portalMode, fallback);
     }
-  }, [activeRole, activeSection, portalMode]);
+  }, [effectiveAllowedSections, activeSection, portalMode]);
 
   // Root Firestore subscriptions
   useEffect(() => {
@@ -609,6 +642,7 @@ export default function App() {
       sub<InventoryItemRecord>('inventory_items', setInventoryItems),
       sub<PurchaseOrderRecord>('purchase_orders', setPurchaseOrders),
       sub<StaffMemberRecord>('staff_members', setStaffMembers),
+      sub<PropertyUserAccountRecord>('user_accounts', setUserAccounts),
       sub<ShiftScheduleRecord>('shifts', setShifts),
       sub<AttendanceRecord>('attendance', setAttendance),
       sub<PayrollRunRecord>('payroll_runs', setPayrollRuns),
@@ -947,8 +981,47 @@ export default function App() {
   const activeLicense = licenses.find(
     (l) => l.propertyId === activeProperty?.id && l.status === 'active'
   );
+  const isAccountAccessRevoked = Boolean(
+    matchedUserAccount &&
+      (matchedUserAccount.role === 'unassigned' ||
+        !matchedUserAccount.active ||
+        matchedUserAccount.privileges.length === 0)
+  );
+
+  if (isAccountAccessRevoked) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4 text-center shadow-sm">
+          <div className="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="font-display text-lg font-bold text-slate-900">
+              Role Unassigned / Access Paused
+            </h1>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Your account (<span className="font-mono-tabular font-semibold">{user.email}</span>) does
+              not currently have an active role or module privileges assigned for{' '}
+              <span className="font-semibold text-slate-900">
+                {activeProperty?.name || 'Richgates Apartments, Enugu'}
+              </span>
+              . Please contact your Property Administrator to assign a role.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="w-full px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg cursor-pointer"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const unreadMessages = messages
-    .filter((m) => isMessageUnreadForUser(m, activeRole, user.email || ''))
+    .filter((m) => isMessageUnreadForUser(m, effectiveRole, user.email || ''))
     .sort((a, b) => b.createdAtIso.localeCompare(a.createdAtIso));
 
   return (
@@ -960,9 +1033,15 @@ export default function App() {
         activePropertyId={activePropertyId}
         onSelectProperty={setActivePropertyId}
         portalMode={portalMode}
-        activeRole={activeRole}
+        activeRole={effectiveRole}
+        allowedSections={effectiveAllowedSections}
         userEmail={user.email || ''}
-        userName={userProfile?.displayName || user.displayName || 'Property Operator'}
+        userName={
+          matchedUserAccount?.fullName ||
+          userProfile?.displayName ||
+          user.displayName ||
+          'Property Operator'
+        }
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
         onOpenPortalLinksModal={() => setShowPortalModal(true)}
@@ -1100,10 +1179,13 @@ export default function App() {
               </span>
               <span className="leading-tight">
                 <span className="block text-xs font-semibold text-slate-900">
-                  {userProfile?.displayName || user.displayName || 'Property Admin'}
+                  {matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    'Property Admin'}
                 </span>
                 <span className="block text-[10px] text-slate-500">
-                  {ROLE_LABELS[activeRole]}
+                  {ROLE_LABELS[effectiveRole]}
                 </span>
               </span>
             </button>
@@ -1263,8 +1345,8 @@ export default function App() {
                   posOrders={posOrders}
                   maintenanceTickets={maintenanceTickets}
                   activeLicense={activeLicense}
-                  canManageRooms={activeRole === 'pch_admin' || activeRole === 'property_admin'}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  canManageRooms={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}
                   onNavigate={handleSelectSection}
@@ -1280,7 +1362,7 @@ export default function App() {
                   reservations={reservations}
                   blockedDates={blockedDates}
                   guests={guests}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}
                   onOpenReservationFolio={handleOpenReservationFolio}
@@ -1308,8 +1390,8 @@ export default function App() {
                   onConsumeIntent={() => setReservationIntent('view')}
                   onSelectReservation={setSelectedReservationId}
                   onNavigateSection={handleSelectSection}
-                  activeRole={activeRole}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  activeRole={effectiveRole}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}
                 />
@@ -1320,10 +1402,12 @@ export default function App() {
                   key={`profile-${activeProperty.id}`}
                   property={activeProperty}
                   activeLicense={activeLicense}
-                  activeRole={activeRole}
+                  activeRole={effectiveRole}
                   userEmail={user.email || ''}
                   userUid={user.uid}
-                  defaultDisplayName={user.displayName || 'Property Admin'}
+                  defaultDisplayName={
+                    matchedUserAccount?.fullName || user.displayName || 'Property Admin'
+                  }
                   userProfile={userProfile}
                   onNotify={notify}
                 />
@@ -1337,7 +1421,7 @@ export default function App() {
                   rooms={rooms}
                   housekeepingTasks={housekeepingTasks}
                   maintenanceTickets={maintenanceTickets}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                 />
               )}
@@ -1351,8 +1435,8 @@ export default function App() {
                   inventoryItems={inventoryItems}
                   ledgerEntries={ledgerEntries}
                   reservations={reservations}
-                  canManageMenu={activeRole === 'pch_admin' || activeRole === 'property_admin'}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  canManageMenu={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                 />
               )}
@@ -1361,7 +1445,7 @@ export default function App() {
                 <AdminReportsAnalyticsView
                   key={`reports-${activeProperty.id}`}
                   property={activeProperty}
-                  activeRole={activeRole}
+                  activeRole={effectiveRole}
                   rooms={rooms}
                   reservations={reservations}
                   blockedDates={blockedDates}
@@ -1391,7 +1475,7 @@ export default function App() {
                   ledgerEntries={ledgerEntries}
                   inventoryItems={inventoryItems}
                   purchaseOrders={purchaseOrders}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                 />
               )}
@@ -1403,11 +1487,16 @@ export default function App() {
                   key={`${activeSection}-${activeProperty.id}`}
                   section={activeSection}
                   property={activeProperty}
+                  activeRole={effectiveRole}
                   staffMembers={staffMembers}
+                  userAccounts={userAccounts}
                   shifts={shifts}
                   attendance={attendance}
                   payrollRuns={payrollRuns}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  housekeepingTasks={housekeepingTasks}
+                  maintenanceTickets={maintenanceTickets}
+                  posOrders={posOrders}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                 />
               )}
@@ -1430,7 +1519,7 @@ export default function App() {
                   licenses={licenses}
                   planInquiries={planInquiries}
                   auditLogs={auditLogs}
-                  activeRole={activeRole}
+                  activeRole={effectiveRole}
                   onSelectProperty={setActivePropertyId}
                   onSwitchPortal={(nextPortal) => {
                     handlePortalSelection(nextPortal);
@@ -1443,8 +1532,8 @@ export default function App() {
                 <CmsAdminView
                   key={`cms-${activeProperty.id}`}
                   property={activeProperty}
-                  activeRole={activeRole}
-                  actorRole={ROLE_LABELS[activeRole]}
+                  activeRole={effectiveRole}
+                  actorRole={ROLE_LABELS[effectiveRole]}
                   onNavigate={handleSelectSection}
                   onNotify={notify}
                 />
@@ -1456,9 +1545,14 @@ export default function App() {
                   property={activeProperty}
                   messages={messages}
                   staffMembers={staffMembers}
-                  activeRole={activeRole}
+                  activeRole={effectiveRole}
                   userEmail={user.email || ''}
-                  userName={userProfile?.displayName || user.displayName || 'Property Operator'}
+                  userName={
+                    matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    'Property Operator'
+                  }
                   onNotify={notify}
                 />
               )}
@@ -1467,9 +1561,14 @@ export default function App() {
                 <HelpDocsTrainingView
                   key={`training-${activeProperty.id}`}
                   property={activeProperty}
-                  activeRole={activeRole}
+                  activeRole={effectiveRole}
                   userEmail={user.email || ''}
-                  userName={userProfile?.displayName || user.displayName || 'Property Operator'}
+                  userName={
+                    matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    'Property Operator'
+                  }
                   onNotify={notify}
                 />
               )}

@@ -660,6 +660,31 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "PropertyUserAccount": {
+      "title": "PropertyUserAccount",
+      "description": "Property user account with assigned role, module privileges, and staff linkage.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "firstName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "lastName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "department": { "type": "string", "enum": ["Management", "Front Desk", "Housekeeping", "Kitchen & F&B", "Accounts", "Engineering & Security"] },
+        "role": { "type": "string", "enum": ["property_admin", "front_desk", "housekeeping", "fnb_kitchen", "accountant", "maintenance", "unassigned"] },
+        "privileges": { "type": "array" },
+        "active": { "type": "boolean" },
+        "linkedStaffId": { "type": "string", "maxLength": 128 },
+        "authProvisioned": { "type": "boolean" },
+        "lastRoleUpdatedIso": { "type": "string", "maxLength": 40 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "firstName", "lastName", "fullName", "email", "department", "role", "privileges", "active", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -718,6 +743,10 @@
     "/properties/{propertyId}/staff_members/{staffId}": {
       "schema": { "$ref": "#/entities/StaffMember" },
       "description": "Property staff roster and compensation."
+    },
+    "/properties/{propertyId}/user_accounts/{accountId}": {
+      "schema": { "$ref": "#/entities/PropertyUserAccount" },
+      "description": "Property user accounts with assigned roles, module privileges, and unassigned state."
     },
     "/properties/{propertyId}/shifts/{shiftId}": {
       "schema": { "$ref": "#/entities/ShiftSchedule" },

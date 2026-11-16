@@ -51,6 +51,7 @@ interface SidebarProps {
   onSelectProperty: (id: string) => void;
   portalMode: PortalMode;
   activeRole: StaffRole;
+  allowedSections?: NavSectionId[];
   userEmail: string;
   userName: string;
   mobileOpen: boolean;
@@ -98,7 +99,7 @@ const NAV_GROUPS: Array<{
     items: [
       { id: 'accounting', label: 'Accounting Ledger', icon: CreditCard },
       { id: 'reports', label: 'Financial Reports', icon: FileSpreadsheet },
-      { id: 'staff', label: 'Staff Directory', icon: Users },
+      { id: 'staff', label: 'Staff, Users & Performance', icon: Users },
       { id: 'shifts_attendance', label: 'Shifts & Attendance', icon: Clock },
       { id: 'payroll', label: 'Monthly Payroll', icon: Wallet },
       { id: 'maintenance', label: 'Maintenance', icon: Wrench },
@@ -132,6 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectProperty,
   portalMode,
   activeRole,
+  allowedSections,
   userEmail,
   userName,
   mobileOpen,
@@ -142,7 +144,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   unreadMessageCount = 0,
 }) => {
   const { cms } = useCms();
-  const allowed = ROLE_ALLOWED_SECTIONS[activeRole];
+  const allowed =
+    allowedSections && allowedSections.length > 0
+      ? allowedSections
+      : ROLE_ALLOWED_SECTIONS[activeRole];
   const activeProp = properties.find((p) => p.id === activePropertyId) || properties[0];
   const [logoError, setLogoError] = useState(false);
   const [pchLogoError, setPchLogoError] = useState(false);

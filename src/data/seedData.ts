@@ -23,7 +23,7 @@ export function buildRichgatesSeedPayload(
   targetPropertyId: string = RICHGATES_PROPERTY_ID
 ) {
   const authorizedEmails = Array.from(
-    new Set([...BOOTSTRAPPED_ADMIN_EMAILS, ownerEmail.toLowerCase(), 'gm@richgatesenugu.com'])
+    new Set([...BOOTSTRAPPED_ADMIN_EMAILS, ownerEmail.toLowerCase()])
   );
   const isDefaultProp = targetPropertyId === RICHGATES_PROPERTY_ID;
 
