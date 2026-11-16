@@ -16,6 +16,9 @@
         "email": { "type": "string", "format": "email", "maxLength": 120 },
         "logoUrl": { "type": "string", "maxLength": 350000 },
         "currency": { "type": "string", "enum": ["NGN"] },
+        "usdExchangeRateNgn": { "type": "number" },
+        "usdRateUpdatedIso": { "type": "string", "maxLength": 40 },
+        "usdRateSource": { "type": "string", "maxLength": 64 },
         "roomCount": { "type": "number" },
         "status": { "type": "string", "enum": ["active", "onboarding", "suspended"] },
         "licenseKey": { "type": "string", "maxLength": 64 },
@@ -220,6 +223,7 @@
         "idNumber": { "type": "string", "maxLength": 64 },
         "keyIssued": { "type": "boolean" },
         "checkedInAtIso": { "type": "string", "maxLength": 40 },
+        "externalUid": { "type": "string", "maxLength": 160 },
         "authorizedEmails": { "type": "array" },
         "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -604,6 +608,52 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "PlanInquiry": {
+      "title": "PlanInquiry",
+      "description": "Public plan purchase request or sales contact inquiry submitted on app.pchpms.com.",
+      "type": "object",
+      "properties": {
+        "referenceCode": { "type": "string", "minLength": 6, "maxLength": 32 },
+        "inquiryType": { "type": "string", "enum": ["plan_purchase", "contact_demo"] },
+        "plan": { "type": "string", "enum": ["Starter", "Professional", "Enterprise", "Lifetime Sovereign", "Custom"] },
+        "billingCycle": { "type": "string", "enum": ["monthly", "annual", "lifetime", "n/a"] },
+        "estimatedTotalNgn": { "type": "number" },
+        "currency": { "type": "string", "enum": ["USD", "NGN"] },
+        "propertyName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "cityState": { "type": "string", "maxLength": 120 },
+        "roomCount": { "type": "number" },
+        "preferredSubdomain": { "type": "string", "maxLength": 64 },
+        "contactName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "contactEmail": { "type": "string", "format": "email", "maxLength": 120 },
+        "contactPhone": { "type": "string", "minLength": 6, "maxLength": 32 },
+        "paymentOption": { "type": "string", "maxLength": 64 },
+        "message": { "type": "string", "maxLength": 1200 },
+        "status": { "type": "string", "enum": ["new", "contacted", "provisioned"] },
+        "createdAtIso": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "referenceCode",
+        "inquiryType",
+        "plan",
+        "billingCycle",
+        "estimatedTotalNgn",
+        "propertyName",
+        "cityState",
+        "roomCount",
+        "preferredSubdomain",
+        "contactName",
+        "contactEmail",
+        "contactPhone",
+        "paymentOption",
+        "message",
+        "status",
+        "createdAtIso",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -694,6 +744,10 @@
     "/app_cms/{cmsId}": {
       "schema": { "$ref": "#/entities/CmsConfig" },
       "description": "Global application CMS content configuration editable by PCH Super Admin."
+    },
+    "/plan_inquiries/{inquiryId}": {
+      "schema": { "$ref": "#/entities/PlanInquiry" },
+      "description": "Software plan purchase orders and contact inquiries submitted from app.pchpms.com."
     }
   }
 }

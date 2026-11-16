@@ -78,7 +78,8 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
-        'currency', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'adminEmail',
+        'currency', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource',
+        'roomCount', 'status', 'licenseKey', 'licensePlan', 'adminEmail',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
@@ -92,6 +93,9 @@ service cloud.firestore {
       (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
       (!('logoUrl' in data) || (data.logoUrl is string && data.logoUrl.size() <= 350000)) &&
       data.currency == 'NGN' &&
+      (!('usdExchangeRateNgn' in data) || (data.usdExchangeRateNgn is number && data.usdExchangeRateNgn > 0 && data.usdExchangeRateNgn <= 100000)) &&
+      (!('usdRateUpdatedIso' in data) || (data.usdRateUpdatedIso is string && data.usdRateUpdatedIso.size() <= 40)) &&
+      (!('usdRateSource' in data) || (data.usdRateSource is string && data.usdRateSource.size() <= 64)) &&
       data.roomCount is number && data.roomCount >= 1 && data.roomCount <= 500 &&
       data.status in ['active', 'onboarding', 'suspended'] &&
       (!('licenseKey' in data) || (data.licenseKey is string && data.licenseKey.size() <= 64)) &&
@@ -234,7 +238,7 @@ service cloud.firestore {
         'propertyId', 'bookingRef', 'roomId', 'roomNumber', 'requestedRoomType', 'guestId', 'guestName', 'guestPhone',
         'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'channel', 'nightlyRateNgn',
         'roomChargesNgn', 'posChargesNgn', 'paidNgn', 'status', 'paymentMethod',
-        'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso',
+        'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'externalUid',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
@@ -264,6 +268,7 @@ service cloud.firestore {
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
       (!('keyIssued' in data) || data.keyIssued is bool) &&
       (!('checkedInAtIso' in data) || (data.checkedInAtIso is string && data.checkedInAtIso.size() <= 40)) &&
+      (!('externalUid' in data) || (data.externalUid is string && data.externalUid.size() <= 160)) &&
       isAuthorizedEmailList(data.authorizedEmails) &&
       data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
       data.createdAt is timestamp &&
@@ -579,6 +584,40 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidPlanInquiry(data) {
+      return data.keys().hasAll([
+        'referenceCode', 'inquiryType', 'plan', 'billingCycle', 'estimatedTotalNgn',
+        'propertyName', 'cityState', 'roomCount', 'preferredSubdomain',
+        'contactName', 'contactEmail', 'contactPhone', 'paymentOption',
+        'message', 'status', 'createdAtIso', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'referenceCode', 'inquiryType', 'plan', 'billingCycle', 'estimatedTotalNgn', 'currency',
+        'propertyName', 'cityState', 'roomCount', 'preferredSubdomain',
+        'contactName', 'contactEmail', 'contactPhone', 'paymentOption',
+        'message', 'status', 'createdAtIso', 'createdAt', 'updatedAt'
+      ]) &&
+      data.referenceCode is string && data.referenceCode.size() >= 6 && data.referenceCode.size() <= 32 &&
+      data.inquiryType in ['plan_purchase', 'contact_demo'] &&
+      data.plan in ['Starter', 'Professional', 'Enterprise', 'Lifetime Sovereign', 'Custom'] &&
+      data.billingCycle in ['monthly', 'annual', 'lifetime', 'n/a'] &&
+      data.estimatedTotalNgn is number && data.estimatedTotalNgn >= 0 && data.estimatedTotalNgn <= 100000000 &&
+      (!('currency' in data) || (data.currency is string && data.currency in ['USD', 'NGN'])) &&
+      data.propertyName is string && data.propertyName.size() >= 2 && data.propertyName.size() <= 120 &&
+      data.cityState is string && data.cityState.size() <= 120 &&
+      data.roomCount is number && data.roomCount >= 1 && data.roomCount <= 5000 &&
+      data.preferredSubdomain is string && data.preferredSubdomain.size() <= 64 &&
+      data.contactName is string && data.contactName.size() >= 2 && data.contactName.size() <= 120 &&
+      data.contactEmail is string && data.contactEmail.size() >= 5 && data.contactEmail.size() <= 120 &&
+      data.contactPhone is string && data.contactPhone.size() >= 6 && data.contactPhone.size() <= 32 &&
+      data.paymentOption is string && data.paymentOption.size() <= 64 &&
+      data.message is string && data.message.size() <= 1200 &&
+      data.status in ['new', 'contacted', 'provisioned'] &&
+      data.createdAtIso is string && data.createdAtIso.size() <= 40 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     // Root collection: Properties
     match /properties/{propertyId} {
       allow get: if isValidId(propertyId) && (isBootstrappedAdmin() || (resource != null && isMemberResource(existing())));
@@ -591,7 +630,7 @@ service cloud.firestore {
         incoming().updatedAt == request.time && (
           isBootstrappedAdmin() || (
             isMemberResource(existing()) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'authorizedEmails', 'updatedAt'])
           )
         );
       allow delete: if isValidId(propertyId) && isBootstrappedAdmin();
@@ -640,7 +679,7 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
               !(existing().status in ['checked_out', 'cancelled', 'no_show']) &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'externalUid', 'updatedAt'])
             )
           );
         allow delete: if isValidId(propertyId) && isValidId(reservationId) && isBootstrappedAdmin();
@@ -939,6 +978,21 @@ service cloud.firestore {
         isValidCmsConfig(incoming()) && incoming().ownerUid == existing().ownerUid &&
         incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
       allow delete: if isValidId(cmsId) && cmsId == 'global' && isPchSuperAdmin();
+    }
+
+    // Root collection: Public Plan Purchases & Contact Inquiries (admin read-only)
+    match /plan_inquiries/{inquiryId} {
+      allow get: if isValidId(inquiryId) && isPchSuperAdmin();
+      allow list: if isPchSuperAdmin();
+      allow create: if isValidId(inquiryId) && isValidPlanInquiry(incoming()) &&
+        incoming().status == 'new' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(inquiryId) && isPchSuperAdmin() &&
+        isValidPlanInquiry(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(inquiryId) && isPchSuperAdmin();
     }
   }
 }

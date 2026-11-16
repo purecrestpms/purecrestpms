@@ -2,8 +2,9 @@
 
 @layer base {
   :root {
+    --font-site-title: 'Playfair Display', Georgia, 'Times New Roman', serif;
     --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
   }
 
@@ -15,6 +16,11 @@
 
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
+  }
+
+  .font-site-title {
+    font-family: var(--font-site-title);
+    letter-spacing: -0.02em;
   }
 
   .font-mono-tabular {

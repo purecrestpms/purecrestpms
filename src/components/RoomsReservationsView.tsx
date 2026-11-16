@@ -46,8 +46,10 @@ import {
 } from '../services/pmsService';
 import {
   BlockedDateRecord,
+  convertNgnToUsd,
   formatBookingSourceLabel,
   formatNgn,
+  formatUsd,
   getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
@@ -70,6 +72,7 @@ import {
   StaffRole,
 } from '../types/pms';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
+import { CurrencyConverterWidget } from './CurrencyConverterWidget';
 
 interface RoomsReservationsViewProps {
   section: Extract<
@@ -2265,6 +2268,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       {/* SECTION: ROOMS */}
       {section === 'rooms' && (
         <div className="space-y-6">
+          <CurrencyConverterWidget
+            property={property}
+            rooms={rooms}
+            canEditRate={canManageRooms}
+            actorRole={actorRole}
+            onNotify={onNotify}
+          />
           {roomSections.map((sec) => {
             const secRooms = sortedRooms.filter((r) => getRoomSection(r) === sec.key);
             if (secRooms.length === 0) return null;
@@ -2355,14 +2365,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-center justify-between">
-                              <span className="font-mono-tabular text-base font-bold text-slate-900">
-                                {formatNgn(room.nightlyRateNgn)}
-                                <span className="text-xs font-normal text-slate-500">
-                                  {' '}
-                                  / night
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <span className="font-mono-tabular text-base font-bold text-slate-900 block">
+                                  {formatNgn(room.nightlyRateNgn)}
+                                  <span className="text-xs font-normal text-slate-500">
+                                    {' '}
+                                    / night
+                                  </span>
                                 </span>
-                              </span>
+                                <span className="font-mono-tabular text-[11px] font-medium text-emerald-700 block">
+                                  ≈ {formatUsd(convertNgnToUsd(room.nightlyRateNgn, property.usdExchangeRateNgn), 2)} USD / night
+                                </span>
+                              </div>
                               {canManageRooms && (
                                 <button
                                   type="button"

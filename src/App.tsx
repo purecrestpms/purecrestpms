@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { AdminLicensingView } from './components/AdminLicensingView';
 import { AdminReportsAnalyticsView } from './components/AdminReportsAnalyticsView';
+import { AppHomepageView } from './components/AppHomepageView';
 import { CmsAdminView } from './components/CmsAdminView';
 import { DashboardView } from './components/DashboardView';
 import {
@@ -59,6 +60,7 @@ import {
   seedRichgatesIfNeeded,
   syncDefaultMessagesIfNeeded,
   syncDefaultPosMenuIfNeeded,
+  syncOtaChannelWorkflow,
   syncRichgatesLicenseCapIfNeeded,
   syncRichgatesOfficialCatalogIfNeeded,
   syncRichgatesPropertyInfoIfNeeded,
@@ -79,6 +81,7 @@ import {
   NavSectionId,
   OtaIntegrationRecord,
   PayrollRunRecord,
+  PlanInquiryRecord,
   PortalMode,
   PosMenuItemRecord,
   PosOrderRecord,
@@ -173,15 +176,22 @@ function detectInitialPortal(): PortalMode {
   if (typeof window === 'undefined') return 'richgates-admin';
   const params = new URLSearchParams(window.location.search);
   const p = params.get('portal');
+  if (p === 'home' || p === 'marketing' || p === 'app') return 'home';
   if (p === 'pch-admin' || p === 'richgates-admin' || p === 'staff') return p;
   if (p === 'admin' || p === 'richgates' || p === 'richgates-login') return 'richgates-admin';
   if (p === 'richgates-staff') return 'staff';
   const path = window.location.pathname.toLowerCase();
+  if (path === '/home' || path.startsWith('/home/')) {
+    return 'home';
+  }
   if (path === '/staff' || path.startsWith('/staff/') || path.includes('/login/staff')) {
     return 'staff';
   }
   if (path.includes('pch-admin')) return 'pch-admin';
   const host = window.location.hostname.toLowerCase();
+  if (host === 'app.pchpms.com' || host === 'www.pchpms.com' || host === 'pchpms.com') {
+    return 'home';
+  }
   if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
     return 'pch-admin';
   }
@@ -290,6 +300,7 @@ export default function App() {
   const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicketRecord[]>([]);
   const [otaChannels, setOtaChannels] = useState<OtaIntegrationRecord[]>([]);
   const [messages, setMessages] = useState<PropertyMessageRecord[]>([]);
+  const [planInquiries, setPlanInquiries] = useState<PlanInquiryRecord[]>([]);
 
   const notify = (msg: string) => {
     setToast(msg);
@@ -303,8 +314,19 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const host = window.location.hostname.toLowerCase();
     const isPropSubdomain = Boolean(extractPropertySubdomainSlug(host));
+    const isAppDomain =
+      host === 'app.pchpms.com' || host === 'www.pchpms.com' || host === 'pchpms.com';
     const isAdminSubdomain =
       host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.');
+
+    if (nextPortal === 'home') {
+      params.delete('portal');
+      params.delete('page');
+      const qs = params.toString();
+      const basePath = isAppDomain ? '/' : '/home';
+      window.history.replaceState({}, '', qs ? `${basePath}?${qs}` : basePath);
+      return;
+    }
 
     if (nextPortal === 'staff') {
       params.delete('portal');
@@ -405,7 +427,7 @@ export default function App() {
   const activeRole: StaffRole =
     portalMode === 'pch-admin'
       ? 'pch_admin'
-      : portalMode === 'richgates-admin'
+      : portalMode === 'richgates-admin' || portalMode === 'home'
         ? 'property_admin'
         : staffRole;
 
@@ -533,12 +555,24 @@ export default function App() {
       }
     );
 
+    const unsubPlanInquiries = isAdmin
+      ? onSnapshot(
+          query(collection(db, 'plan_inquiries'), orderBy('createdAtIso', 'desc')),
+          (snap) =>
+            setPlanInquiries(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PlanInquiryRecord)),
+          () => {
+            setPlanInquiries([]);
+          }
+        )
+      : () => undefined;
+
     return () => {
       unsubProps();
       unsubLic();
       unsubAud();
       unsubUserProfile();
       unsubCms();
+      unsubPlanInquiries();
     };
   }, [authReady, user]);
 
@@ -653,6 +687,52 @@ export default function App() {
     msgSyncedRef.current.add(activeProp.id);
     void syncDefaultMessagesIfNeeded(activeProp);
   }, [properties, activePropertyId, messages.length]);
+
+  // Automatic background OTA iCal reservation sync every 10 minutes for connected autoSync channels
+  useEffect(() => {
+    const activeProp = properties.find((p) => p.id === activePropertyId);
+    if (!activeProp || rooms.length === 0) return;
+    if (activeRole !== 'pch_admin' && activeRole !== 'property_admin' && activeRole !== 'front_desk') {
+      return;
+    }
+
+    const syncDueChannels = async () => {
+      const nowMs = Date.now();
+      const TEN_MIN_MS = 10 * 60 * 1000;
+      const due = otaChannels.filter((ch) => {
+        if (!ch.connected || !ch.autoSync || !ch.icalImportUrl?.trim()) return false;
+        const lastMs = Date.parse(ch.lastSyncedIso || '');
+        return !Number.isFinite(lastMs) || nowMs - lastMs >= TEN_MIN_MS;
+      });
+      if (due.length === 0) return;
+
+      let totalNew = 0;
+      for (const ch of due) {
+        try {
+          const res = await syncOtaChannelWorkflow({
+            property: activeProp,
+            channel: ch,
+            rooms,
+            reservations,
+            actorRole: `${ROLE_LABELS[activeRole]} (Auto-Sync)`,
+          });
+          totalNew += res.created;
+        } catch {
+          // Quiet background retry on next cycle
+        }
+      }
+      if (totalNew > 0) {
+        notify(`OTA Auto-Sync imported ${totalNew} new booking(s)`);
+      }
+    };
+
+    void syncDueChannels();
+    const timer = window.setInterval(() => {
+      void syncDueChannels();
+    }, 10 * 60 * 1000);
+
+    return () => window.clearInterval(timer);
+  }, [properties, activePropertyId, otaChannels, rooms, reservations, activeRole]);
 
   // Real-time alert toast when a new incoming message arrives after initial snapshot load
   useEffect(() => {
@@ -783,6 +863,20 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-xs text-slate-500">
         Initializing PCH PMS workspace...
       </div>
+    );
+  }
+
+  if (portalMode === 'home') {
+    return (
+      <AppHomepageView
+        isSignedIn={Boolean(user)}
+        onSelectPortal={(nextPortal) => {
+          setAuthError(null);
+          setAuthNotice(null);
+          handlePortalSelection(nextPortal);
+        }}
+        onReturnToWorkspace={() => handlePortalSelection('richgates-admin')}
+      />
     );
   }
 
@@ -1284,6 +1378,7 @@ export default function App() {
                   otaChannels={otaChannels}
                   posMenuItems={posMenuItems}
                   licenses={licenses}
+                  planInquiries={planInquiries}
                   auditLogs={auditLogs}
                   activeRole={activeRole}
                   onSelectProperty={setActivePropertyId}
@@ -1358,6 +1453,11 @@ export default function App() {
             <div className="space-y-3">
               {(
                 [
+                  {
+                    id: 'home',
+                    title: 'Software Homepage & Pricing (app.pchpms.com)',
+                    desc: 'Public hotel management showcase, pricing plans, purchase orders & contact desk',
+                  },
                   {
                     id: 'richgates-admin',
                     title: 'Richgates Property Admin Login',

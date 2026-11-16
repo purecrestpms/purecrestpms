@@ -143,6 +143,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const allowed = ROLE_ALLOWED_SECTIONS[activeRole];
   const activeProp = properties.find((p) => p.id === activePropertyId) || properties[0];
   const [logoError, setLogoError] = useState(false);
+  const [pchLogoError, setPchLogoError] = useState(false);
 
   useEffect(() => {
     setLogoError(false);
@@ -159,9 +160,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
           {portalMode === 'pch-admin' ? (
-            <div className="w-9 h-9 rounded-lg bg-[#1c46be] border border-blue-400/40 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-4 h-4 text-white" />
-            </div>
+            !pchLogoError ? (
+              <div className="w-9 h-9 rounded-lg overflow-hidden bg-white shrink-0">
+                <img
+                  src="/assets/aistudio/4A541DC4-8B5B-4592-9C9E-752D5AE470AD_3f72a29d.png"
+                  alt="PCH Emblem"
+                  referrerPolicy="no-referrer"
+                  onError={() => setPchLogoError(true)}
+                  className="w-full h-full object-cover scale-[1.06]"
+                />
+              </div>
+            ) : (
+              <div className="w-9 h-9 rounded-lg bg-[#0B245B] border border-amber-400/50 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-4 h-4 text-white" />
+              </div>
+            )
           ) : activeProp?.logoUrl && !logoError ? (
             <img
               key={activeProp.logoUrl}
@@ -177,7 +190,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           )}
           <div className="min-w-0">
-            <span className="font-display text-lg font-bold tracking-tight text-white block truncate">
+            <span
+              className={`${
+                portalMode === 'pch-admin' ? 'font-site-title text-lg' : 'font-display text-lg'
+              } font-bold tracking-tight text-white block truncate`}
+            >
               {portalMode === 'pch-admin' ? cms.brand.pchPortalName : cms.brand.richgatesPortalName}
             </span>
             <p className="text-[11px] text-slate-400 truncate">

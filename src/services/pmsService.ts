@@ -21,6 +21,7 @@ import {
 } from '../firebase';
 import { mergeCmsWithDefaults } from '../context/CmsContext';
 import { buildRichgatesSeedPayload, generateLicenseKey, RICHGATES_PROPERTY_ID } from '../data/seedData';
+import { deterministicOtaReservationId, parseIcalEvents } from '../utils/icalParser';
 import {
   AttendanceRecord,
   BlockedDateRecord,
@@ -35,6 +36,7 @@ import {
   MessageRecipientScope,
   OtaIntegrationRecord,
   PayrollRunRecord,
+  PlanInquiryRecord,
   POS_MENU_ITEMS,
   PosMenuItemRecord,
   PosOrderRecord,
@@ -1183,6 +1185,35 @@ export async function updatePropertyProfile(params: {
   }
 }
 
+export async function updatePropertyUsdRateWorkflow(params: {
+  property: PropertyRecord;
+  usdExchangeRateNgn: number;
+  usdRateSource: string;
+  actorRole: string;
+}) {
+  const safeRate = Math.max(100, Math.min(100000, Math.round(params.usdExchangeRateNgn * 100) / 100));
+  const nowIso = new Date().toISOString();
+  const ref = doc(db, 'properties', params.property.id);
+  try {
+    await updateDoc(ref, {
+      usdExchangeRateNgn: safeRate,
+      usdRateUpdatedIso: nowIso,
+      usdRateSource: params.usdRateSource.trim().slice(0, 64),
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Currency & FX',
+      action: 'Updated Daily USD Exchange Rate',
+      details: `1 USD = ₦${safeRate.toLocaleString()} (${params.usdRateSource})`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
+  }
+}
+
 export async function saveMyUserProfile(params: {
   propertyId: string;
   role: StaffRole;
@@ -2180,64 +2211,274 @@ export async function resolveMaintenanceTicket(params: {
   }
 }
 
+export interface OtaSyncResult {
+  created: number;
+  updated: number;
+  cancelled: number;
+  skipped: number;
+  totalEvents: number;
+}
+
+function datesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+  return aStart < bEnd && bStart < aEnd;
+}
+
 export async function syncOtaChannelWorkflow(params: {
   property: PropertyRecord;
   channel: OtaIntegrationRecord;
+  rooms?: RoomRecord[];
+  reservations?: ReservationRecord[];
+  icsRawText?: string;
   toggleConnect?: boolean;
   toggleAutoSync?: boolean;
-  importSampleBooking?: boolean;
-  availableRoom?: RoomRecord;
   actorRole: string;
-}) {
+}): Promise<OtaSyncResult> {
+  const { uid } = getActorContext();
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', params.channel.id);
   const nextConnected = params.toggleConnect ? !params.channel.connected : params.channel.connected;
   const nextAutoSync = params.toggleAutoSync ? !params.channel.autoSync : params.channel.autoSync;
-  const importedDelta = params.importSampleBooking ? 1 : 0;
 
-  try {
-    await updateDoc(ref, {
-      connected: nextConnected,
-      autoSync: nextAutoSync,
-      lastSyncedIso: new Date().toISOString(),
-      bookingsImported: params.channel.bookingsImported + importedDelta,
-      updatedAt: serverTimestamp(),
-    });
-
-    if (params.importSampleBooking && params.availableRoom) {
-      const today = new Date();
-      const checkIn = new Date(today.getTime() + 86400000).toISOString().slice(0, 10);
-      const checkOut = new Date(today.getTime() + 86400000 * 3).toISOString().slice(0, 10);
-      await createReservationWorkflow({
-        property: params.property,
-        room: params.availableRoom,
-        guestName: `${params.channel.channelName} Guest (${Math.floor(100 + Math.random() * 899)})`,
-        guestPhone: '+234 803 555 0142',
-        checkInDate: checkIn,
-        checkOutDate: checkOut,
-        nights: 2,
-        adults: 2,
-        channel:
-          params.channel.channelName === 'Direct Website Engine'
-            ? 'Direct Web'
-            : params.channel.channelName,
-        paymentMethod: 'Online Gateway',
-        depositNgn: params.availableRoom.nightlyRateNgn * 2,
-        immediateCheckIn: false,
-        actorRole: params.actorRole,
+  // Status-only toggle (Connect/Disconnect or AutoSync toggle)
+  if (params.toggleConnect || params.toggleAutoSync) {
+    try {
+      await updateDoc(ref, {
+        connected: nextConnected,
+        autoSync: nextAutoSync,
+        updatedAt: serverTimestamp(),
       });
+      await writeAuditLog({
+        propertyId: params.property.id,
+        actorRole: params.actorRole,
+        module: 'Channel Manager',
+        action: `${nextConnected ? 'Connected' : 'Disconnected'} ${params.channel.channelName}`,
+        details: `Connected: ${nextConnected} · AutoSync: ${nextAutoSync}`,
+        authorizedEmails: params.property.authorizedEmails,
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, ref.path);
+    }
+    return { created: 0, updated: 0, cancelled: 0, skipped: 0, totalEvents: 0 };
+  }
+
+  // Real OTA .ics fetch via server/Edge proxy or uploaded .ics text
+  let rawIcs = params.icsRawText?.trim() || '';
+  if (!rawIcs) {
+    const importUrl = params.channel.icalImportUrl?.trim();
+    if (!importUrl) {
+      throw new Error(
+        `No inbound .ics calendar link is saved for ${params.channel.channelName}. Paste your property OTA .ics link or upload a .ics file.`
+      );
+    }
+    const resp = await fetch(`/api/ical-proxy?url=${encodeURIComponent(importUrl)}`, {
+      method: 'GET',
+    });
+    if (!resp.ok) {
+      let errMsg = `Calendar sync failed (HTTP ${resp.status}).`;
+      try {
+        const json = (await resp.json()) as { error?: string };
+        if (json.error) errMsg = json.error;
+      } catch {
+        // ignore non-JSON error
+      }
+      throw new Error(errMsg);
+    }
+    rawIcs = await resp.text();
+  }
+
+  const resolvedChannelSource =
+    params.channel.channelName === 'Direct Website Engine'
+      ? ('Direct Web' as const)
+      : params.channel.channelName;
+
+  const parsedEvents = parseIcalEvents(rawIcs, resolvedChannelSource);
+
+  // Load current rooms & reservations if not provided
+  let roomList = params.rooms || [];
+  if (roomList.length === 0) {
+    const roomsSnap = await getDocs(collection(db, 'properties', params.property.id, 'rooms'));
+    roomList = roomsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RoomRecord, 'id'>) }));
+  }
+  if (roomList.length === 0) {
+    throw new Error('No rooms exist in this property to assign imported OTA bookings.');
+  }
+
+  let existingReservations = params.reservations || [];
+  if (existingReservations.length === 0) {
+    const resSnap = await getDocs(
+      collection(db, 'properties', params.property.id, 'reservations')
+    );
+    existingReservations = resSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<ReservationRecord, 'id'>),
+    }));
+  }
+
+  const byId = new Map<string, ReservationRecord>();
+  const byExternalUid = new Map<string, ReservationRecord>();
+  for (const r of existingReservations) {
+    byId.set(r.id, r);
+    if (r.externalUid) {
+      byExternalUid.set(`${r.channel}::${r.externalUid}`, r);
+    }
+  }
+
+  const yesterdayIso = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  const mappedRoom =
+    params.channel.roomNumber && params.channel.roomNumber !== 'All Suites'
+      ? roomList.find((r) => r.roomNumber === params.channel.roomNumber)
+      : undefined;
+
+  const pickRoomForDates = (checkIn: string, checkOut: string): RoomRecord => {
+    if (mappedRoom) return mappedRoom;
+    const freeRoom = roomList.find((room) => {
+      const hasConflict = existingReservations.some(
+        (res) =>
+          res.roomId === room.id &&
+          res.status !== 'cancelled' &&
+          res.status !== 'no_show' &&
+          res.status !== 'checked_out' &&
+          datesOverlap(checkIn, checkOut, res.checkInDate, res.checkOutDate)
+      );
+      return !hasConflict;
+    });
+    return freeRoom || roomList[0];
+  };
+
+  let created = 0;
+  let updated = 0;
+  let cancelled = 0;
+  let skipped = 0;
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  for (const ev of parsedEvents) {
+    const deterministicId = deterministicOtaReservationId(params.channel.id, ev.uid);
+    const existing =
+      byId.get(deterministicId) ||
+      byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`);
+
+    if (existing) {
+      if (
+        existing.status === 'checked_out' ||
+        existing.status === 'checked_in' ||
+        existing.status === 'no_show'
+      ) {
+        skipped += 1;
+        continue;
+      }
+
+      if (ev.cancelled && existing.status !== 'cancelled') {
+        const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
+        batch.update(resRef, {
+          status: 'cancelled',
+          updatedAt: now,
+        });
+        cancelled += 1;
+        continue;
+      }
+
+      if (
+        !ev.cancelled &&
+        (existing.checkInDate !== ev.checkInDate ||
+          existing.checkOutDate !== ev.checkOutDate ||
+          existing.guestName !== ev.guestName)
+      ) {
+        const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
+        const roomRate = existing.nightlyRateNgn;
+        batch.update(resRef, {
+          checkInDate: ev.checkInDate,
+          checkOutDate: ev.checkOutDate,
+          nights: ev.nights,
+          guestName: ev.guestName,
+          roomChargesNgn: roomRate * ev.nights,
+          updatedAt: now,
+        });
+        updated += 1;
+        continue;
+      }
+
+      skipped += 1;
+      continue;
     }
 
+    // Do not import cancelled or historical bookings that checked out before yesterday
+    if (ev.cancelled || ev.checkOutDate < yesterdayIso) {
+      skipped += 1;
+      continue;
+    }
+
+    const assignedRoom = pickRoomForDates(ev.checkInDate, ev.checkOutDate);
+    const nightlyRate = assignedRoom.nightlyRateNgn || 0;
+    const roomCharges = nightlyRate * ev.nights;
+    const bookingRef = `OTA-${deterministicId.slice(4, 10).toUpperCase()}`;
+
+    const resRef = doc(db, 'properties', params.property.id, 'reservations', deterministicId);
+    const newRecord: Omit<ReservationRecord, 'id' | 'createdAt'> & {
+      createdAt: ReturnType<typeof serverTimestamp>;
+      updatedAt: ReturnType<typeof serverTimestamp>;
+    } = {
+      propertyId: params.property.id,
+      bookingRef,
+      roomId: assignedRoom.id,
+      roomNumber: assignedRoom.roomNumber,
+      requestedRoomType: assignedRoom.roomType,
+      guestName: ev.guestName,
+      ...(ev.guestPhone ? { guestPhone: ev.guestPhone } : {}),
+      checkInDate: ev.checkInDate,
+      checkOutDate: ev.checkOutDate,
+      bookedDate: todayIso,
+      nights: ev.nights,
+      adults: Math.min(2, assignedRoom.maxGuests || 2),
+      children: 0,
+      channel: params.channel.channelName === 'Direct Website Engine' ? 'Direct Web' : params.channel.channelName,
+      nightlyRateNgn: nightlyRate,
+      roomChargesNgn: roomCharges,
+      posChargesNgn: 0,
+      paidNgn: 0,
+      status: 'confirmed',
+      paymentMethod: 'Online Gateway',
+      externalUid: ev.uid,
+      authorizedEmails: params.property.authorizedEmails,
+      ownerUid: uid,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    batch.set(resRef, newRecord);
+    existingReservations.push({ id: deterministicId, ...(newRecord as Omit<ReservationRecord, 'id'>) });
+    created += 1;
+  }
+
+  batch.update(ref, {
+    lastSyncedIso: new Date().toISOString(),
+    bookingsImported: params.channel.bookingsImported + created,
+    updatedAt: now,
+  });
+
+  try {
+    await batch.commit();
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Synced ${params.channel.channelName}`,
-      details: `Connected: ${nextConnected} · AutoSync: ${nextAutoSync}`,
+      details: `${parsedEvents.length} calendar events checked · Created: ${created} · Updated: ${updated} · Cancelled: ${cancelled} · Duplicates skipped: ${skipped}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
+
+  return {
+    created,
+    updated,
+    cancelled,
+    skipped,
+    totalEvents: parsedEvents.length,
+  };
 }
 
 export async function createOtaChannelWithIcal(params: {
@@ -2978,5 +3219,85 @@ export async function markAllMessagesReadWorkflow(params: {
     await batch.commit();
   } catch {
     // Ignore non-fatal batch read acknowledgement error
+  }
+}
+
+export async function submitPublicPlanInquiryWorkflow(params: {
+  inquiryType: PlanInquiryRecord['inquiryType'];
+  plan: PlanInquiryRecord['plan'];
+  billingCycle: PlanInquiryRecord['billingCycle'];
+  estimatedTotalNgn: number;
+  currency?: 'USD' | 'NGN';
+  propertyName: string;
+  cityState: string;
+  roomCount: number;
+  preferredSubdomain: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  paymentOption: string;
+  message: string;
+}): Promise<PlanInquiryRecord> {
+  const id = cleanId('inq');
+  const prefix = params.inquiryType === 'plan_purchase' ? 'PCH-ORD' : 'PCH-CNT';
+  const referenceCode = `${prefix}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+  const nowIso = new Date().toISOString();
+  const payload = {
+    referenceCode,
+    inquiryType: params.inquiryType,
+    plan: params.plan,
+    billingCycle: params.billingCycle,
+    estimatedTotalNgn: Math.max(0, Math.round(params.estimatedTotalNgn || 0)),
+    currency: params.currency ?? ('USD' as const),
+    propertyName: params.propertyName.trim().slice(0, 118),
+    cityState: params.cityState.trim().slice(0, 118),
+    roomCount: Math.max(1, Math.min(5000, Math.round(params.roomCount || 1))),
+    preferredSubdomain: params.preferredSubdomain
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '')
+      .slice(0, 60),
+    contactName: params.contactName.trim().slice(0, 118),
+    contactEmail: params.contactEmail.trim().toLowerCase().slice(0, 118),
+    contactPhone: params.contactPhone.trim().slice(0, 30),
+    paymentOption: params.paymentOption.trim().slice(0, 60),
+    message: params.message.trim().slice(0, 1180),
+    status: 'new' as const,
+    createdAtIso: nowIso,
+  };
+
+  try {
+    await withFirestoreRetry(
+      () =>
+        setDoc(doc(db, 'plan_inquiries', id), {
+          ...payload,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }),
+      2,
+      600
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `plan_inquiries/${id}`);
+  }
+
+  return {
+    id,
+    ...payload,
+  };
+}
+
+export async function updatePlanInquiryStatusWorkflow(params: {
+  inquiryId: string;
+  status: PlanInquiryRecord['status'];
+}) {
+  const ref = doc(db, 'plan_inquiries', params.inquiryId);
+  try {
+    await updateDoc(ref, {
+      status: params.status,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
 }

@@ -26,8 +26,10 @@ import {
 import { useCms } from '../context/CmsContext';
 import { transitionReservationStatus } from '../services/pmsService';
 import {
+  convertNgnToUsd,
   formatBookingSourceLabel,
   formatNgn,
+  formatUsd,
   getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
@@ -52,6 +54,7 @@ import {
   sortRoomsByNumber,
 } from '../types/pms';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
+import { CurrencyConverterWidget } from './CurrencyConverterWidget';
 
 interface DashboardViewProps {
   property: PropertyRecord;
@@ -505,6 +508,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         })}
       </div>
 
+      {/* Daily USD Exchange Rate & Currency Converter */}
+      <CurrencyConverterWidget
+        property={property}
+        rooms={rooms}
+        canEditRate={canManageRooms}
+        actorRole={actorRole}
+        compact
+        onNotify={onNotify}
+      />
+
       {/* Room Overview Matrix + Today's Schedule */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 space-y-5">
@@ -726,9 +739,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="font-mono-tabular text-xs font-bold">
                           {room.roomNumber}
                         </span>
-                        <span className="font-mono-tabular text-xs font-semibold text-emerald-300">
-                          {formatNgn(room.nightlyRateNgn)}
-                        </span>
+                        <div className="text-right leading-tight">
+                          <span className="block font-mono-tabular text-xs font-semibold text-emerald-300">
+                            {formatNgn(room.nightlyRateNgn)}
+                          </span>
+                          <span className="block font-mono-tabular text-[10px] text-slate-200/95">
+                            ≈ {formatUsd(convertNgnToUsd(room.nightlyRateNgn, property.usdExchangeRateNgn), 0)}/nt
+                          </span>
+                        </div>
                       </div>
                     </div>
 

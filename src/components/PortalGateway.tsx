@@ -39,6 +39,9 @@ interface PortalGatewayProps {
 const RICHGATES_ATTACHED_ICON =
   '/assets/aistudio/001890be-a02f-4bfe-9e94-a4c86e183844_b9376f70.jpeg';
 
+const PCH_ATTACHED_ICON =
+  '/assets/aistudio/4A541DC4-8B5B-4592-9C9E-752D5AE470AD_3f72a29d.png';
+
 const STAFF_ROLES: StaffRole[] = [
   'front_desk',
   'housekeeping',
@@ -68,7 +71,7 @@ const RichgatesEmblem: React.FC = () => {
         </div>
       )}
       <div className="text-center sm:text-left">
-        <span className="block font-display text-3xl sm:text-4xl font-bold tracking-tight text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]">
+        <span className="block font-site-title text-3xl sm:text-4xl font-bold tracking-tight text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]">
           Richgates Apartments
         </span>
         <span className="block text-[11px] sm:text-xs font-semibold tracking-[0.26em] text-yellow-300/95 uppercase mt-1 drop-shadow">
@@ -96,35 +99,48 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
   const [passwordHint, setPasswordHint] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [pchIconError, setPchIconError] = useState(false);
 
   const isStaffPage = selectedPortal === 'staff';
   const isPchPage = selectedPortal === 'pch-admin';
 
   // =========================================================================
-  // 1. DEDICATED PCH SUPER ADMIN PORTAL (Independent Branding & Blue Theme)
+  // 1. DEDICATED PCH SUPER ADMIN PORTAL (Independent Branding & Navy/Gold Theme)
   // =========================================================================
   if (isPchPage) {
     return (
       <div className="min-h-screen bg-white text-slate-900 flex flex-col lg:flex-row">
-        <div className="lg:w-1/2 relative bg-[#1a3ca8] text-white flex flex-col justify-between min-h-[280px] lg:min-h-screen overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-br from-[#15359a] via-[#1c46be] to-[#0e2261]" />
-          <div className="relative z-10 p-8 lg:p-12 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/25 backdrop-blur-sm flex items-center justify-center">
-              <ShieldCheck className="w-5 h-5 text-white" />
-            </div>
+        <div className="lg:w-1/2 relative bg-[#0B245B] text-white flex flex-col justify-between min-h-[280px] lg:min-h-screen overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-[#081A44] via-[#0B245B] to-[#13347D]" />
+          <div className="relative z-10 p-8 lg:p-12 flex items-center gap-3.5">
+            {!pchIconError ? (
+              <div className="w-12 h-12 rounded-xl overflow-hidden bg-white shadow-md shrink-0">
+                <img
+                  src={PCH_ATTACHED_ICON}
+                  alt="PCH Emblem"
+                  referrerPolicy="no-referrer"
+                  onError={() => setPchIconError(true)}
+                  className="w-full h-full object-cover scale-[1.06]"
+                />
+              </div>
+            ) : (
+              <div className="w-12 h-12 rounded-xl bg-white/15 border border-white/25 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5 text-white" />
+              </div>
+            )}
             <div>
-              <span className="font-display text-lg font-bold tracking-tight text-white block leading-tight">
+              <span className="font-site-title text-2xl font-bold text-white block leading-tight">
                 {cms.brand.pchPortalName}
               </span>
-              <p className="text-xs text-blue-100/90">Multi-Property Administration</p>
+              <p className="text-xs text-amber-200/90 mt-0.5">Multi-Property Administration</p>
             </div>
           </div>
 
           <div className="relative z-10 p-8 lg:p-12 space-y-4 max-w-lg">
-            <p className="text-xs font-medium tracking-wide text-blue-200">
+            <p className="text-xs font-medium tracking-wide text-amber-300">
               {cms.login.pchHeroKicker}
             </p>
-            <h1 className="font-display text-3xl lg:text-4xl font-bold tracking-tight text-white [text-wrap:balance]">
+            <h1 className="font-site-title text-3xl lg:text-4xl font-bold text-white [text-wrap:balance]">
               {cms.login.pchHeroTitle}
             </h1>
             <p className="text-sm text-blue-100/90 leading-relaxed">
@@ -167,7 +183,6 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
                     type="email"
                     value={workEmailHint}
                     onChange={(e) => setWorkEmailHint(e.target.value)}
-                    placeholder="admin@pchpms.com"
                     className="w-full pl-10 pr-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-[#1c46be]"
                   />
                 </div>
@@ -321,28 +336,40 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
                 </div>
               )}
 
-              <div className="relative">
-                <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="email"
-                  value={workEmailHint}
-                  onChange={(e) => setWorkEmailHint(e.target.value)}
-                  placeholder="Email Address"
-                  aria-label="Email Address"
-                  className="w-full pl-10 pr-3.5 py-3 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 placeholder:text-slate-500 focus:outline-none focus:border-[#08461f] focus:ring-2 focus:ring-emerald-900/10"
-                />
+              <div>
+                <label
+                  htmlFor="login-email-input"
+                  className="block text-[11px] font-semibold text-slate-700 mb-1"
+                >
+                  Email Address
+                </label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="login-email-input"
+                    type="email"
+                    value={workEmailHint}
+                    onChange={(e) => setWorkEmailHint(e.target.value)}
+                    className="w-full pl-10 pr-3.5 py-3 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:border-[#08461f] focus:ring-2 focus:ring-emerald-900/10"
+                  />
+                </div>
               </div>
 
               <div className="space-y-1.5">
+                <label
+                  htmlFor="login-password-input"
+                  className="block text-[11px] font-semibold text-slate-700 mb-1"
+                >
+                  Password
+                </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
+                    id="login-password-input"
                     type={showPassword ? 'text' : 'password'}
                     value={passwordHint}
                     onChange={(e) => setPasswordHint(e.target.value)}
-                    placeholder="Password"
-                    aria-label="Password"
-                    className="w-full pl-10 pr-10 py-3 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 placeholder:text-slate-500 focus:outline-none focus:border-[#08461f] focus:ring-2 focus:ring-emerald-900/10"
+                    className="w-full pl-10 pr-10 py-3 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:border-[#08461f] focus:ring-2 focus:ring-emerald-900/10"
                   />
                   <button
                     type="button"

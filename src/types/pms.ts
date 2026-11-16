@@ -1,4 +1,4 @@
-export type PortalMode = 'pch-admin' | 'richgates-admin' | 'staff';
+export type PortalMode = 'home' | 'pch-admin' | 'richgates-admin' | 'staff';
 
 export type StaffRole =
   | 'pch_admin'
@@ -239,6 +239,9 @@ export interface PropertyRecord {
   email?: string;
   logoUrl?: string;
   currency: 'NGN';
+  usdExchangeRateNgn?: number;
+  usdRateUpdatedIso?: string;
+  usdRateSource?: string;
   roomCount: number;
   status: 'active' | 'onboarding' | 'suspended';
   licenseKey?: string;
@@ -419,6 +422,7 @@ export interface ReservationRecord {
   idNumber?: string;
   keyIssued?: boolean;
   checkedInAtIso?: string;
+  externalUid?: string;
   createdAt?: { toDate?: () => Date } | string;
   authorizedEmails: string[];
   ownerUid: string;
@@ -855,6 +859,22 @@ export function formatNgn(amount: number): string {
   }).format(Number.isFinite(amount) ? amount : 0);
 }
 
+export const DEFAULT_USD_RATE_NGN = 1580;
+
+export function formatUsd(amount: number, decimals = 2): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(Number.isFinite(amount) ? amount : 0);
+}
+
+export function convertNgnToUsd(amountNgn: number, rateNgnPerUsd?: number): number {
+  const rate = rateNgnPerUsd && rateNgnPerUsd > 0 ? rateNgnPerUsd : DEFAULT_USD_RATE_NGN;
+  return (Number.isFinite(amountNgn) ? amountNgn : 0) / rate;
+}
+
 export function getPropertySubdomainSlug(
   property?: Pick<PropertyRecord, 'id' | 'code' | 'name'> | null
 ): string {
@@ -893,6 +913,7 @@ export function getPortalUrl(
   property?: Pick<PropertyRecord, 'id' | 'code' | 'name'> | null
 ): string {
   if (typeof window === 'undefined') {
+    if (portal === 'home') return '/home';
     return portal === 'staff' ? '/staff' : `/?portal=${portal}`;
   }
   const host = window.location.hostname.toLowerCase();
@@ -900,6 +921,9 @@ export function getPortalUrl(
 
   if (host === 'pchpms.com' || host.endsWith('.pchpms.com')) {
     const proto = window.location.protocol || 'https:';
+    if (portal === 'home') {
+      return `${proto}//app.pchpms.com`;
+    }
     if (portal === 'pch-admin' || portal === 'admin') {
       return `${proto}//admin.pchpms.com`;
     }
@@ -909,6 +933,9 @@ export function getPortalUrl(
     return `${proto}//${slug}.pchpms.com`;
   }
 
+  if (portal === 'home') {
+    return `${window.location.origin}/home`;
+  }
   if (portal === 'staff') {
     return `${window.location.origin}/staff`;
   }
@@ -916,6 +943,27 @@ export function getPortalUrl(
     return `${window.location.origin}/?portal=pch-admin`;
   }
   return `${window.location.origin}/?portal=richgates-admin`;
+}
+
+export interface PlanInquiryRecord {
+  id: string;
+  referenceCode: string;
+  inquiryType: 'plan_purchase' | 'contact_demo';
+  plan: LicenseRecord['plan'] | 'Custom';
+  billingCycle: LicenseRecord['billingCycle'] | 'n/a';
+  estimatedTotalNgn: number;
+  currency?: 'USD' | 'NGN';
+  propertyName: string;
+  cityState: string;
+  roomCount: number;
+  preferredSubdomain: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  paymentOption: string;
+  message: string;
+  status: 'new' | 'contacted' | 'provisioned';
+  createdAtIso: string;
 }
 
 export interface CmsPageCopy {

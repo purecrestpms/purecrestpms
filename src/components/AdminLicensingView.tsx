@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Shield,
   Trash2,
+  Upload,
   UserPlus,
 } from 'lucide-react';
 import {
@@ -27,16 +28,19 @@ import {
   syncOtaChannelWorkflow,
   updateLicenseStatus,
   updateOtaChannelIcal,
+  updatePlanInquiryStatusWorkflow,
 } from '../services/pmsService';
 import {
   AuditLogRecord,
   BlockedDateRecord,
   formatNgn,
+  formatUsd,
   getPortalUrl,
   getPropertySubdomainSlug,
   LicenseRecord,
   NavSectionId,
   OtaIntegrationRecord,
+  PlanInquiryRecord,
   PortalMode,
   PosMenuItemRecord,
   PropertyRecord,
@@ -63,6 +67,7 @@ interface AdminLicensingViewProps {
   otaChannels: OtaIntegrationRecord[];
   posMenuItems?: PosMenuItemRecord[];
   licenses: LicenseRecord[];
+  planInquiries?: PlanInquiryRecord[];
   auditLogs: AuditLogRecord[];
   activeRole: StaffRole;
   onSelectProperty: (id: string) => void;
@@ -87,6 +92,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   otaChannels,
   posMenuItems = [],
   licenses,
+  planInquiries = [],
   auditLogs,
   activeRole,
   onSelectProperty,
@@ -356,12 +362,75 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     }
   };
 
-  const availableRoom = sortedRooms.find((r) => r.occupancyStatus === 'vacant');
-
   const outboundFeedUrl =
     typeof window !== 'undefined'
       ? `${window.location.origin}/?ical=${encodeURIComponent(property.id)}&room=${encodeURIComponent(exportSuiteFilter)}`
       : `/?ical=${property.id}&room=${exportSuiteFilter}`;
+
+  const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
+  const [syncingAllChannels, setSyncingAllChannels] = useState(false);
+
+  const handleSyncSingleChannel = async (
+    channel: OtaIntegrationRecord,
+    icsRawText?: string
+  ) => {
+    setSyncingChannelId(channel.id);
+    try {
+      const result = await syncOtaChannelWorkflow({
+        property,
+        channel,
+        rooms: sortedRooms,
+        reservations,
+        icsRawText,
+        actorRole: ROLE_LABELS[activeRole],
+      });
+      onNotify(
+        `${channel.channelName}: ${result.created} new, ${result.updated} updated, ${result.cancelled} cancelled, ${result.skipped} unchanged`
+      );
+    } catch (err) {
+      onNotify(
+        err instanceof Error ? err.message : `Failed syncing ${channel.channelName}`
+      );
+    } finally {
+      setSyncingChannelId(null);
+    }
+  };
+
+  const handleSyncAllChannels = async () => {
+    const syncable = otaChannels.filter((c) => c.connected && Boolean(c.icalImportUrl?.trim()));
+    if (syncable.length === 0) {
+      onNotify('Add an inbound .ics URL to at least one connected channel first.');
+      return;
+    }
+    setSyncingAllChannels(true);
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalErrors = 0;
+    try {
+      for (const ch of syncable) {
+        try {
+          const res = await syncOtaChannelWorkflow({
+            property,
+            channel: ch,
+            rooms: sortedRooms,
+            reservations,
+            actorRole: ROLE_LABELS[activeRole],
+          });
+          totalCreated += res.created;
+          totalUpdated += res.updated;
+        } catch {
+          totalErrors += 1;
+        }
+      }
+      onNotify(
+        `Synced ${syncable.length} OTA feed(s): ${totalCreated} new booking(s), ${totalUpdated} updated${
+          totalErrors > 0 ? `, ${totalErrors} error(s)` : ''
+        }`
+      );
+    } finally {
+      setSyncingAllChannels(false);
+    }
+  };
 
   const handleDownloadIcs = (roomFilter?: string) => {
     const ics = buildPropertyIcalFeed({
@@ -421,14 +490,25 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         </div>
 
         {section === 'ota_channels' && (
-          <button
-            type="button"
-            onClick={() => setShowChannelForm((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>{cms.pages.ota_channels.ctaLabel || 'Add Channel / iCal Link'}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={syncingAllChannels}
+              onClick={() => void handleSyncAllChannels()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingAllChannels ? 'animate-spin' : ''}`} />
+              <span>{syncingAllChannels ? 'Syncing OTAs...' : 'Sync All Connected'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowChannelForm((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{cms.pages.ota_channels.ctaLabel || 'Add Channel / iCal Link'}</span>
+            </button>
+          </div>
         )}
 
         {section === 'properties_admin' && activeRole === 'pch_admin' && (
@@ -776,7 +856,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          syncOtaChannelWorkflow({
+                          void syncOtaChannelWorkflow({
                             property,
                             channel: ch,
                             toggleConnect: true,
@@ -788,10 +868,33 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       >
                         {ch.connected ? 'Disconnect' : 'Connect'}
                       </button>
+                      <label
+                        title="Upload .ics calendar exported from Booking.com / Airbnb"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>.ics</span>
+                        <input
+                          type="file"
+                          accept=".ics,text/calendar"
+                          className="sr-only"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              const text = typeof reader.result === 'string' ? reader.result : '';
+                              if (text) void handleSyncSingleChannel(ch, text);
+                            };
+                            reader.readAsText(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
                       <button
                         type="button"
                         onClick={() => {
-                          deleteOtaChannel({
+                          void deleteOtaChannel({
                             property,
                             channel: ch,
                             actorRole: ROLE_LABELS[activeRole],
@@ -806,25 +909,14 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     </div>
                     <button
                       type="button"
-                      disabled={!ch.connected}
-                      onClick={() => {
-                        syncOtaChannelWorkflow({
-                          property,
-                          channel: ch,
-                          importSampleBooking: Boolean(availableRoom),
-                          availableRoom,
-                          actorRole: ROLE_LABELS[activeRole],
-                        });
-                        onNotify(
-                          availableRoom
-                            ? `Synced ${ch.channelName} & imported booking into ${availableRoom.roomNumber}`
-                            : `Synced inventory with ${ch.channelName}`
-                        );
-                      }}
+                      disabled={!ch.connected || syncingChannelId === ch.id}
+                      onClick={() => void handleSyncSingleChannel(ch)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold cursor-pointer"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Sync &amp; Pull</span>
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${syncingChannelId === ch.id ? 'animate-spin' : ''}`}
+                      />
+                      <span>{syncingChannelId === ch.id ? 'Syncing...' : 'Sync Live iCal'}</span>
                     </button>
                   </div>
                 </div>
@@ -1291,6 +1383,105 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               </table>
             </div>
           </div>
+
+          {activeRole === 'pch_admin' && (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                    <h2 className="font-display text-sm font-bold text-slate-900">
+                      Plan Purchases &amp; Onboarding Inquiries
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Live orders and demo requests submitted by hospitality properties
+                    </p>
+                  </div>
+                  <span className="font-mono-tabular text-xs text-slate-500">
+                    {planInquiries.length} submissions
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
+                        <th className="py-3 px-4">Reference &amp; Date</th>
+                        <th className="py-3 px-4">Property &amp; Location</th>
+                        <th className="py-3 px-4">Contact</th>
+                        <th className="py-3 px-4">Plan &amp; Rooms</th>
+                        <th className="py-3 px-4 text-right">Est. Total</th>
+                        <th className="py-3 px-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {planInquiries.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-6 px-4 text-center text-slate-500">
+                            No plan purchases or inquiries submitted yet.
+                          </td>
+                        </tr>
+                      ) : (
+                        planInquiries.map((inq) => (
+                          <tr key={inq.id} className="hover:bg-slate-50">
+                            <td className="py-3 px-4">
+                              <p className="font-mono-tabular font-semibold text-slate-900">
+                                {inq.referenceCode}
+                              </p>
+                              <p className="text-[11px] text-slate-500 font-mono-tabular">
+                                {inq.createdAtIso.slice(0, 10)}
+                              </p>
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-semibold text-slate-900">{inq.propertyName}</p>
+                              <p className="text-[11px] font-mono-tabular text-slate-500">
+                                {inq.cityState}
+                              </p>
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-medium text-slate-900">{inq.contactName}</p>
+                              <p className="text-[11px] text-slate-500 font-mono-tabular">
+                                {inq.contactEmail} · {inq.contactPhone}
+                              </p>
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-semibold text-slate-900">
+                                {inq.plan} ({inq.billingCycle})
+                              </p>
+                              <p className="text-[11px] text-slate-500 font-mono-tabular">
+                                {inq.roomCount} rooms · {inq.paymentOption}
+                              </p>
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono-tabular font-semibold text-slate-900">
+                              {inq.estimatedTotalNgn > 0
+                                ? inq.currency === 'NGN'
+                                  ? formatNgn(inq.estimatedTotalNgn)
+                                  : `${formatUsd(inq.estimatedTotalNgn, 0)} USD`
+                                : '—'}
+                            </td>
+                          <td className="py-3 px-4">
+                            <select
+                              value={inq.status}
+                              onChange={async (e) => {
+                                const next = e.target.value as PlanInquiryRecord['status'];
+                                await updatePlanInquiryStatusWorkflow({
+                                  inquiryId: inq.id,
+                                  status: next,
+                                });
+                                onNotify(`Updated ${inq.referenceCode} to ${next}`);
+                              }}
+                              className="border border-slate-200 rounded-lg px-2.5 py-1 text-xs bg-white font-medium"
+                            >
+                              <option value="new">New</option>
+                              <option value="contacted">Contacted</option>
+                              <option value="provisioned">Provisioned</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1451,6 +1642,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
               </h2>
               {(
                 [
+                  { id: 'home', label: 'Software Homepage & Pricing (app.pchpms.com)' },
                   { id: 'richgates-admin', label: 'Richgates Property Admin Login' },
                   { id: 'staff', label: 'Richgates Staff Login' },
                   { id: 'pch-admin', label: 'PCH Super Admin Login' },
@@ -1511,7 +1703,14 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
             <p className="text-xs text-slate-600 leading-relaxed">
               The application routes each property by subdomain, with Staff access nested directly under each property&apos;s own domain (<code className="font-mono-tabular">/staff</code>):
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-xs">
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                <p className="font-mono-tabular font-bold text-[#1c46be]">app.pchpms.com</p>
+                <p className="font-semibold text-slate-900">Homepage &amp; Pricing</p>
+                <p className="text-slate-600">
+                  Public product showcase, software plans, purchase orders &amp; contact form.
+                </p>
+              </div>
               <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
                 <p className="font-mono-tabular font-bold text-[#1c46be]">admin.pchpms.com</p>
                 <p className="font-semibold text-slate-900">PCH Super Admin Console</p>
@@ -1537,7 +1736,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
             <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-4">
               <li>
                 In <strong>Cloudflare Dashboard → Workers &amp; Pages → pch-pms → Custom domains</strong>, click{' '}
-                <strong>Set up a custom domain</strong> and add <code className="font-mono-tabular">admin.pchpms.com</code> and{' '}
+                <strong>Set up a custom domain</strong> and add <code className="font-mono-tabular">app.pchpms.com</code>, <code className="font-mono-tabular">admin.pchpms.com</code>, and{' '}
                 <code className="font-mono-tabular">richgates.pchpms.com</code> (plus any future <code className="font-mono-tabular">&lt;property&gt;.pchpms.com</code>).
               </li>
               <li>
@@ -1546,7 +1745,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
               </li>
               <li>
                 In <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, add{' '}
-                <code className="font-mono-tabular">admin.pchpms.com</code> and <code className="font-mono-tabular">richgates.pchpms.com</code> so Google Sign-In works on both Property Admin and <code className="font-mono-tabular">/staff</code>.
+                <code className="font-mono-tabular">app.pchpms.com</code>, <code className="font-mono-tabular">admin.pchpms.com</code>, and <code className="font-mono-tabular">richgates.pchpms.com</code> so Google Sign-In works on both Property Admin and <code className="font-mono-tabular">/staff</code>.
               </li>
             </ol>
           </div>
