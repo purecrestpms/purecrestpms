@@ -1,0 +1,580 @@
+{
+  "entities": {
+    "Property": {
+      "title": "Property",
+      "description": "A hospitality property managed under PCH PMS (e.g., Richgates Apartments, Enugu).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "code": { "type": "string", "minLength": 2, "maxLength": 24, "pattern": "^[A-Z0-9\\-]+$" },
+        "city": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "state": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "country": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "address": { "type": "string", "minLength": 4, "maxLength": 240 },
+        "phone": { "type": "string", "minLength": 6, "maxLength": 32 },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "currency": { "type": "string", "enum": ["NGN"] },
+        "roomCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "onboarding", "suspended"] },
+        "licenseKey": { "type": "string", "maxLength": 64 },
+        "licensePlan": { "type": "string", "enum": ["Starter", "Professional", "Enterprise", "Lifetime Sovereign"] },
+        "adminEmail": { "type": "string", "format": "email", "maxLength": 120 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "name",
+        "code",
+        "city",
+        "state",
+        "country",
+        "address",
+        "currency",
+        "roomCount",
+        "status",
+        "adminEmail",
+        "authorizedEmails",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "License": {
+      "title": "License",
+      "description": "Centralized PureCrest software license key bound to a property or enterprise tier.",
+      "type": "object",
+      "properties": {
+        "licenseKey": { "type": "string", "minLength": 10, "maxLength": 64, "pattern": "^PCH-[A-Z0-9\\-]+$" },
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "propertyName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "plan": { "type": "string", "enum": ["Starter", "Professional", "Enterprise", "Lifetime Sovereign"] },
+        "billingCycle": { "type": "string", "enum": ["monthly", "annual", "lifetime"] },
+        "isLifetime": { "type": "boolean" },
+        "maxRooms": { "type": "number" },
+        "priceNgn": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "active", "expired", "revoked"] },
+        "issuedAt": { "type": "string", "maxLength": 40 },
+        "activatedAt": { "type": "string", "maxLength": 40 },
+        "expiresAt": { "type": "string", "maxLength": 40 },
+        "activatedByEmail": { "type": "string", "maxLength": 120 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "licenseKey",
+        "propertyId",
+        "propertyName",
+        "plan",
+        "billingCycle",
+        "isLifetime",
+        "maxRooms",
+        "priceNgn",
+        "status",
+        "issuedAt",
+        "expiresAt",
+        "authorizedEmails",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserRoleProfile": {
+      "title": "UserRoleProfile",
+      "description": "User RBAC profile linking verified email to portal role and assigned property.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["pch_admin", "property_admin", "front_desk", "housekeeping", "fnb_kitchen", "accountant", "maintenance"] },
+        "propertyId": { "type": "string", "maxLength": 128 },
+        "active": { "type": "boolean" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "propertyId", "active", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable operational and security audit log entry.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 120 },
+        "actorRole": { "type": "string", "maxLength": 48 },
+        "module": { "type": "string", "maxLength": 48 },
+        "action": { "type": "string", "maxLength": 120 },
+        "details": { "type": "string", "maxLength": 500 },
+        "timestampIso": { "type": "string", "maxLength": 40 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "actorEmail", "actorRole", "module", "action", "details", "timestampIso", "authorizedEmails", "ownerUid", "createdAt"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Individually managed apartment or hotel room inside a property.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomNumber": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "roomType": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "section": { "type": "string", "enum": ["Serviced Apartment", "Hotel Rooms"] },
+        "floor": { "type": "number" },
+        "nightlyRateNgn": { "type": "number" },
+        "maxGuests": { "type": "number" },
+        "occupancyStatus": { "type": "string", "enum": ["vacant", "occupied", "reserved", "out_of_order"] },
+        "housekeepingStatus": { "type": "string", "enum": ["clean", "dirty", "cleaning", "inspected"] },
+        "currentGuestName": { "type": "string", "maxLength": 120 },
+        "currentReservationId": { "type": "string", "maxLength": 128 },
+        "imageUrl": { "type": "string", "maxLength": 350000 },
+        "amenities": { "type": "array" },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "propertyId",
+        "roomNumber",
+        "name",
+        "roomType",
+        "floor",
+        "nightlyRateNgn",
+        "maxGuests",
+        "occupancyStatus",
+        "housekeepingStatus",
+        "authorizedEmails",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Guest": {
+      "title": "Guest",
+      "description": "Guest profile with KYC verification and stay spend summary.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "minLength": 6, "maxLength": 32 },
+        "nationality": { "type": "string", "maxLength": 64 },
+        "idType": { "type": "string", "enum": ["NIN", "International Passport", "Driver License", "Voter Card"] },
+        "idNumber": { "type": "string", "maxLength": 64 },
+        "vipTier": { "type": "string", "enum": ["Standard", "Silver", "Gold", "Diplomatic"] },
+        "totalStays": { "type": "number" },
+        "lifetimeSpendNgn": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 400 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "fullName", "phone", "idType", "vipTier", "totalStays", "lifetimeSpendNgn", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "Reservation": {
+      "title": "Reservation",
+      "description": "Room booking with folio totals, channel source, and lifecycle status.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookingRef": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomNumber": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "guestId": { "type": "string", "maxLength": 128 },
+        "guestName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "guestPhone": { "type": "string", "maxLength": 32 },
+        "checkInDate": { "type": "string", "maxLength": 24 },
+        "checkOutDate": { "type": "string", "maxLength": 24 },
+        "nights": { "type": "number" },
+        "adults": { "type": "number" },
+        "channel": { "type": "string", "enum": ["Direct Walk-In", "Direct Web", "Booking.com", "Airbnb", "Expedia", "Hotels.ng"] },
+        "nightlyRateNgn": { "type": "number" },
+        "roomChargesNgn": { "type": "number" },
+        "posChargesNgn": { "type": "number" },
+        "paidNgn": { "type": "number" },
+        "status": { "type": "string", "enum": ["confirmed", "checked_in", "checked_out", "cancelled"] },
+        "paymentMethod": { "type": "string", "enum": ["Bank Transfer", "Card POS", "Cash NGN", "Corporate Invoice", "Online Gateway"] },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "propertyId",
+        "bookingRef",
+        "roomId",
+        "roomNumber",
+        "guestName",
+        "checkInDate",
+        "checkOutDate",
+        "nights",
+        "adults",
+        "channel",
+        "nightlyRateNgn",
+        "roomChargesNgn",
+        "posChargesNgn",
+        "paidNgn",
+        "status",
+        "paymentMethod",
+        "authorizedEmails",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "HousekeepingTask": {
+      "title": "HousekeepingTask",
+      "description": "Room turnover, deep cleaning, or inspection assignment.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomNumber": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "taskType": { "type": "string", "enum": ["Checkout Turnover", "Daily Stayover", "Deep Clean", "VIP Inspection"] },
+        "assignedTo": { "type": "string", "maxLength": 80 },
+        "priority": { "type": "string", "enum": ["Normal", "High", "Urgent"] },
+        "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "inspected"] },
+        "notes": { "type": "string", "maxLength": 300 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "roomId", "roomNumber", "taskType", "assignedTo", "priority", "status", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "PosOrder": {
+      "title": "PosOrder",
+      "description": "Restaurant POS & Kitchen Display System ticket.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orderNumber": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "serviceType": { "type": "string", "enum": ["Dine-In", "Room Service", "Bar Lounge", "Takeaway"] },
+        "tableOrRoom": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "reservationId": { "type": "string", "maxLength": 128 },
+        "itemsSummary": { "type": "string", "minLength": 2, "maxLength": 400 },
+        "itemCount": { "type": "number" },
+        "subtotalNgn": { "type": "number" },
+        "vatNgn": { "type": "number" },
+        "totalNgn": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["paid", "room_folio", "unpaid"] },
+        "paymentMethod": { "type": "string", "enum": ["Room Folio", "Card POS", "Bank Transfer", "Cash NGN"] },
+        "kitchenStatus": { "type": "string", "enum": ["queued", "preparing", "ready", "served"] },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "propertyId",
+        "orderNumber",
+        "serviceType",
+        "tableOrRoom",
+        "itemsSummary",
+        "itemCount",
+        "subtotalNgn",
+        "vatNgn",
+        "totalNgn",
+        "paymentStatus",
+        "paymentMethod",
+        "kitchenStatus",
+        "authorizedEmails",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LedgerEntry": {
+      "title": "LedgerEntry",
+      "description": "Financial accounting entry in NGN for revenue, expenses, procurement, and payroll.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "entryDate": { "type": "string", "maxLength": 24 },
+        "entryType": { "type": "string", "enum": ["revenue", "expense"] },
+        "category": { "type": "string", "enum": ["Room Accommodation", "Restaurant & Bar", "Procurement", "Payroll", "Utilities & Diesel", "Maintenance", "OTA Commission", "Other"] },
+        "reference": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "minLength": 2, "maxLength": 240 },
+        "amountNgn": { "type": "number" },
+        "vatNgn": { "type": "number" },
+        "paymentMethod": { "type": "string", "maxLength": 48 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "entryDate", "entryType", "category", "description", "amountNgn", "vatNgn", "paymentMethod", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Store inventory item tracked for kitchen, bar, housekeeping, and maintenance.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sku": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "category": { "type": "string", "enum": ["Kitchen & Pantry", "Bar & Beverage", "Housekeeping Linen & Amenities", "Engineering & Diesel"] },
+        "unit": { "type": "string", "maxLength": 24 },
+        "quantityOnHand": { "type": "number" },
+        "reorderLevel": { "type": "number" },
+        "unitCostNgn": { "type": "number" },
+        "supplierName": { "type": "string", "maxLength": 120 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "sku", "name", "category", "unit", "quantityOnHand", "reorderLevel", "unitCostNgn", "supplierName", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Procurement purchase order linked to inventory restocking and accounting.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "poNumber": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "supplierName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "itemId": { "type": "string", "maxLength": 128 },
+        "itemName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "quantity": { "type": "number" },
+        "unitCostNgn": { "type": "number" },
+        "totalCostNgn": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "approved", "received", "cancelled"] },
+        "expectedDate": { "type": "string", "maxLength": 24 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "poNumber", "supplierName", "itemName", "quantity", "unitCostNgn", "totalCostNgn", "status", "expectedDate", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "Property employee record with role, salary structure, and portal access.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "staffCode": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "department": { "type": "string", "enum": ["Management", "Front Desk", "Housekeeping", "Kitchen & F&B", "Accounts", "Engineering & Security"] },
+        "role": { "type": "string", "enum": ["property_admin", "front_desk", "housekeeping", "fnb_kitchen", "accountant", "maintenance"] },
+        "monthlyBaseSalaryNgn": { "type": "number" },
+        "monthlyAllowanceNgn": { "type": "number" },
+        "employmentStatus": { "type": "string", "enum": ["active", "on_leave", "suspended"] },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "staffCode", "fullName", "department", "role", "monthlyBaseSalaryNgn", "monthlyAllowanceNgn", "employmentStatus", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "ShiftSchedule": {
+      "title": "ShiftSchedule",
+      "description": "Staff shift assignment.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "staffId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "staffName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "department": { "type": "string", "maxLength": 64 },
+        "shiftDate": { "type": "string", "maxLength": 24 },
+        "shiftWindow": { "type": "string", "enum": ["Morning (07:00 - 15:00)", "Afternoon (15:00 - 23:00)", "Night (23:00 - 07:00)"] },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "missed"] },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "staffId", "staffName", "department", "shiftDate", "shiftWindow", "status", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily staff clock-in and clock-out log.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "staffId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "staffName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "date": { "type": "string", "maxLength": 24 },
+        "clockInTime": { "type": "string", "maxLength": 24 },
+        "clockOutTime": { "type": "string", "maxLength": 24 },
+        "status": { "type": "string", "enum": ["present", "late", "absent", "clocked_out"] },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "staffId", "staffName", "date", "clockInTime", "status", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "PayrollRun": {
+      "title": "PayrollRun",
+      "description": "Monthly payroll run with Nigerian PAYE & Pension totals.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "periodLabel": { "type": "string", "minLength": 3, "maxLength": 48 },
+        "staffCount": { "type": "number" },
+        "grossPayNgn": { "type": "number" },
+        "pensionDeductionNgn": { "type": "number" },
+        "payeTaxNgn": { "type": "number" },
+        "netPayNgn": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "posted_to_ledger"] },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "periodLabel", "staffCount", "grossPayNgn", "pensionDeductionNgn", "payeTaxNgn", "netPayNgn", "status", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "MaintenanceTicket": {
+      "title": "MaintenanceTicket",
+      "description": "Engineering or room maintenance work order.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomId": { "type": "string", "maxLength": 128 },
+        "locationLabel": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "issueTitle": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "category": { "type": "string", "enum": ["HVAC & AC", "Plumbing", "Electrical & Inverter", "Carpentry", "Generator & Power"] },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High", "Critical"] },
+        "assignedTo": { "type": "string", "maxLength": 80 },
+        "estimatedCostNgn": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "in_progress", "resolved"] },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "locationLabel", "issueTitle", "category", "priority", "assignedTo", "estimatedCostNgn", "status", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "OtaIntegration": {
+      "title": "OtaIntegration",
+      "description": "Online booking OTA channel connection and sync configuration.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "channelName": { "type": "string", "enum": ["Booking.com", "Airbnb", "Expedia", "Hotels.ng", "Direct Website Engine"] },
+        "propertyListingId": { "type": "string", "maxLength": 64 },
+        "commissionPct": { "type": "number" },
+        "autoSync": { "type": "boolean" },
+        "connected": { "type": "boolean" },
+        "lastSyncedIso": { "type": "string", "maxLength": 40 },
+        "bookingsImported": { "type": "number" },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "channelName", "propertyListingId", "commissionPct", "autoSync", "connected", "lastSyncedIso", "bookingsImported", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "BlockedDate": {
+      "title": "BlockedDate",
+      "description": "Date range block placed on an individual room in the availability calendar.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "roomNumber": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "startDate": { "type": "string", "maxLength": 24 },
+        "endDate": { "type": "string", "maxLength": 24 },
+        "reason": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "category": { "type": "string", "enum": ["Owner Hold", "Maintenance", "VIP Hold", "Deep Clean"] },
+        "createdByEmail": { "type": "string", "maxLength": 120 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "roomId", "roomNumber", "startDate", "endDate", "reason", "category", "createdByEmail", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/properties/{propertyId}": {
+      "schema": { "$ref": "#/entities/Property" },
+      "description": "Root registry of hospitality properties managed by PCH PMS."
+    },
+    "/licenses/{licenseId}": {
+      "schema": { "$ref": "#/entities/License" },
+      "description": "Centralized PureCrest software license registry and activation records."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserRoleProfile" },
+      "description": "RBAC profile documents mapping verified users to roles and properties."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable chronological audit trail across PCH PMS."
+    },
+    "/properties/{propertyId}/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Individually managed rooms inside a property."
+    },
+    "/properties/{propertyId}/guests/{guestId}": {
+      "schema": { "$ref": "#/entities/Guest" },
+      "description": "Property guest profiles and KYC records."
+    },
+    "/properties/{propertyId}/reservations/{reservationId}": {
+      "schema": { "$ref": "#/entities/Reservation" },
+      "description": "Property room reservations and folio balances."
+    },
+    "/properties/{propertyId}/housekeeping_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/HousekeepingTask" },
+      "description": "Housekeeping assignments and room inspections."
+    },
+    "/properties/{propertyId}/pos_orders/{orderId}": {
+      "schema": { "$ref": "#/entities/PosOrder" },
+      "description": "Restaurant POS orders and Kitchen Display System queue."
+    },
+    "/properties/{propertyId}/ledger_entries/{entryId}": {
+      "schema": { "$ref": "#/entities/LedgerEntry" },
+      "description": "Accounting revenue and expense ledger entries in NGN."
+    },
+    "/properties/{propertyId}/inventory_items/{itemId}": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Property store inventory items."
+    },
+    "/properties/{propertyId}/purchase_orders/{poId}": {
+      "schema": { "$ref": "#/entities/PurchaseOrder" },
+      "description": "Supplier procurement purchase orders."
+    },
+    "/properties/{propertyId}/staff_members/{staffId}": {
+      "schema": { "$ref": "#/entities/StaffMember" },
+      "description": "Property staff roster and compensation."
+    },
+    "/properties/{propertyId}/shifts/{shiftId}": {
+      "schema": { "$ref": "#/entities/ShiftSchedule" },
+      "description": "Staff shift schedules."
+    },
+    "/properties/{propertyId}/attendance/{recordId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Daily staff clock-in/clock-out attendance records."
+    },
+    "/properties/{propertyId}/payroll_runs/{runId}": {
+      "schema": { "$ref": "#/entities/PayrollRun" },
+      "description": "Monthly Nigerian PAYE & Pension payroll batches."
+    },
+    "/properties/{propertyId}/maintenance_tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/MaintenanceTicket" },
+      "description": "Engineering and room maintenance work orders."
+    },
+    "/properties/{propertyId}/ota_channels/{channelId}": {
+      "schema": { "$ref": "#/entities/OtaIntegration" },
+      "description": "Online booking OTA integrations and sync metrics."
+    },
+    "/properties/{propertyId}/blocked_dates/{blockId}": {
+      "schema": { "$ref": "#/entities/BlockedDate" },
+      "description": "Room calendar date blocks for maintenance, owner holds, or VIP reservations."
+    }
+  }
+}

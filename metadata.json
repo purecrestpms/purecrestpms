@@ -1,0 +1,6 @@
+{
+  "name": "PCH PMS — PureCrest Hospitality",
+  "description": "Multi-property hotel & serviced apartment management system with centralized licensing, Nigerian Naira accounting, POS, HR/Payroll, and OTA integrations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
