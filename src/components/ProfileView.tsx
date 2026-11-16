@@ -92,9 +92,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Personal Admin / Staff Profile state
-  const [displayName, setDisplayName] = useState(
-    userProfile?.displayName || defaultDisplayName || 'Property Administrator'
-  );
+  const initialNameParts = (
+    userProfile?.displayName ||
+    defaultDisplayName ||
+    'Property Administrator'
+  )
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const [firstName, setFirstName] = useState(initialNameParts[0] || '');
+  const [lastName, setLastName] = useState(initialNameParts.slice(1).join(' ') || '');
   const [jobTitle, setJobTitle] = useState(userProfile?.jobTitle || ROLE_LABELS[activeRole]);
   const [phone, setPhone] = useState(userProfile?.phone || property.phone || RICHGATES_PROPERTY_INFO.phone);
   const [whatsapp, setWhatsapp] = useState(
@@ -116,7 +123,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [savingProp, setSavingProp] = useState(false);
 
   useEffect(() => {
-    setDisplayName(userProfile?.displayName || defaultDisplayName || 'Property Administrator');
+    const parts = (
+      userProfile?.displayName ||
+      defaultDisplayName ||
+      'Property Administrator'
+    )
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    setFirstName(parts[0] || '');
+    setLastName(parts.slice(1).join(' ') || '');
     setJobTitle(userProfile?.jobTitle || ROLE_LABELS[activeRole]);
     setPhone(userProfile?.phone || property.phone || RICHGATES_PROPERTY_INFO.phone);
     setWhatsapp(userProfile?.whatsapp || property.whatsapp || RICHGATES_PROPERTY_INFO.whatsapp);
@@ -134,14 +150,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const handleSavePersonal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName.trim()) return;
+    const combinedDisplay = `${firstName.trim()} ${lastName.trim()}`.trim();
+    if (!firstName.trim() || !lastName.trim()) return;
     setSavingPersonal(true);
     try {
       await saveMyUserProfile({
         propertyId: property.id,
         role: activeRole,
         existingProfile: userProfile,
-        displayName,
+        displayName: combinedDisplay,
         phone,
         whatsapp,
         jobTitle,
@@ -203,11 +220,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const cleanWaNumber = (propWhatsapp || RICHGATES_PROPERTY_INFO.whatsapp).replace(/[^0-9]/g, '');
   const whatsappHref = cleanWaNumber ? `https://wa.me/${cleanWaNumber}` : RICHGATES_PROPERTY_INFO.whatsappUrl;
 
-  const initials = (displayName || userEmail || 'PA')
+  const fullDisplayName = `${firstName} ${lastName}`.trim();
+  const initials = (fullDisplayName || userEmail || 'PA')
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() || '')
+    .map((p: string) => p[0]?.toUpperCase() || '')
     .join('');
 
   return (
@@ -270,13 +288,24 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div className="sm:col-span-2">
-              <label className="block font-medium text-slate-700 mb-1">Full Display Name</label>
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">First Name *</label>
               <input
                 required
                 type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+              <input
+                required
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2"
               />
             </div>

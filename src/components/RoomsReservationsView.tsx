@@ -1,4 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
+
+function splitFullName(full: string): [string, string] {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return ['', ''];
+  if (parts.length === 1) return [parts[0], ''];
+  return [parts[0], parts.slice(1).join(' ')];
+}
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -239,7 +246,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [newRequestedRoomType, setNewRequestedRoomType] = useState(
     rooms[0]?.roomType || 'Deluxe Studio with Kitchenette'
   );
-  const [guestName, setGuestName] = useState('');
+  const [guestFirstName, setGuestFirstName] = useState('');
+  const [guestLastName, setGuestLastName] = useState('');
   const [guestPhone, setGuestPhone] = useState('+234 803 ');
   const [guestEmail, setGuestEmail] = useState('');
   const [checkInDate, setCheckInDate] = useState(todayIso);
@@ -284,7 +292,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [walkInError, setWalkInError] = useState<string | null>(null);
 
   // Guest registration form
-  const [newGuestName, setNewGuestName] = useState('');
+  const [newGuestFirstName, setNewGuestFirstName] = useState('');
+  const [newGuestLastName, setNewGuestLastName] = useState('');
   const [newGuestPhone, setNewGuestPhone] = useState('+234 ');
   const [newGuestEmail, setNewGuestEmail] = useState('');
   const [newGuestAddress, setNewGuestAddress] = useState('');
@@ -296,7 +305,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   // Guest Profile Modal state
   const [selectedGuestId, setSelectedGuestId] = useState<string | null>(null);
   const [editingGuestMode, setEditingGuestMode] = useState(false);
-  const [editGuestName, setEditGuestName] = useState('');
+  const [editGuestFirstName, setEditGuestFirstName] = useState('');
+  const [editGuestLastName, setEditGuestLastName] = useState('');
   const [editGuestPhone, setEditGuestPhone] = useState('');
   const [editGuestEmail, setEditGuestEmail] = useState('');
   const [editGuestAddress, setEditGuestAddress] = useState('');
@@ -326,7 +336,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [miscChargeAmount, setMiscChargeAmount] = useState<number>(5000);
   const [miscChargeDesc, setMiscChargeDesc] = useState('Laundry / Minibar Charge');
   const [editingStayDetails, setEditingStayDetails] = useState(false);
-  const [editGuestNameRes, setEditGuestNameRes] = useState('');
+  const [editGuestFirstNameRes, setEditGuestFirstNameRes] = useState('');
+  const [editGuestLastNameRes, setEditGuestLastNameRes] = useState('');
   const [editGuestPhoneRes, setEditGuestPhoneRes] = useState('');
   const [editRoomId, setEditRoomId] = useState('');
   const [editRequestedRoomType, setEditRequestedRoomType] = useState('Studio');
@@ -359,7 +370,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setFolioPayAmount(due);
       setFolioPayMethod(activeFolioReservation.paymentMethod || 'Bank Transfer');
       setEditingStayDetails(initialReservationIntent === 'edit');
-      setEditGuestNameRes(activeFolioReservation.guestName);
+      const [stayFirst, stayLast] = splitFullName(activeFolioReservation.guestName);
+      setEditGuestFirstNameRes(stayFirst);
+      setEditGuestLastNameRes(stayLast);
       setEditGuestPhoneRes(activeFolioReservation.guestPhone || '');
       setEditRoomId(activeFolioReservation.roomId || '');
       setEditRequestedRoomType(
@@ -421,7 +434,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const openGuestProfileModal = (guest: GuestRecord) => {
     setSelectedGuestId(guest.id);
     setEditingGuestMode(false);
-    setEditGuestName(guest.fullName);
+    const [gFirst, gLast] = splitFullName(guest.fullName);
+    setEditGuestFirstName(gFirst);
+    setEditGuestLastName(gLast);
     setEditGuestPhone(guest.phone);
     setEditGuestEmail(guest.email || '');
     setEditGuestAddress(guest.address || '');
@@ -585,7 +600,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     const targetRoom = selectedRoomId
       ? rooms.find((r) => r.id === selectedRoomId)
       : undefined;
-    if (!guestName.trim()) return;
+    const combinedBookingGuest = `${guestFirstName.trim()} ${guestLastName.trim()}`.trim();
+    if (!guestFirstName.trim() || !guestLastName.trim()) {
+      setBookingError('Guest first name and last name are required.');
+      return;
+    }
 
     if (selectedRoomId && !targetRoom) {
       setBookingError('Selected suite could not be found. Choose a suite or Unassigned.');
@@ -642,7 +661,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       }
     }
 
-    const trimmedGuest = guestName.trim();
+    const trimmedGuest = combinedBookingGuest;
     const resolvedRoomType = targetRoom ? targetRoom.roomType : newRequestedRoomType;
     const fallbackNightlyRate =
       rooms.find((r) => r.roomType === resolvedRoomType)?.nightlyRateNgn || 55000;
@@ -690,7 +709,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         });
       }
       setShowBookingForm(false);
-      setGuestName('');
+      setGuestFirstName('');
+      setGuestLastName('');
       setGuestEmail('');
       setChildrenCount(0);
       setInlineIdNumber('');
@@ -880,7 +900,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         clearRoomAssignment: editRoomId === '' && Boolean(res.roomId),
         requestedRoomType: targetRoom ? targetRoom.roomType : editRequestedRoomType,
         oldRoom,
-        guestName: editGuestNameRes,
+        guestName:
+          `${editGuestFirstNameRes.trim()} ${editGuestLastNameRes.trim()}`.trim() ||
+          res.guestName,
         guestPhone: editGuestPhoneRes,
         checkInDate: editCheckInDate,
         checkOutDate: editCheckOutDate,
@@ -1000,13 +1022,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   const handleCreateGuest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newGuestName.trim()) return;
+    const combinedNewGuest = `${newGuestFirstName.trim()} ${newGuestLastName.trim()}`.trim();
+    if (!newGuestFirstName.trim() || !newGuestLastName.trim()) return;
     setBusyId('guest');
     try {
       await createGuestRecord({
         property,
         guest: {
-          fullName: newGuestName.trim(),
+          fullName: combinedNewGuest,
           phone: newGuestPhone.trim(),
           email: newGuestEmail.trim(),
           address: newGuestAddress.trim(),
@@ -1021,9 +1044,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         },
         actorRole,
       });
-      onNotify(`Guest ${newGuestName} added to directory`);
+      onNotify(`Guest ${combinedNewGuest} added to directory`);
       setShowGuestForm(false);
-      setNewGuestName('');
+      setNewGuestFirstName('');
+      setNewGuestLastName('');
       setNewGuestEmail('');
       setNewGuestAddress('');
       setNewGuestIdNumber('');
@@ -1035,13 +1059,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const handleSaveGuestProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedGuest) return;
+    const combinedEditGuest =
+      `${editGuestFirstName.trim()} ${editGuestLastName.trim()}`.trim() || selectedGuest.fullName;
     setBusyId(`guest-${selectedGuest.id}`);
     try {
       await updateGuestRecord({
         property,
         guest: selectedGuest,
         updates: {
-          fullName: editGuestName.trim() || selectedGuest.fullName,
+          fullName: combinedEditGuest,
           phone: editGuestPhone.trim() || selectedGuest.phone,
           email: editGuestEmail.trim(),
           address: editGuestAddress.trim(),
@@ -1054,7 +1080,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         },
         actorRole,
       });
-      onNotify(`Updated guest profile for ${editGuestName.trim() || selectedGuest.fullName}`);
+      onNotify(`Updated guest profile for ${combinedEditGuest}`);
       setEditingGuestMode(false);
     } finally {
       setBusyId(null);
@@ -1437,7 +1463,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="text"
                 value={walkInFirstName}
                 onChange={(e) => setWalkInFirstName(e.target.value)}
-                placeholder="e.g. Chinedu"
                 className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -1449,7 +1474,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="text"
                 value={walkInLastName}
                 onChange={(e) => setWalkInLastName(e.target.value)}
-                placeholder="e.g. Okafor"
                 className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -1461,7 +1485,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="text"
                 value={walkInPhone}
                 onChange={(e) => setWalkInPhone(e.target.value)}
-                placeholder="+234 800 000 0000"
                 className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -1472,7 +1495,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="email"
                 value={walkInEmail}
                 onChange={(e) => setWalkInEmail(e.target.value)}
-                placeholder="guest@email.com"
                 className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -1497,7 +1519,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="text"
                 value={walkInIdNumber}
                 onChange={(e) => setWalkInIdNumber(e.target.value)}
-                placeholder="ID / Passport number"
                 className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -1508,7 +1529,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="text"
                 value={walkInAddress}
                 onChange={(e) => setWalkInAddress(e.target.value)}
-                placeholder="Street address"
                 className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -1848,13 +1868,23 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             )}
 
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Guest Full Name</label>
+              <label className="block font-medium text-slate-700 mb-1">Guest First Name *</label>
               <input
                 required
                 type="text"
-                value={guestName}
-                onChange={(e) => setGuestName(e.target.value)}
-                placeholder="e.g. Chief Okey Nwankwo"
+                value={guestFirstName}
+                onChange={(e) => setGuestFirstName(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">Guest Last Name *</label>
+              <input
+                required
+                type="text"
+                value={guestLastName}
+                onChange={(e) => setGuestLastName(e.target.value)}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2"
               />
             </div>
@@ -2179,72 +2209,100 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           <h2 className="font-display text-sm font-bold text-slate-900">
             Register New Guest Profile (KYC)
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs">
-            <input
-              required
-              type="text"
-              placeholder="Full Name"
-              value={newGuestName}
-              onChange={(e) => setNewGuestName(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-2"
-            />
-            <input
-              required
-              type="text"
-              placeholder="Phone (+234...)"
-              value={newGuestPhone}
-              onChange={(e) => setNewGuestPhone(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-2"
-            />
-            <input
-              type="email"
-              placeholder="Email Address"
-              value={newGuestEmail}
-              onChange={(e) => setNewGuestEmail(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-2"
-            />
-            <input
-              type="text"
-              placeholder="City"
-              value={newGuestCity}
-              onChange={(e) => setNewGuestCity(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-2"
-            />
-            <input
-              type="text"
-              placeholder="Residential / Office Address"
-              value={newGuestAddress}
-              onChange={(e) => setNewGuestAddress(e.target.value)}
-              className="sm:col-span-2 border border-slate-200 rounded-lg px-3 py-2"
-            />
-            <select
-              value={newGuestIdType}
-              onChange={(e) => setNewGuestIdType(e.target.value as GuestRecord['idType'])}
-              className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-            >
-              <option value="NIN">NIN</option>
-              <option value="International Passport">International Passport</option>
-              <option value="Driver License">Driver License</option>
-              <option value="Voter Card">Voter Card</option>
-            </select>
-            <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+              <input
+                required
+                type="text"
+                value={newGuestFirstName}
+                onChange={(e) => setNewGuestFirstName(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+              <input
+                required
+                type="text"
+                value={newGuestLastName}
+                onChange={(e) => setNewGuestLastName(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">Phone *</label>
+              <input
+                required
+                type="text"
+                value={newGuestPhone}
+                onChange={(e) => setNewGuestPhone(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">Email Address</label>
+              <input
+                type="email"
+                value={newGuestEmail}
+                onChange={(e) => setNewGuestEmail(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">City</label>
               <input
                 type="text"
-                placeholder="ID Number"
-                value={newGuestIdNumber}
-                onChange={(e) => setNewGuestIdNumber(e.target.value)}
-                className="border border-slate-200 rounded-lg px-3 py-2"
+                value={newGuestCity}
+                onChange={(e) => setNewGuestCity(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
               />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">Residential / Office Address</label>
+              <input
+                type="text"
+                value={newGuestAddress}
+                onChange={(e) => setNewGuestAddress(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">ID Type</label>
               <select
-                value={newGuestVip}
-                onChange={(e) => setNewGuestVip(e.target.value as GuestRecord['vipTier'])}
-                className="border border-slate-200 rounded-lg px-2 py-2 bg-white"
+                value={newGuestIdType}
+                onChange={(e) => setNewGuestIdType(e.target.value as GuestRecord['idType'])}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
               >
-                <option value="Standard">Standard</option>
-                <option value="Silver">Silver VIP</option>
-                <option value="Gold">Gold VIP</option>
-                <option value="Diplomatic">Diplomatic</option>
+                <option value="NIN">NIN</option>
+                <option value="International Passport">International Passport</option>
+                <option value="Driver License">Driver License</option>
+                <option value="Voter Card">Voter Card</option>
               </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">ID Number</label>
+                <input
+                  type="text"
+                  value={newGuestIdNumber}
+                  onChange={(e) => setNewGuestIdNumber(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">VIP Tier</label>
+                <select
+                  value={newGuestVip}
+                  onChange={(e) => setNewGuestVip(e.target.value as GuestRecord['vipTier'])}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white"
+                >
+                  <option value="Standard">Standard</option>
+                  <option value="Silver">Silver VIP</option>
+                  <option value="Gold">Gold VIP</option>
+                  <option value="Diplomatic">Diplomatic</option>
+                </select>
+              </div>
             </div>
           </div>
           <div className="flex justify-end gap-2">
@@ -2789,8 +2847,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             typeof res.sourceTotalAmount === 'number' &&
                             res.sourceTotalAmount > 0 && (
                               <span className="block text-[10px] font-medium text-blue-700">
-                                {formatChannelCurrency(res.sourceTotalAmount, res.sourceCurrency)} (
-                                {res.sourceCurrency})
+                                {formatChannelCurrency(res.sourceTotalAmount, res.sourceCurrency)} ({res.sourceCurrency})
+                                {typeof res.sourceNightlyRate === 'number' && res.sourceNightlyRate > 0
+                                  ? ` · ${formatChannelCurrency(res.sourceNightlyRate, res.sourceCurrency)}/nt`
+                                  : ''}
                               </span>
                             )}
                         </td>
@@ -3024,12 +3084,22 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <form onSubmit={handleSaveGuestProfile} className="space-y-4 text-xs">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Full Name</label>
+                    <label className="block font-medium text-slate-700 mb-1">First Name *</label>
                     <input
                       required
                       type="text"
-                      value={editGuestName}
-                      onChange={(e) => setEditGuestName(e.target.value)}
+                      value={editGuestFirstName}
+                      onChange={(e) => setEditGuestFirstName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                    <input
+                      required
+                      type="text"
+                      value={editGuestLastName}
+                      onChange={(e) => setEditGuestLastName(e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2"
                     />
                   </div>
@@ -3180,7 +3250,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setGuestName(selectedGuest.fullName);
+                    const [selFirst, selLast] = splitFullName(selectedGuest.fullName);
+                    setGuestFirstName(selFirst);
+                    setGuestLastName(selLast);
                     setGuestPhone(selectedGuest.phone);
                     setGuestEmail(selectedGuest.email || '');
                     setSelectedGuestId(null);
@@ -3869,11 +3941,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     <div>
-                      <label className="block font-medium text-slate-700 mb-1">Guest Name</label>
+                      <label className="block font-medium text-slate-700 mb-1">Guest First Name *</label>
                       <input
                         type="text"
-                        value={editGuestNameRes}
-                        onChange={(e) => setEditGuestNameRes(e.target.value)}
+                        value={editGuestFirstNameRes}
+                        onChange={(e) => setEditGuestFirstNameRes(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Guest Last Name *</label>
+                      <input
+                        type="text"
+                        value={editGuestLastNameRes}
+                        onChange={(e) => setEditGuestLastNameRes(e.target.value)}
                         className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
                       />
                     </div>

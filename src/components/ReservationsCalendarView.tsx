@@ -112,7 +112,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const [blockReason, setBlockReason] = useState('');
 
   // Quick Reservation form
-  const [guestName, setGuestName] = useState('');
+  const [guestFirstName, setGuestFirstName] = useState('');
+  const [guestLastName, setGuestLastName] = useState('');
   const [guestPhone, setGuestPhone] = useState('+234 803 ');
   const [bookCheckIn, setBookCheckIn] = useState(todayIso);
   const [bookCheckOut, setBookCheckOut] = useState(tomorrowIso);
@@ -297,7 +298,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const handleCreateQuickBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     const room = rooms.find((r) => r.id === targetRoomId);
-    if (!room || !guestName.trim()) return;
+    const trimmedGuest = `${guestFirstName.trim()} ${guestLastName.trim()}`.trim();
+    if (!room || !guestFirstName.trim() || !guestLastName.trim()) {
+      setConflictError('Guest first name and last name are required.');
+      return;
+    }
     const conflict = describeRoomConflict(room.id, bookCheckIn, bookCheckOut);
     if (conflict) {
       setConflictError(conflict);
@@ -318,7 +323,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       }
     }
     const nightsCount = diffNights(bookCheckIn, bookCheckOut);
-    const trimmedGuest = guestName.trim();
     setBusyId('book');
     try {
       await createReservationWorkflow({
@@ -355,7 +359,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         });
       }
       setModalMode('none');
-      setGuestName('');
+      setGuestFirstName('');
+      setGuestLastName('');
       setQuickIdNumber('');
       setQuickKeyIssued(null);
     } finally {
@@ -1036,20 +1041,29 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   </select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Guest Full Name</label>
+                    <label className="block font-medium text-slate-700 mb-1">Guest First Name *</label>
                     <input
                       type="text"
                       required
-                      value={guestName}
-                      onChange={(e) => setGuestName(e.target.value)}
-                      placeholder="Full name"
+                      value={guestFirstName}
+                      onChange={(e) => setGuestFirstName(e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2"
                     />
                   </div>
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                    <label className="block font-medium text-slate-700 mb-1">Guest Last Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={guestLastName}
+                      onChange={(e) => setGuestLastName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Phone *</label>
                     <input
                       type="text"
                       required

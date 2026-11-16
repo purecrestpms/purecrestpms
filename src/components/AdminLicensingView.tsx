@@ -33,8 +33,6 @@ import {
 import {
   AuditLogRecord,
   BlockedDateRecord,
-  ChannelCurrency,
-  formatChannelCurrency,
   formatNgn,
   formatUsd,
   getPortalUrl,
@@ -53,7 +51,6 @@ import {
   RoomRecord,
   sortRoomsByNumber,
   StaffRole,
-  SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
@@ -131,7 +128,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
   // RBAC grant access state
   const [grantEmail, setGrantEmail] = useState('');
-  const [grantName, setGrantName] = useState('');
+  const [grantFirstName, setGrantFirstName] = useState('');
+  const [grantLastName, setGrantLastName] = useState('');
   const [grantRole, setGrantRole] = useState<StaffRole>('front_desk');
 
   // Channel Manager & iCal state
@@ -139,15 +137,13 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [newChannelName, setNewChannelName] =
     useState<OtaIntegrationRecord['channelName']>('Airbnb');
   const [newChannelSuite, setNewChannelSuite] = useState('All Suites');
-  const [newChannelCurrency, setNewChannelCurrency] = useState<ChannelCurrency>('USD');
-  const [newChannelNightlyRate, setNewChannelNightlyRate] = useState('');
   const [newListingId, setNewListingId] = useState('');
   const [newIcalUrl, setNewIcalUrl] = useState('');
   const [newCommissionPct, setNewCommissionPct] = useState(15);
   const [newAutoSync, setNewAutoSync] = useState(true);
   const [exportSuiteFilter, setExportSuiteFilter] = useState('ALL');
   const [icalDrafts, setIcalDrafts] = useState<
-    Record<string, { url: string; room: string; currency: ChannelCurrency; rate: string }>
+    Record<string, { url: string; room: string }>
   >({});
 
   const [busy, setBusy] = useState(false);
@@ -351,19 +347,21 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
   const handleGrantAccess = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!grantEmail.trim() || !grantName.trim()) return;
+    const combinedGrantName = `${grantFirstName.trim()} ${grantLastName.trim()}`.trim();
+    if (!grantEmail.trim() || !grantFirstName.trim() || !grantLastName.trim()) return;
     setBusy(true);
     try {
       await authorizeUserEmailForProperty({
         property,
         email: grantEmail.trim(),
-        displayName: grantName.trim(),
+        displayName: combinedGrantName,
         role: grantRole,
         actorRole: ROLE_LABELS[activeRole],
       });
       onNotify(`Granted ${ROLE_LABELS[grantRole]} access to ${grantEmail}`);
       setGrantEmail('');
-      setGrantName('');
+      setGrantFirstName('');
+      setGrantLastName('');
     } finally {
       setBusy(false);
     }
@@ -384,14 +382,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     if (!draft) return channel;
     const nextUrl = draft.url.trim();
     const nextRoom = draft.room || 'All Suites';
-    const nextCurrency = draft.currency || channel.defaultCurrency || 'NGN';
-    const nextRate = Math.max(0, Number(draft.rate) || 0);
 
     const isDirty =
       nextUrl !== (channel.icalImportUrl || '').trim() ||
-      nextRoom !== (channel.roomNumber || 'All Suites') ||
-      nextCurrency !== (channel.defaultCurrency || 'NGN') ||
-      nextRate !== (channel.defaultNightlyRate ?? 0);
+      nextRoom !== (channel.roomNumber || 'All Suites');
 
     if (!isDirty) return channel;
 
@@ -400,8 +394,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       channel,
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
-      defaultCurrency: nextCurrency,
-      defaultNightlyRate: nextRate,
       actorRole: ROLE_LABELS[activeRole],
     });
     setIcalDrafts((prev) => {
@@ -413,8 +405,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       ...channel,
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
-      defaultCurrency: nextCurrency,
-      defaultNightlyRate: nextRate,
     };
   };
 
@@ -509,14 +499,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     e.preventDefault();
     setBusy(true);
     try {
-      const rateNum = Math.max(0, Number(newChannelNightlyRate) || 0);
       await createOtaChannelWithIcal({
         property,
         channelName: newChannelName,
         propertyListingId: newListingId,
         roomNumber: newChannelSuite,
-        defaultCurrency: newChannelCurrency,
-        defaultNightlyRate: rateNum,
         icalImportUrl: newIcalUrl,
         commissionPct: newCommissionPct,
         autoSync: newAutoSync,
@@ -526,7 +513,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       setShowChannelForm(false);
       setNewListingId('');
       setNewIcalUrl('');
-      setNewChannelNightlyRate('');
     } finally {
       setBusy(false);
     }
@@ -621,7 +607,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
                   <label className="block font-medium text-slate-700 mb-1">Channel Platform</label>
                   <select
@@ -671,37 +657,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     type="text"
                     value={newListingId}
                     onChange={(e) => setNewListingId(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Customer Currency
-                  </label>
-                  <select
-                    value={newChannelCurrency}
-                    onChange={(e) => setNewChannelCurrency(e.target.value as ChannelCurrency)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
-                  >
-                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                      <option key={cur} value={cur}>
-                        {cur}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Channel Rate / Night ({newChannelCurrency})
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={newChannelNightlyRate}
-                    onChange={(e) => setNewChannelNightlyRate(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
                 </div>
@@ -817,8 +772,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               const draft = icalDrafts[ch.id] ?? {
                 url: ch.icalImportUrl || '',
                 room: ch.roomNumber || 'All Suites',
-                currency: ch.defaultCurrency || 'NGN',
-                rate: ch.defaultNightlyRate && ch.defaultNightlyRate > 0 ? String(ch.defaultNightlyRate) : '',
               };
               const suiteParam = encodeURIComponent(
                 !draft.room || draft.room === 'All Suites' ? 'ALL' : draft.room
@@ -908,51 +861,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                         </select>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <div>
-                          <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
-                            Channel Currency
-                          </label>
-                          <select
-                            value={draft.currency}
-                            onChange={(e) =>
-                              setIcalDrafts((prev) => ({
-                                ...prev,
-                                [ch.id]: {
-                                  ...draft,
-                                  currency: e.target.value as ChannelCurrency,
-                                },
-                              }))
-                            }
-                            className="w-full border border-slate-200 rounded-lg px-2 py-1 text-[11px] bg-white font-mono-tabular"
-                          >
-                            {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                              <option key={cur} value={cur}>
-                                {cur}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
-                            Guest Rate / Night ({draft.currency})
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={draft.rate}
-                            onChange={(e) =>
-                              setIcalDrafts((prev) => ({
-                                ...prev,
-                                [ch.id]: { ...draft, rate: e.target.value },
-                              }))
-                            }
-                            className="w-full border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
-                          />
-                        </div>
-                      </div>
-
                       <div className="flex items-center gap-1.5">
                         <input
                           type="url"
@@ -977,8 +885,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 channel: ch,
                                 icalImportUrl: draft.url,
                                 roomNumber: draft.room,
-                                defaultCurrency: draft.currency,
-                                defaultNightlyRate: Math.max(0, Number(draft.rate) || 0),
                                 actorRole: ROLE_LABELS[activeRole],
                               });
                               setIcalDrafts((prev) => {
@@ -1022,11 +928,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                           )}
                         </button>
                       </div>
-                      {Number(draft.rate) > 0 && draft.currency !== 'NGN' && (
-                        <p className="text-[10px] text-slate-500 font-mono-tabular">
-                          Channel Rate: {formatChannelCurrency(Number(draft.rate), draft.currency)}/nt
-                        </p>
-                      )}
                     </div>
                   </div>
 
@@ -1683,14 +1584,24 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   Authorize Google Account for {property.name}
                 </h2>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Staff Name</label>
+                  <label className="block font-medium text-slate-700 mb-1">First Name *</label>
                   <input
                     required
                     type="text"
-                    value={grantName}
-                    onChange={(e) => setGrantName(e.target.value)}
+                    value={grantFirstName}
+                    onChange={(e) => setGrantFirstName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                  <input
+                    required
+                    type="text"
+                    value={grantLastName}
+                    onChange={(e) => setGrantLastName(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2"
                   />
                 </div>

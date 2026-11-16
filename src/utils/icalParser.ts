@@ -10,6 +10,7 @@ export interface ParsedIcalEvent {
   summary: string;
   description: string;
   location: string;
+  calendarName?: string;
   roomHint?: string;
   parsedCurrency?: ChannelCurrency;
   parsedNightlyRate?: number;
@@ -18,7 +19,6 @@ export interface ParsedIcalEvent {
 }
 
 function unfoldIcalLines(raw: string): string[] {
-  // RFC 5545 line unfolding: CRLF or LF followed by single space or tab
   const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const unfolded = normalized.replace(/\n[ \t]/g, '');
   return unfolded.split('\n');
@@ -35,7 +35,6 @@ function unescapeIcalText(value: string): string {
 
 function parseIcalDateToIso(rawVal: string): string | null {
   const val = rawVal.trim();
-  // Match YYYYMMDD or YYYYMMDDTHHMMSS(Z)
   const match = val.match(/^(\d{4})(\d{2})(\d{2})/);
   if (!match) return null;
   const [, year, month, day] = match;
@@ -59,6 +58,10 @@ function diffNights(startIso: string, endIso: string): number {
 }
 
 function extractPhoneHint(text: string): string | undefined {
+  const phoneLabel = text.match(/(?:Phone|Mobile|Tel|WhatsApp|Contact)\s*[:=-]\s*(\+?[\d\s()-]{7,20})/i);
+  if (phoneLabel && /\d{4}/.test(phoneLabel[1])) {
+    return phoneLabel[1].trim().slice(0, 32);
+  }
   const fullMatch = text.match(/(\+?\d[\d\s-]{6,16}\d)/);
   if (fullMatch) return fullMatch[1].trim().slice(0, 32);
   const last4 = text.match(/Last 4 Digits\):\s*(\d{4})/i);
@@ -66,24 +69,50 @@ function extractPhoneHint(text: string): string | undefined {
   return undefined;
 }
 
-function extractRoomHint(summary: string, description: string, location: string): string | undefined {
-  const combined = `${location}\n${summary}\n${description}`;
+function isGenericRoomNoise(val: string): boolean {
+  const v = val.trim();
+  if (v.length < 2) return true;
+  if (/^(?:not available|unavailable|closed|blocked|reserved|confirmed|airbnb|booking\.com|vrbo|expedia)$/i.test(v)) {
+    return true;
+  }
+  // Ignore pure reservation codes like HMA1234567 or numeric IDs
+  if (/^(?:HM[A-Z0-9]{6,}|\d{5,})$/i.test(v)) return true;
+  return false;
+}
+
+function extractRoomHint(
+  summary: string,
+  description: string,
+  location: string,
+  calendarName: string
+): string | undefined {
+  const combined = `${location}\n${summary}\n${description}\n${calendarName}`;
   const rmCode = combined.match(/\b(RM-\d{1,2})\b/i);
   if (rmCode) return rmCode[1].toUpperCase();
 
-  const unitMatch = combined.match(/(?:Room|Suite|Unit|Listing|Apartment)\s*[:#-]\s*([^\n|;,()]{2,56})/i);
-  if (unitMatch && unitMatch[1].trim()) {
+  const unitMatch = combined.match(
+    /(?:Room\s*Type|Suite\s*Type|Accommodation|Unit\s*Type|Room|Suite|Unit|Listing|Apartment|Category)\s*[:#-]\s*([^\n|;,()]{2,64})/i
+  );
+  if (unitMatch && !isGenericRoomNoise(unitMatch[1])) {
     return unitMatch[1].trim();
   }
 
-  const parenMatch = summary.match(/\(([^)]+)\)/);
-  if (parenMatch && parenMatch[1].trim().length >= 2) {
-    return parenMatch[1].trim();
+  const parenMatches = summary.matchAll(/\(([^)]+)\)/g);
+  for (const m of parenMatches) {
+    const inside = m[1].trim();
+    if (!isGenericRoomNoise(inside)) {
+      return inside;
+    }
   }
 
-  if (location.trim().length >= 2) {
+  if (location.trim().length >= 2 && !isGenericRoomNoise(location)) {
     return location.trim().slice(0, 64);
   }
+
+  if (calendarName.trim().length >= 2 && !isGenericRoomNoise(calendarName)) {
+    return calendarName.trim().slice(0, 64);
+  }
+
   return undefined;
 }
 
@@ -100,6 +129,7 @@ function extractPriceAndCurrency(
   summary: string,
   description: string,
   explicitRateHeader: string,
+  explicitTotalHeader: string,
   explicitCurrencyHeader: string,
   nights: number
 ): {
@@ -108,6 +138,19 @@ function extractPriceAndCurrency(
   parsedTotalAmount?: number;
 } {
   const safeNights = Math.max(1, nights);
+
+  if (explicitTotalHeader) {
+    const num = Number(explicitTotalHeader.replace(/[^0-9.]/g, ''));
+    const cur = normalizeCurrencyToken(explicitCurrencyHeader) || 'USD';
+    if (Number.isFinite(num) && num > 0) {
+      return {
+        parsedCurrency: cur,
+        parsedNightlyRate: Number((num / safeNights).toFixed(2)),
+        parsedTotalAmount: Number(num.toFixed(2)),
+      };
+    }
+  }
+
   if (explicitRateHeader) {
     const num = Number(explicitRateHeader.replace(/[^0-9.]/g, ''));
     const cur = normalizeCurrencyToken(explicitCurrencyHeader) || 'USD';
@@ -124,9 +167,9 @@ function extractPriceAndCurrency(
   const curOrAmt =
     '(?:(USD|EUR|GBP|NGN|US\\$|\\$|€|£|₦)\\s*([0-9][0-9,]*(?:\\.\\d{1,2})?)|([0-9][0-9,]*(?:\\.\\d{1,2})?)\\s*(USD|EUR|GBP|NGN))';
 
-  // 1. Explicit Total / Payout / Guest Paid labels take highest accuracy for total stay amount
+  // 1. Explicit Total / Payout / Guest Paid / Accommodation lines
   const explicitTotalRegex = new RegExp(
-    `(?:Booking\\s*Total|Grand\\s*Total|Total\\s*Price|Total\\s*Amount|Total|Payout|Guest\\s*Paid|Amount\\s*Paid)\\s*[:=-]?\\s*${curOrAmt}`,
+    `(?:Booking\\s*Total|Grand\\s*Total|Total\\s*Price|Total\\s*Amount|Total\\s*Paid|Total|Payout|Guest\\s*Paid|Amount\\s*Paid|Booking\\s*Value|Accommodation)\\s*[:=-]?\\s*${curOrAmt}(?!\\s*(?:per\\s*night|\\/\\s*night|\\/\\s*nt|nightly))`,
     'i'
   );
   const totalMatch = combined.match(explicitTotalRegex);
@@ -142,9 +185,9 @@ function extractPriceAndCurrency(
     }
   }
 
-  // 2. Explicit Nightly Rate prefix ("Nightly Rate: USD 95") or suffix ("$95/night", "USD 95 per night")
+  // 2. Explicit Nightly Rate prefix ("Nightly Rate: USD 95") or suffix ("$95/night")
   const nightlyPrefixRegex = new RegExp(
-    `(?:Nightly\\s*Rate|Per\\s*Night|Rate\\s*(?:per|\\/)\\s*night|Price\\s*(?:per|\\/)\\s*night)\\s*[:=-]?\\s*${curOrAmt}`,
+    `(?:Nightly\\s*Rate|Room\\s*Rate|Per\\s*Night|Rate\\s*(?:per|\\/)\\s*night|Price\\s*(?:per|\\/)\\s*night)\\s*[:=-]?\\s*${curOrAmt}`,
     'i'
   );
   const nightlySuffixRegex = new RegExp(
@@ -175,10 +218,9 @@ function extractPriceAndCurrency(
     const cur = normalizeCurrencyToken(labeledMatch[1] || labeledMatch[4] || '');
     const amt = Number((labeledMatch[2] || labeledMatch[3] || '').replace(/,/g, ''));
     if (cur && Number.isFinite(amt) && amt > 0) {
-      const perNight = Number((amt / safeNights).toFixed(2));
       return {
         parsedCurrency: cur,
-        parsedNightlyRate: perNight,
+        parsedNightlyRate: Number((amt / safeNights).toFixed(2)),
         parsedTotalAmount: Number(amt.toFixed(2)),
       };
     }
@@ -202,29 +244,77 @@ function extractPriceAndCurrency(
   return {};
 }
 
+function isNonPersonSummaryLabel(candidate: string): boolean {
+  const clean = candidate.trim();
+  if (clean.length < 2) return true;
+  return /^(?:not available|unavailable|closed|blocked|reserved|pending|confirmed|cancelled|maintenance|owner hold|airbnb|booking\.com|vrbo|expedia|hotels\.ng)$/i.test(
+    clean
+  );
+}
+
+function extractAttendeeCn(propHeader: string): string {
+  const cnMatch = propHeader.match(/;CN=("?)([^";:]+)\1/i);
+  if (!cnMatch) return '';
+  const candidate = cnMatch[2].trim();
+  if (isNonPersonSummaryLabel(candidate) || candidate.includes('@')) return '';
+  return candidate;
+}
+
 function extractGuestLabel(
   summaryRaw: string,
   descriptionRaw: string,
+  attendeeCnRaw: string,
   channelName: BookingSourceOption
 ): string {
   const summary = summaryRaw.trim();
   const desc = descriptionRaw.trim();
 
-  // Strip optional suite prefix like "Reserved (RM-1) - Chidi Okafor"
-  const parenDashSplit = summary.match(/^(?:Reserved|Reservation|Booked)\s*(?:\([^)]+\))?\s*[-–:]\s*(.+)$/i);
-  if (parenDashSplit && parenDashSplit[1].trim().length >= 2) {
-    const candidate = parenDashSplit[1].trim();
-    if (!/^not available$/i.test(candidate)) {
-      return candidate.slice(0, 110);
+  // 1. Check separate First Name + Last Name lines inside description
+  const firstMatch = desc.match(/(?:Guest\s*)?First\s*Name\s*[:=-]\s*([^\n|;,]+)/i);
+  const lastMatch = desc.match(/(?:Guest\s*)?Last\s*Name\s*[:=-]\s*([^\n|;,]+)/i);
+  if (firstMatch || lastMatch) {
+    const combinedName = `${firstMatch?.[1]?.trim() || ''} ${lastMatch?.[1]?.trim() || ''}`.trim();
+    if (!isNonPersonSummaryLabel(combinedName)) {
+      return combinedName.slice(0, 110);
     }
   }
 
-  // Check if description contains an explicit "Guest: Name" or confirmation code
-  const guestLine = desc.match(/(?:Guest(?:\s*Name)?|Booker|Customer)\s*:\s*([^\n]+)/i);
-  if (guestLine && guestLine[1].trim().length >= 2) {
-    return guestLine[1].trim().slice(0, 110);
+  // 2. Check explicit Guest / Booker / Customer / Traveler lines in description
+  const guestLine = desc.match(
+    /(?:Primary\s*Guest|Guest\s*Full\s*Name|Guest\s*Name|Guest|Booker\s*Name|Booker|Customer\s*Name|Customer|Traveler\s*Name|Traveler|Booked\s*By|Reservation\s*For|Full\s*Name|Name)\s*[:=-]\s*([^\n|;]+)/i
+  );
+  if (guestLine && !isNonPersonSummaryLabel(guestLine[1])) {
+    return guestLine[1].replace(/\s*\([^)]*\)\s*$/, '').trim().slice(0, 110);
   }
 
+  // 3. Check SUMMARY splits like "Reserved (RM-1) - John Doe", "CLOSED - Jane Smith", "Airbnb - Ada Bello"
+  const prefixDashSplit = summary.match(
+    /^(?:Reserved|Reservation|Booked|Booking|CLOSED|Blocked|Not\s*available|Airbnb|Booking\.com|VRBO|Expedia|Hotels\.ng)\s*(?:\([^)]+\))?\s*[-–:]\s*(.+)$/i
+  );
+  if (prefixDashSplit && !isNonPersonSummaryLabel(prefixDashSplit[1])) {
+    return prefixDashSplit[1].replace(/\s*\([^)]*\)\s*$/, '').trim().slice(0, 110);
+  }
+
+  // 4. Check "Booking for Jane Smith" / "Reservation for John Doe" in summary or description
+  const forMatch = `${summary}\n${desc}`.match(
+    /(?:Booking|Reservation|Stay)\s+for\s+([A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){0,3})/i
+  );
+  if (forMatch && !isNonPersonSummaryLabel(forMatch[1])) {
+    return forMatch[1].trim().slice(0, 110);
+  }
+
+  // 5. Check ATTENDEE / ORGANIZER CN header
+  if (attendeeCnRaw && !isNonPersonSummaryLabel(attendeeCnRaw)) {
+    return attendeeCnRaw.slice(0, 110);
+  }
+
+  // 6. Check if summary itself is a guest name (e.g. "Jane Smith (RM-2)" or "Jane Smith")
+  const strippedSummary = summary.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  if (strippedSummary && !isNonPersonSummaryLabel(strippedSummary)) {
+    return strippedSummary.slice(0, 110);
+  }
+
+  // 7. Confirmation code fallback
   const codeMatch =
     desc.match(/reservations\/details\/([A-Z0-9]+)/i) ||
     desc.match(/Ref(?:erence)?[:#\s]+([A-Z0-9-]{4,20})/i);
@@ -234,10 +324,6 @@ function extractGuestLabel(
 
   if (/not available|closed|blocked/i.test(summary)) {
     return `${channelName} Reservation`;
-  }
-
-  if (summary && !/^reserved$/i.test(summary) && summary.length >= 2) {
-    return `${channelName}: ${summary}`.slice(0, 110);
   }
 
   return `${channelName} Guest`;
@@ -250,6 +336,7 @@ export function parseIcalEvents(
   const lines = unfoldIcalLines(rawIcs);
   const events: ParsedIcalEvent[] = [];
 
+  let calendarName = '';
   let inEvent = false;
   let uid = '';
   let dtStart = '';
@@ -258,7 +345,9 @@ export function parseIcalEvents(
   let description = '';
   let location = '';
   let status = '';
+  let attendeeCn = '';
   let xRate = '';
+  let xTotal = '';
   let xCurrency = '';
 
   for (const rawLine of lines) {
@@ -274,7 +363,9 @@ export function parseIcalEvents(
       description = '';
       location = '';
       status = '';
+      attendeeCn = '';
       xRate = '';
+      xTotal = '';
       xCurrency = '';
       continue;
     }
@@ -291,12 +382,14 @@ export function parseIcalEvents(
           const cleanSummary = unescapeIcalText(summary);
           const cleanDesc = unescapeIcalText(description);
           const cleanLocation = unescapeIcalText(location);
+          const cleanCalName = unescapeIcalText(calendarName);
           const stableUid =
             uid.trim() || `${channelName}-${checkIn}-${checkOut}-${cleanSummary.slice(0, 24)}`;
           const priceInfo = extractPriceAndCurrency(
             cleanSummary,
             cleanDesc,
             xRate,
+            xTotal,
             xCurrency,
             nights
           );
@@ -306,12 +399,13 @@ export function parseIcalEvents(
             checkInDate: checkIn,
             checkOutDate: checkOut,
             nights,
-            guestName: extractGuestLabel(cleanSummary, cleanDesc, channelName),
+            guestName: extractGuestLabel(cleanSummary, cleanDesc, attendeeCn, channelName),
             guestPhone: extractPhoneHint(cleanDesc),
             summary: cleanSummary,
             description: cleanDesc,
             location: cleanLocation,
-            roomHint: extractRoomHint(cleanSummary, cleanDesc, cleanLocation),
+            calendarName: cleanCalName || undefined,
+            roomHint: extractRoomHint(cleanSummary, cleanDesc, cleanLocation, cleanCalName),
             ...priceInfo,
             cancelled: status.toUpperCase() === 'CANCELLED',
           });
@@ -321,14 +415,20 @@ export function parseIcalEvents(
       continue;
     }
 
-    if (!inEvent) continue;
-
     const colonIdx = line.indexOf(':');
     if (colonIdx === -1) continue;
 
-    const propPart = line.slice(0, colonIdx).toUpperCase();
+    const propPart = line.slice(0, colonIdx);
+    const propUpper = propPart.toUpperCase();
     const valuePart = line.slice(colonIdx + 1);
-    const propName = propPart.split(';')[0];
+    const propName = propUpper.split(';')[0];
+
+    if (!inEvent) {
+      if (propName === 'X-WR-CALNAME') {
+        calendarName = valuePart;
+      }
+      continue;
+    }
 
     if (propName === 'UID') uid = valuePart;
     else if (propName === 'DTSTART') dtStart = valuePart;
@@ -337,8 +437,20 @@ export function parseIcalEvents(
     else if (propName === 'DESCRIPTION') description = valuePart;
     else if (propName === 'LOCATION') location = valuePart;
     else if (propName === 'STATUS') status = valuePart;
-    else if (propName === 'X-RATE' || propName === 'X-PRICE' || propName === 'X-AMOUNT') xRate = valuePart;
-    else if (propName === 'X-CURRENCY') xCurrency = valuePart;
+    else if ((propName === 'ATTENDEE' || propName === 'ORGANIZER') && !attendeeCn) {
+      attendeeCn = extractAttendeeCn(propPart);
+    } else if (propName === 'X-TOTAL' || propName === 'X-TOTAL-AMOUNT') {
+      xTotal = valuePart;
+    } else if (
+      propName === 'X-NIGHTLY-RATE' ||
+      propName === 'X-RATE' ||
+      propName === 'X-PRICE' ||
+      propName === 'X-AMOUNT'
+    ) {
+      xRate = valuePart;
+    } else if (propName === 'X-CURRENCY') {
+      xCurrency = valuePart;
+    }
   }
 
   return events;

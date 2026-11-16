@@ -39,7 +39,8 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id || '');
   const [taskType, setTaskType] = useState<HousekeepingTaskRecord['taskType']>('Checkout Turnover');
-  const [assignee, setAssignee] = useState('Ngozi Ugwu');
+  const [assigneeFirstName, setAssigneeFirstName] = useState('Ngozi');
+  const [assigneeLastName, setAssigneeLastName] = useState('Ugwu');
   const [hkPriority, setHkPriority] = useState<HousekeepingTaskRecord['priority']>('High');
   const [hkNotes, setHkNotes] = useState('');
 
@@ -51,7 +52,8 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
     useState<MaintenanceTicketRecord['category']>('HVAC & AC');
   const [maintPriority, setMaintPriority] =
     useState<MaintenanceTicketRecord['priority']>('Medium');
-  const [maintAssignee, setMaintAssignee] = useState('Ifeanyi Okolie');
+  const [maintFirstName, setMaintFirstName] = useState('Ifeanyi');
+  const [maintLastName, setMaintLastName] = useState('Okolie');
   const [estimatedCostNgn, setEstimatedCostNgn] = useState(15000);
   const [markOutOfOrder, setMarkOutOfOrder] = useState(false);
 
@@ -68,11 +70,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
     e.preventDefault();
     const room = rooms.find((r) => r.id === selectedRoomId) || sortedRooms[0];
     if (!room) return;
+    const assignedName = `${assigneeFirstName.trim()} ${assigneeLastName.trim()}`.trim();
+    if (!assignedName) return;
     await createHousekeepingTask({
       property,
       room,
       taskType,
-      assignedTo: assignee,
+      assignedTo: assignedName,
       priority: hkPriority,
       notes: hkNotes.trim(),
       actorRole,
@@ -86,7 +90,8 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
     e.preventDefault();
     const room = rooms.find((r) => r.id === maintRoomId);
     const label = locationLabel.trim() || (room ? `Room ${room.roomNumber}` : 'Main Facility');
-    if (!issueTitle.trim()) return;
+    const techName = `${maintFirstName.trim()} ${maintLastName.trim()}`.trim();
+    if (!issueTitle.trim() || !techName) return;
     await createMaintenanceTicket({
       property,
       room,
@@ -94,7 +99,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       issueTitle: issueTitle.trim(),
       category: maintCategory,
       priority: maintPriority,
-      assignedTo: maintAssignee,
+      assignedTo: techName,
       estimatedCostNgn: Math.max(0, estimatedCostNgn),
       markRoomOutOfOrder: markOutOfOrder && Boolean(room),
       actorRole,
@@ -142,56 +147,84 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
               <h2 className="font-display text-sm font-bold text-slate-900">
                 Assign Housekeeping Task
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <select
-                  value={selectedRoomId}
-                  onChange={(e) => setSelectedRoomId(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  {sortedRooms.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      Room {r.roomNumber} — {r.name} ({r.housekeepingStatus})
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={taskType}
-                  onChange={(e) =>
-                    setTaskType(e.target.value as HousekeepingTaskRecord['taskType'])
-                  }
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="Checkout Turnover">Checkout Turnover</option>
-                  <option value="Daily Stayover">Daily Stayover</option>
-                  <option value="Deep Clean">Deep Clean</option>
-                  <option value="VIP Inspection">VIP Inspection</option>
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Room *</label>
+                  <select
+                    value={selectedRoomId}
+                    onChange={(e) => setSelectedRoomId(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    {sortedRooms.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        Room {r.roomNumber} — {r.name} ({r.housekeepingStatus})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Task Type *</label>
+                  <select
+                    value={taskType}
+                    onChange={(e) =>
+                      setTaskType(e.target.value as HousekeepingTaskRecord['taskType'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Checkout Turnover">Checkout Turnover</option>
+                    <option value="Daily Stayover">Daily Stayover</option>
+                    <option value="Deep Clean">Deep Clean</option>
+                    <option value="VIP Inspection">VIP Inspection</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Attendant First Name *
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={assigneeFirstName}
+                    onChange={(e) => setAssigneeFirstName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Attendant Last Name *
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={assigneeLastName}
+                    onChange={(e) => setAssigneeLastName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Priority</label>
+                  <select
+                    value={hkPriority}
+                    onChange={(e) =>
+                      setHkPriority(e.target.value as HousekeepingTaskRecord['priority'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Normal">Normal Priority</option>
+                    <option value="High">High Priority</option>
+                    <option value="Urgent">Urgent</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block font-medium text-slate-600 mb-1">Instructions</label>
                 <input
                   type="text"
-                  value={assignee}
-                  onChange={(e) => setAssignee(e.target.value)}
-                  placeholder="Attendant Name"
-                  className="border border-slate-200 rounded-lg px-3 py-2"
+                  value={hkNotes}
+                  onChange={(e) => setHkNotes(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
                 />
-                <select
-                  value={hkPriority}
-                  onChange={(e) =>
-                    setHkPriority(e.target.value as HousekeepingTaskRecord['priority'])
-                  }
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="Normal">Normal Priority</option>
-                  <option value="High">High Priority</option>
-                  <option value="Urgent">Urgent</option>
-                </select>
               </div>
-              <input
-                type="text"
-                value={hkNotes}
-                onChange={(e) => setHkNotes(e.target.value)}
-                placeholder="Instructions (e.g., Fresh VIP bathrobes, restock Nespresso capsules)"
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -342,75 +375,109 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
               <h2 className="font-display text-sm font-bold text-slate-900">
                 Log Engineering / Maintenance Ticket
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <select
-                  value={maintRoomId}
-                  onChange={(e) => setMaintRoomId(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="">General Facility / Power Plant</option>
-                  {sortedRooms.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      Room {r.roomNumber} — {r.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={locationLabel}
-                  onChange={(e) => setLocationLabel(e.target.value)}
-                  placeholder="Location override (e.g. Inverter Room)"
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  required
-                  type="text"
-                  value={issueTitle}
-                  onChange={(e) => setIssueTitle(e.target.value)}
-                  placeholder="Issue description"
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <select
-                  value={maintCategory}
-                  onChange={(e) =>
-                    setMaintCategory(e.target.value as MaintenanceTicketRecord['category'])
-                  }
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="HVAC & AC">HVAC &amp; AC</option>
-                  <option value="Plumbing">Plumbing</option>
-                  <option value="Electrical & Inverter">Electrical &amp; Inverter</option>
-                  <option value="Carpentry">Carpentry</option>
-                  <option value="Generator & Power">Generator &amp; Power</option>
-                </select>
-                <select
-                  value={maintPriority}
-                  onChange={(e) =>
-                    setMaintPriority(e.target.value as MaintenanceTicketRecord['priority'])
-                  }
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="Low">Low</option>
-                  <option value="Medium">Medium</option>
-                  <option value="High">High</option>
-                  <option value="Critical">Critical</option>
-                </select>
-                <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Suite / Facility</label>
+                  <select
+                    value={maintRoomId}
+                    onChange={(e) => setMaintRoomId(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="">General Facility / Power Plant</option>
+                    {sortedRooms.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        Room {r.roomNumber} — {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Location Override</label>
                   <input
                     type="text"
-                    value={maintAssignee}
-                    onChange={(e) => setMaintAssignee(e.target.value)}
-                    placeholder="Technician"
-                    className="border border-slate-200 rounded-lg px-3 py-2"
+                    value={locationLabel}
+                    onChange={(e) => setLocationLabel(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
                   />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Issue Description *
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={issueTitle}
+                    onChange={(e) => setIssueTitle(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Category</label>
+                  <select
+                    value={maintCategory}
+                    onChange={(e) =>
+                      setMaintCategory(e.target.value as MaintenanceTicketRecord['category'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="HVAC & AC">HVAC &amp; AC</option>
+                    <option value="Plumbing">Plumbing</option>
+                    <option value="Electrical & Inverter">Electrical &amp; Inverter</option>
+                    <option value="Carpentry">Carpentry</option>
+                    <option value="Generator & Power">Generator &amp; Power</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">Priority</label>
+                  <select
+                    value={maintPriority}
+                    onChange={(e) =>
+                      setMaintPriority(e.target.value as MaintenanceTicketRecord['priority'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                    <option value="Critical">Critical</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Technician First Name *
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={maintFirstName}
+                    onChange={(e) => setMaintFirstName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Technician Last Name *
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={maintLastName}
+                    onChange={(e) => setMaintLastName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Estimated Cost (₦)
+                  </label>
                   <input
                     type="number"
                     min={0}
                     step={1000}
                     value={estimatedCostNgn}
                     onChange={(e) => setEstimatedCostNgn(Number(e.target.value))}
-                    placeholder="Est. NGN"
-                    className="border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
                 </div>
               </div>

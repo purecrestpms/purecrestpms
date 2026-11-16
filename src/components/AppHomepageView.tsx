@@ -222,7 +222,8 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
   const [buyerPropName, setBuyerPropName] = useState('');
   const [buyerLocation, setBuyerLocation] = useState('');
   const [buyerRooms, setBuyerRooms] = useState('12');
-  const [buyerName, setBuyerName] = useState('');
+  const [buyerFirstName, setBuyerFirstName] = useState('');
+  const [buyerLastName, setBuyerLastName] = useState('');
   const [buyerEmail, setBuyerEmail] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
   const [buyerPaymentOption, setBuyerPaymentOption] = useState('Corporate Invoice / Wire Transfer');
@@ -232,7 +233,8 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
   const [purchaseConfirmation, setPurchaseConfirmation] = useState<PlanInquiryRecord | null>(null);
 
   // Contact form state
-  const [contactName, setContactName] = useState('');
+  const [contactFirstName, setContactFirstName] = useState('');
+  const [contactLastName, setContactLastName] = useState('');
   const [contactProperty, setContactProperty] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
@@ -280,8 +282,9 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
       setPurchaseError('Enter your property or hotel name.');
       return;
     }
-    if (buyerName.trim().length < 2) {
-      setPurchaseError('Enter your full name.');
+    const combinedBuyerName = `${buyerFirstName.trim()} ${buyerLastName.trim()}`.trim();
+    if (!buyerFirstName.trim() || !buyerLastName.trim()) {
+      setPurchaseError('Enter your first name and last name.');
       return;
     }
     if (!emailOk) {
@@ -307,7 +310,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
         cityState: buyerLocation || 'International',
         roomCount: parsedRooms,
         preferredSubdomain: slugifyIdentifier(buyerPropName),
-        contactName: buyerName,
+        contactName: combinedBuyerName,
         contactEmail: buyerEmail,
         contactPhone: buyerPhone,
         paymentOption: buyerPaymentOption,
@@ -332,8 +335,9 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
     const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim());
     const parsedRooms = Math.max(1, Math.min(5000, Number(contactRooms) || 1));
 
-    if (contactName.trim().length < 2) {
-      setContactError('Enter your full name.');
+    const combinedContactName = `${contactFirstName.trim()} ${contactLastName.trim()}`.trim();
+    if (!contactFirstName.trim() || !contactLastName.trim()) {
+      setContactError('Enter your first name and last name.');
       return;
     }
     if (contactProperty.trim().length < 2) {
@@ -361,14 +365,15 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
         cityState: 'Sales & Demo Inquiry',
         roomCount: parsedRooms,
         preferredSubdomain: slugifyIdentifier(contactProperty),
-        contactName,
+        contactName: combinedContactName,
         contactEmail,
         contactPhone,
         paymentOption: contactTopic,
         message: contactMessage || `${contactTopic} requested for ${contactProperty}.`,
       });
       setContactConfirmation(saved);
-      setContactName('');
+      setContactFirstName('');
+      setContactLastName('');
       setContactProperty('');
       setContactEmail('');
       setContactPhone('');
@@ -872,17 +877,33 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label
-                        htmlFor="contact-full-name"
+                        htmlFor="contact-first-name"
                         className="block text-xs font-semibold text-slate-700 mb-1.5"
                       >
-                        Full Name *
+                        First Name *
                       </label>
                       <input
-                        id="contact-full-name"
+                        id="contact-first-name"
                         type="text"
                         required
-                        value={contactName}
-                        onChange={(e) => setContactName(e.target.value)}
+                        value={contactFirstName}
+                        onChange={(e) => setContactFirstName(e.target.value)}
+                        className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-[#0B245B]"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="contact-last-name"
+                        className="block text-xs font-semibold text-slate-700 mb-1.5"
+                      >
+                        Last Name *
+                      </label>
+                      <input
+                        id="contact-last-name"
+                        type="text"
+                        required
+                        value={contactLastName}
+                        onChange={(e) => setContactLastName(e.target.value)}
                         className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-[#0B245B]"
                       />
                     </div>
@@ -1242,17 +1263,33 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                   </div>
                   <div>
                     <label
-                      htmlFor="buyer-name"
+                      htmlFor="buyer-first-name"
                       className="block text-xs font-semibold text-slate-700 mb-1.5"
                     >
-                      Administrator Full Name *
+                      Administrator First Name *
                     </label>
                     <input
-                      id="buyer-name"
+                      id="buyer-first-name"
                       type="text"
                       required
-                      value={buyerName}
-                      onChange={(e) => setBuyerName(e.target.value)}
+                      value={buyerFirstName}
+                      onChange={(e) => setBuyerFirstName(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-[#0B245B]"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="buyer-last-name"
+                      className="block text-xs font-semibold text-slate-700 mb-1.5"
+                    >
+                      Administrator Last Name *
+                    </label>
+                    <input
+                      id="buyer-last-name"
+                      type="text"
+                      required
+                      value={buyerLastName}
+                      onChange={(e) => setBuyerLastName(e.target.value)}
                       className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-[#0B245B]"
                     />
                   </div>

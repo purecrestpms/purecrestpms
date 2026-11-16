@@ -59,7 +59,8 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 }) => {
   const { cms } = useCms();
   const [showStaffForm, setShowStaffForm] = useState(false);
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('+234 ');
   const [department, setDepartment] =
@@ -105,13 +106,14 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
   const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName.trim()) return;
+    const combinedFullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    if (!firstName.trim() || !lastName.trim()) return;
     const code = `RG-${String(staffMembers.length + 1).padStart(3, '0')}`;
     await createStaffMember({
       property,
       staff: {
         staffCode: code,
-        fullName: fullName.trim(),
+        fullName: combinedFullName,
         email: email.trim(),
         phone: phone.trim(),
         department,
@@ -122,9 +124,10 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       },
       actorRole,
     });
-    onNotify(`Onboarded ${fullName} (${code})`);
+    onNotify(`Onboarded ${combinedFullName} (${code})`);
     setShowStaffForm(false);
-    setFullName('');
+    setFirstName('');
+    setLastName('');
     setEmail('');
   };
 
@@ -416,73 +419,97 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
               <h2 className="font-display text-sm font-bold text-slate-900">
                 Onboard Property Staff
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <input
-                  required
-                  type="text"
-                  placeholder="Full Name"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  type="email"
-                  placeholder="Work Email (optional)"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  type="text"
-                  placeholder="Phone (+234...)"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <select
-                  value={department}
-                  onChange={(e) =>
-                    setDepartment(e.target.value as StaffMemberRecord['department'])
-                  }
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="Management">Management</option>
-                  <option value="Front Desk">Front Desk</option>
-                  <option value="Housekeeping">Housekeeping</option>
-                  <option value="Kitchen & F&B">Kitchen &amp; F&amp;B</option>
-                  <option value="Accounts">Accounts</option>
-                  <option value="Engineering & Security">Engineering &amp; Security</option>
-                </select>
-                <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as StaffMemberRecord['role'])}
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="front_desk">Front Desk &amp; Reservations</option>
-                  <option value="housekeeping">Housekeeping Lead</option>
-                  <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
-                  <option value="accountant">Finance &amp; Payroll Officer</option>
-                  <option value="maintenance">Engineering &amp; Maintenance</option>
-                  <option value="property_admin">Property Admin (GM)</option>
-                </select>
-                <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+                  <input
+                    required
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                  <input
+                    required
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Work Email</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                  <input
+                    type="text"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Department</label>
+                  <select
+                    value={department}
+                    onChange={(e) =>
+                      setDepartment(e.target.value as StaffMemberRecord['department'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Management">Management</option>
+                    <option value="Front Desk">Front Desk</option>
+                    <option value="Housekeeping">Housekeeping</option>
+                    <option value="Kitchen & F&B">Kitchen &amp; F&amp;B</option>
+                    <option value="Accounts">Accounts</option>
+                    <option value="Engineering & Security">Engineering &amp; Security</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Role</label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as StaffMemberRecord['role'])}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="front_desk">Front Desk &amp; Reservations</option>
+                    <option value="housekeeping">Housekeeping Lead</option>
+                    <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
+                    <option value="accountant">Finance &amp; Payroll Officer</option>
+                    <option value="maintenance">Engineering &amp; Maintenance</option>
+                    <option value="property_admin">Property Admin (GM)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Base Salary (₦)</label>
                   <input
                     type="number"
                     min={0}
                     step={5000}
-                    placeholder="Base Salary (₦)"
                     value={baseSalary}
                     onChange={(e) => setBaseSalary(Number(e.target.value))}
-                    className="border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Allowance (₦)</label>
                   <input
                     type="number"
                     min={0}
                     step={5000}
-                    placeholder="Allowance (₦)"
                     value={allowance}
                     onChange={(e) => setAllowance(Number(e.target.value))}
-                    className="border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
                 </div>
               </div>

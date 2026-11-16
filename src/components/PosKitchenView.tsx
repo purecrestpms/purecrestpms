@@ -99,7 +99,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   const [chargeTarget, setChargeTarget] = useState<'walkin' | string>('walkin');
   const [serviceType, setServiceType] = useState<PosOrderRecord['serviceType']>('Dine-In');
   const [tableOrRoom, setTableOrRoom] = useState('Table 01');
-  const [guestName, setGuestName] = useState('');
+  const [guestFirstName, setGuestFirstName] = useState('');
+  const [guestLastName, setGuestLastName] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
   const [paymentMethod, setPaymentMethod] =
     useState<PosOrderRecord['paymentMethod']>('Cash NGN');
@@ -251,13 +252,15 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
     const itemsSummary = cart.map((c) => `${c.qty}x ${c.name}`).join(', ');
 
+    const combinedGuestName = `${guestFirstName.trim()} ${guestLastName.trim()}`.trim();
+
     setSubmitting(true);
     try {
       const created = await submitPosOrderWorkflow({
         property,
         serviceType,
         tableOrRoom: targetLabel,
-        guestName: guestName.trim() || linkedRes?.guestName || 'Walk-in Guest',
+        guestName: combinedGuestName || linkedRes?.guestName || 'Walk-in Guest',
         notes: orderNotes.trim(),
         linkedReservation: linkedRes,
         itemsSummary,
@@ -273,6 +276,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           : `Settled ${formatNgn(totalNgn)} (${effectiveMethod}) & placed order`
       );
       setCart([]);
+      setGuestFirstName('');
+      setGuestLastName('');
       setOrderNotes('');
       if (created) {
         setReceiptOrder(created);
@@ -849,41 +854,46 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                       type="text"
                       value={tableOrRoom}
                       onChange={(e) => setTableOrRoom(e.target.value)}
-                      placeholder="Table 01"
                       className="w-full border border-slate-200 rounded-lg px-2.5 py-2"
                     />
                   </div>
                 ) : (
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Guest Name</label>
+                    <label className="block font-medium text-slate-700 mb-1">Suite Guest</label>
                     <input
                       type="text"
-                      value={
-                        guestName ||
-                        inHouseGuests.find((r) => r.id === chargeTarget)?.guestName ||
-                        ''
-                      }
-                      onChange={(e) => setGuestName(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2"
+                      readOnly
+                      value={inHouseGuests.find((r) => r.id === chargeTarget)?.guestName || ''}
+                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-slate-50 text-slate-700"
                     />
                   </div>
                 )}
               </div>
 
-              {chargeTarget === 'walkin' && (
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-medium text-slate-700 mb-1">
-                    Guest Name (Optional for Receipt)
+                    Guest First Name (Optional)
                   </label>
                   <input
                     type="text"
-                    value={guestName}
-                    onChange={(e) => setGuestName(e.target.value)}
-                    placeholder="Walk-in Guest"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-1.5"
+                    value={guestFirstName}
+                    onChange={(e) => setGuestFirstName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
                   />
                 </div>
-              )}
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Guest Last Name (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={guestLastName}
+                    onChange={(e) => setGuestLastName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Cart Items List */}

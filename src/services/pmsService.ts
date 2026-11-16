@@ -2377,10 +2377,24 @@ export async function syncOtaChannelWorkflow(params: {
       return mappedRoomsFromChannel[0];
     }
 
-    const hintCandidates = findRoomsMatchingHint(ev.roomHint);
-    const listingCandidates =
-      hintCandidates.length > 0 ? hintCandidates : findRoomsMatchingHint(params.channel.propertyListingId);
-    const candidatePool = listingCandidates.length > 0 ? listingCandidates : roomList;
+    const searchSources = [
+      ev.roomHint,
+      ev.location,
+      ev.calendarName,
+      ev.summary,
+      ev.description,
+      params.channel.propertyListingId,
+    ];
+    let matchedPool: RoomRecord[] = [];
+    for (const src of searchSources) {
+      const found = findRoomsMatchingHint(src);
+      if (found.length > 0) {
+        matchedPool = found;
+        break;
+      }
+    }
+
+    const candidatePool = matchedPool.length > 0 ? matchedPool : roomList;
 
     const isFree = (room: RoomRecord) =>
       !existingReservations.some(
@@ -2393,15 +2407,26 @@ export async function syncOtaChannelWorkflow(params: {
           datesOverlap(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
       );
 
-    const freeCandidate = candidatePool.find(isFree);
-    if (freeCandidate) return freeCandidate;
-
-    if (listingCandidates.length > 0) {
-      return listingCandidates[0];
+    if (matchedPool.length > 0) {
+      const freeMatch = matchedPool.find(isFree);
+      return freeMatch || matchedPool[0];
     }
 
-    // Spread fallback across rooms with fewest overlapping reservations rather than piling on roomList[0]
-    const sortedByLoad = [...candidatePool].sort((a, b) => {
+    // When unmapped (All Suites & no room hint), prefer an existing room type offset per channel so Airbnb and Booking.com do not pile onto roomList[0]
+    let channelHash = 0;
+    for (let i = 0; i < params.channel.id.length; i++) {
+      channelHash = (channelHash * 31 + params.channel.id.charCodeAt(i)) >>> 0;
+    }
+    const offset = candidatePool.length > 0 ? channelHash % candidatePool.length : 0;
+    const rotatedPool = [
+      ...candidatePool.slice(offset),
+      ...candidatePool.slice(0, offset),
+    ];
+
+    const freeCandidate = rotatedPool.find(isFree);
+    if (freeCandidate) return freeCandidate;
+
+    const sortedByLoad = [...rotatedPool].sort((a, b) => {
       const countA = existingReservations.filter(
         (res) =>
           res.id !== ignoreReservationId &&
@@ -2427,8 +2452,6 @@ export async function syncOtaChannelWorkflow(params: {
 
   const resolveChannelPricing = (ev: ParsedIcalEvent, assignedRoom: RoomRecord) => {
     const usdRate = params.property.usdExchangeRateNgn;
-    const configuredCurrency: ChannelCurrency = params.channel.defaultCurrency || 'NGN';
-    const configuredNightlyRate = params.channel.defaultNightlyRate || 0;
 
     if (ev.parsedCurrency && ev.parsedNightlyRate && ev.parsedNightlyRate > 0) {
       const sourceCurrency = ev.parsedCurrency;
@@ -2450,38 +2473,8 @@ export async function syncOtaChannelWorkflow(params: {
       };
     }
 
-    if (configuredNightlyRate > 0) {
-      const sourceCurrency = configuredCurrency;
-      const fxRateToNgn = getFxRateToNgn(sourceCurrency, usdRate);
-      const sourceNightlyRate = Number(configuredNightlyRate.toFixed(2));
-      const sourceTotalAmount = Number((sourceNightlyRate * ev.nights).toFixed(2));
-      const nightlyRateNgn = convertCurrencyToNgn(sourceNightlyRate, sourceCurrency, usdRate);
-      const roomChargesNgn = convertCurrencyToNgn(sourceTotalAmount, sourceCurrency, usdRate);
-      return {
-        sourceCurrency,
-        sourceNightlyRate,
-        sourceTotalAmount,
-        fxRateToNgn,
-        nightlyRateNgn,
-        roomChargesNgn,
-      };
-    }
-
     const nightlyRateNgn = assignedRoom.nightlyRateNgn || 0;
     const roomChargesNgn = nightlyRateNgn * ev.nights;
-    if (configuredCurrency !== 'NGN') {
-      const fxRateToNgn = getFxRateToNgn(configuredCurrency, usdRate);
-      const safeFx = Math.max(1, fxRateToNgn);
-      return {
-        sourceCurrency: configuredCurrency,
-        sourceNightlyRate: Number((nightlyRateNgn / safeFx).toFixed(2)),
-        sourceTotalAmount: Number((roomChargesNgn / safeFx).toFixed(2)),
-        fxRateToNgn: safeFx,
-        nightlyRateNgn,
-        roomChargesNgn,
-      };
-    }
-
     return {
       sourceCurrency: 'NGN' as const,
       sourceNightlyRate: nightlyRateNgn,
@@ -2664,8 +2657,6 @@ export async function createOtaChannelWithIcal(params: {
   channelName: OtaIntegrationRecord['channelName'];
   propertyListingId: string;
   roomNumber: string;
-  defaultCurrency?: ChannelCurrency;
-  defaultNightlyRate?: number;
   icalImportUrl: string;
   commissionPct: number;
   autoSync: boolean;
@@ -2678,8 +2669,6 @@ export async function createOtaChannelWithIcal(params: {
   const normalizedRoom = params.roomNumber || 'All Suites';
   const exportRoom = encodeURIComponent(normalizedRoom === 'All Suites' ? 'ALL' : normalizedRoom);
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${exportRoom}`;
-  const defaultCurrency: ChannelCurrency = params.defaultCurrency || 'NGN';
-  const defaultNightlyRate = Math.max(0, Number(params.defaultNightlyRate) || 0);
 
   try {
     await setDoc(ref, {
@@ -2687,8 +2676,6 @@ export async function createOtaChannelWithIcal(params: {
       channelName: params.channelName,
       propertyListingId: params.propertyListingId.trim() || `ICAL-${id.slice(-5).toUpperCase()}`,
       roomNumber: normalizedRoom,
-      defaultCurrency,
-      defaultNightlyRate,
       icalImportUrl: params.icalImportUrl.trim(),
       icalExportUrl,
       commissionPct: Math.max(0, Math.min(50, params.commissionPct)),
@@ -2706,7 +2693,7 @@ export async function createOtaChannelWithIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Added ${params.channelName} with iCal Link`,
-      details: `${normalizedRoom} · ${defaultCurrency} ${defaultNightlyRate}/nt · ${params.icalImportUrl.trim() || 'Export-only feed'}`,
+      details: `${normalizedRoom} · ${params.icalImportUrl.trim() || 'Export-only feed'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -2719,8 +2706,6 @@ export async function updateOtaChannelIcal(params: {
   channel: OtaIntegrationRecord;
   icalImportUrl: string;
   roomNumber: string;
-  defaultCurrency?: ChannelCurrency;
-  defaultNightlyRate?: number;
   actorRole: string;
 }) {
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', params.channel.id);
@@ -2730,23 +2715,11 @@ export async function updateOtaChannelIcal(params: {
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${encodeURIComponent(exportRoom)}`;
   const cleanImportUrl = params.icalImportUrl.trim();
   const urlChanged = cleanImportUrl !== (params.channel.icalImportUrl || '').trim();
-  const defaultCurrency: ChannelCurrency =
-    params.defaultCurrency || params.channel.defaultCurrency || 'NGN';
-  const defaultNightlyRate = Math.max(
-    0,
-    Number(
-      params.defaultNightlyRate !== undefined
-        ? params.defaultNightlyRate
-        : params.channel.defaultNightlyRate ?? 0
-    ) || 0
-  );
 
   try {
     await updateDoc(ref, {
       icalImportUrl: cleanImportUrl,
       roomNumber: normalizedRoom,
-      defaultCurrency,
-      defaultNightlyRate,
       icalExportUrl,
       ...(urlChanged ? { lastSyncedIso: '' } : {}),
       updatedAt: serverTimestamp(),
@@ -2756,7 +2729,7 @@ export async function updateOtaChannelIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Updated iCal Link on ${params.channel.channelName}`,
-      details: `${normalizedRoom} · ${defaultCurrency} ${defaultNightlyRate}/nt · ${cleanImportUrl}`,
+      details: `${normalizedRoom} · ${cleanImportUrl}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
