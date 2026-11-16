@@ -18,22 +18,33 @@ import {
 } from '../services/pmsService';
 import {
   BlockedDateRecord,
+  formatBookingSourceLabel,
   formatNgn,
   getRoomSection,
+  GuestRecord,
+  PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
   ReservationRecord,
   RoomRecord,
   RoomSection,
   sortRoomsByNumber,
 } from '../types/pms';
+import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
+import { useCms } from '../context/CmsContext';
 
 interface ReservationsCalendarViewProps {
   property: PropertyRecord;
   rooms: RoomRecord[];
   reservations: ReservationRecord[];
   blockedDates: BlockedDateRecord[];
+  guests?: GuestRecord[];
   actorRole: string;
   onNotify: (msg: string) => void;
+  onGuestCheckedIn?: (info: CheckedInConfirmationInfo) => void;
+  onOpenReservationFolio?: (
+    reservationId: string,
+    targetSection?: 'reservations' | 'front_desk'
+  ) => void;
 }
 
 function addDaysIso(isoDate: string, days: number): string {
@@ -68,19 +79,23 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   rooms,
   reservations,
   blockedDates,
+  guests = [],
   actorRole,
   onNotify,
+  onGuestCheckedIn,
+  onOpenReservationFolio,
 }) => {
+  const { cms } = useCms();
   const todayIso = new Date().toISOString().slice(0, 10);
-  const defaultAnchor = '2026-11-12';
+  const tomorrowIso = addDaysIso(todayIso, 1);
 
-  const [calendarStart, setCalendarStart] = useState<string>(defaultAnchor);
+  const [calendarStart, setCalendarStart] = useState<string>(todayIso);
   const [searchQuery, setSearchQuery] = useState('');
   const [sectionFilter, setSectionFilter] = useState<'ALL' | RoomSection>('ALL');
 
-  // Date-range availability search
-  const [availCheckIn, setAvailCheckIn] = useState('2026-11-16');
-  const [availCheckOut, setAvailCheckOut] = useState('2026-11-18');
+  // Date-range availability search (auto-pick today and next day)
+  const [availCheckIn, setAvailCheckIn] = useState(todayIso);
+  const [availCheckOut, setAvailCheckOut] = useState(tomorrowIso);
   const [onlyShowAvailable, setOnlyShowAvailable] = useState(false);
 
   // Action modals
@@ -90,8 +105,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const [conflictError, setConflictError] = useState<string | null>(null);
 
   // Block Dates form
-  const [blockStartDate, setBlockStartDate] = useState('2026-11-18');
-  const [blockEndDate, setBlockEndDate] = useState('2026-11-20');
+  const [blockStartDate, setBlockStartDate] = useState(todayIso);
+  const [blockEndDate, setBlockEndDate] = useState(tomorrowIso);
   const [blockCategory, setBlockCategory] =
     useState<BlockedDateRecord['category']>('Owner Hold');
   const [blockReason, setBlockReason] = useState('');
@@ -99,14 +114,22 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   // Quick Reservation form
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('+234 803 ');
-  const [bookCheckIn, setBookCheckIn] = useState('2026-11-16');
-  const [bookCheckOut, setBookCheckOut] = useState('2026-11-18');
+  const [bookCheckIn, setBookCheckIn] = useState(todayIso);
+  const [bookCheckOut, setBookCheckOut] = useState(tomorrowIso);
   const [adults, setAdults] = useState(1);
-  const [channel, setChannel] = useState<ReservationRecord['channel']>('Direct Web');
+  const [childrenCount, setChildrenCount] = useState(0);
+  const [channel, setChannel] = useState<ReservationRecord['channel']>('Website');
   const [paymentMethod, setPaymentMethod] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
   const [depositNgn, setDepositNgn] = useState(0);
   const [immediateCheckIn, setImmediateCheckIn] = useState(false);
+  const [quickIdType, setQuickIdType] = useState<GuestRecord['idType']>('NIN');
+  const [quickIdNumber, setQuickIdNumber] = useState('');
+  const [quickPayConfirmed, setQuickPayConfirmed] = useState(false);
+  const [quickIdVerified, setQuickIdVerified] = useState(false);
+  const [quickRoomReady, setQuickRoomReady] = useState(false);
+  const [quickKeyIssued, setQuickKeyIssued] = useState<'yes' | 'no' | null>(null);
+  const [checkInTarget, setCheckInTarget] = useState<ReservationRecord | null>(null);
 
   const sortedRooms = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
 
@@ -222,16 +245,23 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     if (mode === 'block') {
       const sDate = dayIso || availCheckIn;
       setBlockStartDate(sDate);
-      setBlockEndDate(addDaysIso(sDate, 2));
+      setBlockEndDate(addDaysIso(sDate, 1));
       setBlockReason('');
       setModalMode('block');
     } else {
       const sDate = dayIso || availCheckIn;
-      const eDate = dayIso ? addDaysIso(dayIso, 2) : availCheckOut > sDate ? availCheckOut : addDaysIso(sDate, 2);
+      const eDate = dayIso ? addDaysIso(dayIso, 1) : availCheckOut > sDate ? availCheckOut : addDaysIso(sDate, 1);
       setBookCheckIn(sDate);
       setBookCheckOut(eDate);
+      setAdults(1);
+      setChildrenCount(0);
       setDepositNgn(chosenRoom.nightlyRateNgn);
       setImmediateCheckIn(sDate <= todayIso);
+      setQuickIdNumber('');
+      setQuickPayConfirmed(false);
+      setQuickIdVerified(false);
+      setQuickRoomReady(false);
+      setQuickKeyIssued(null);
       setModalMode('book');
     }
   };
@@ -273,27 +303,61 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setConflictError(conflict);
       return;
     }
+    if (immediateCheckIn) {
+      if (
+        !quickPayConfirmed ||
+        !quickIdVerified ||
+        quickIdNumber.trim().length < 3 ||
+        quickKeyIssued !== 'yes' ||
+        !quickRoomReady
+      ) {
+        setConflictError(
+          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming suite readiness.'
+        );
+        return;
+      }
+    }
     const nightsCount = diffNights(bookCheckIn, bookCheckOut);
+    const trimmedGuest = guestName.trim();
     setBusyId('book');
     try {
       await createReservationWorkflow({
         property,
         room,
-        guestName: guestName.trim(),
+        guestName: trimmedGuest,
         guestPhone: guestPhone.trim(),
+        guestIdType: quickIdType,
+        guestIdNumber: quickIdNumber.trim(),
         checkInDate: bookCheckIn,
         checkOutDate: bookCheckOut,
+        bookedDate: todayIso,
         nights: nightsCount,
         adults: Math.max(1, adults),
+        children: Math.max(0, childrenCount),
         channel,
         paymentMethod,
         depositNgn: Math.max(0, depositNgn),
         immediateCheckIn,
+        paymentConfirmed: immediateCheckIn ? quickPayConfirmed : false,
+        idVerified: immediateCheckIn ? quickIdVerified : false,
+        keyIssued: immediateCheckIn ? quickKeyIssued === 'yes' : false,
         actorRole,
       });
-      onNotify(`Booked ${room.roomNumber} for ${guestName.trim()} (${bookCheckIn} → ${bookCheckOut})`);
+      onNotify(
+        immediateCheckIn
+          ? `Checked in ${trimmedGuest} to ${room.roomNumber}`
+          : `Booked ${room.roomNumber} for ${trimmedGuest} (${bookCheckIn} → ${bookCheckOut})`
+      );
+      if (immediateCheckIn) {
+        onGuestCheckedIn?.({
+          guestName: trimmedGuest,
+          roomNumber: room.roomNumber,
+        });
+      }
       setModalMode('none');
       setGuestName('');
+      setQuickIdNumber('');
+      setQuickKeyIssued(null);
     } finally {
       setBusyId(null);
     }
@@ -317,10 +381,10 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-xl font-bold text-slate-900">
-            Availability Calendar, Search &amp; Date Blocking
+            {cms.pages.calendar.title}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Search stays or available suites by date range, place owner/maintenance date blocks, or click any open date cell to book.
+            {cms.pages.calendar.subtitle}
           </p>
         </div>
 
@@ -331,7 +395,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
             <Ban className="w-3.5 h-3.5" />
-            <span>Block Room Dates</span>
+            <span>{cms.pages.calendar.ctaLabel || 'Block Room Dates'}</span>
           </button>
           <button
             type="button"
@@ -339,7 +403,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
             <CalendarPlus className="w-3.5 h-3.5" />
-            <span>New Reservation</span>
+            <span>{cms.pages.reservations.ctaLabel || 'New Reservation'}</span>
           </button>
         </div>
       </div>
@@ -381,7 +445,14 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             <input
               type="date"
               value={availCheckIn}
-              onChange={(e) => setAvailCheckIn(e.target.value)}
+              onChange={(e) => {
+                const nextIn = e.target.value;
+                if (!nextIn) return;
+                setAvailCheckIn(nextIn);
+                if (availCheckOut <= nextIn) {
+                  setAvailCheckOut(addDaysIso(nextIn, 1));
+                }
+              }}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
             />
           </div>
@@ -390,8 +461,13 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             <label className="block font-medium text-slate-600 mb-1">Availability Check-Out</label>
             <input
               type="date"
+              min={addDaysIso(availCheckIn, 1)}
               value={availCheckOut}
-              onChange={(e) => setAvailCheckOut(e.target.value)}
+              onChange={(e) => {
+                const nextOut = e.target.value;
+                if (!nextOut) return;
+                setAvailCheckOut(nextOut <= availCheckIn ? addDaysIso(availCheckIn, 1) : nextOut);
+              }}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
             />
           </div>
@@ -550,16 +626,18 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                             return (
                               <td
                                 key={day}
-                                title={`${res.bookingRef} · ${res.guestName} (${res.checkInDate} → ${res.checkOutDate})`}
+                                title={`${res.bookingRef} · ${res.guestName} (${res.checkInDate} → ${res.checkOutDate}) — Click to open Folio`}
                                 className="p-1 border-r border-slate-100 last:border-r-0 align-middle"
                               >
-                                <div
-                                  className={`px-1.5 py-2 rounded text-[10px] font-semibold truncate text-white ${
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
+                                  className={`w-full text-left px-1.5 py-2 rounded text-[10px] font-semibold truncate text-white cursor-pointer transition-opacity hover:opacity-90 ${
                                     isCheckedIn ? 'bg-emerald-600' : 'bg-amber-500'
                                   }`}
                                 >
                                   {res.guestName.split(' ')[0]}
-                                </div>
+                                </button>
                               </td>
                             );
                           }
@@ -700,7 +778,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             {filteredReservations.map((res) => (
               <div
                 key={res.id}
-                className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50"
+                onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
+                className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-emerald-50/40 cursor-pointer transition-colors"
               >
                 <div className="space-y-0.5 min-w-0">
                   <div className="flex items-center gap-2 text-xs">
@@ -718,29 +797,27 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   </div>
                   <p className="text-xs font-semibold text-slate-900 truncate">{res.guestName}</p>
                   <p className="font-mono-tabular text-[11px] text-slate-500">
-                    {res.checkInDate} → {res.checkOutDate} ({res.nights}n) · {res.channel}
+                    {res.checkInDate} → {res.checkOutDate} ({res.nights}n) ·{' '}
+                    {formatBookingSourceLabel(res.channel)}
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div
+                  className="flex items-center gap-2 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
+                    className="px-2.5 py-1.5 text-xs font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
+                  >
+                    Open Folio
+                  </button>
                   {res.status === 'confirmed' && (
                     <button
                       type="button"
                       disabled={busyId === res.id}
-                      onClick={async () => {
-                        setBusyId(res.id);
-                        try {
-                          await transitionReservationStatus({
-                            property,
-                            reservation: res,
-                            nextStatus: 'checked_in',
-                            actorRole,
-                          });
-                          onNotify(`Checked in ${res.guestName} to ${res.roomNumber}`);
-                        } finally {
-                          setBusyId(null);
-                        }
-                      }}
+                      onClick={() => setCheckInTarget(res)}
                       className="px-2.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
                     >
                       Check In
@@ -859,7 +936,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       required
                       value={blockStartDate}
                       onChange={(e) => {
-                        setBlockStartDate(e.target.value);
+                        const nextStart = e.target.value;
+                        setBlockStartDate(nextStart);
+                        if (nextStart && blockEndDate <= nextStart) {
+                          setBlockEndDate(addDaysIso(nextStart, 1));
+                        }
                         setConflictError(null);
                       }}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -872,9 +953,15 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     <input
                       type="date"
                       required
+                      min={addDaysIso(blockStartDate, 1)}
                       value={blockEndDate}
                       onChange={(e) => {
-                        setBlockEndDate(e.target.value);
+                        const nextEnd = e.target.value;
+                        setBlockEndDate(
+                          nextEnd && nextEnd <= blockStartDate
+                            ? addDaysIso(blockStartDate, 1)
+                            : nextEnd
+                        );
                         setConflictError(null);
                       }}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -981,7 +1068,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       required
                       value={bookCheckIn}
                       onChange={(e) => {
-                        setBookCheckIn(e.target.value);
+                        const nextIn = e.target.value;
+                        setBookCheckIn(nextIn);
+                        if (nextIn && bookCheckOut <= nextIn) {
+                          setBookCheckOut(addDaysIso(nextIn, 1));
+                        }
                         setConflictError(null);
                       }}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -992,9 +1083,15 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     <input
                       type="date"
                       required
+                      min={addDaysIso(bookCheckIn, 1)}
                       value={bookCheckOut}
                       onChange={(e) => {
-                        setBookCheckOut(e.target.value);
+                        const nextOut = e.target.value;
+                        setBookCheckOut(
+                          nextOut && nextOut <= bookCheckIn
+                            ? addDaysIso(bookCheckIn, 1)
+                            : nextOut
+                        );
                         setConflictError(null);
                       }}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -1002,20 +1099,19 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Channel</label>
+                    <label className="block font-medium text-slate-700 mb-1">Booking Source</label>
                     <select
                       value={channel}
                       onChange={(e) => setChannel(e.target.value as ReservationRecord['channel'])}
                       className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
                     >
-                      <option value="Direct Web">Direct Web</option>
-                      <option value="Direct Walk-In">Direct Walk-In</option>
-                      <option value="Booking.com">Booking.com</option>
-                      <option value="Airbnb">Airbnb</option>
-                      <option value="Hotels.ng">Hotels.ng</option>
-                      <option value="Expedia">Expedia</option>
+                      {PRIMARY_BOOKING_SOURCES.map((src) => (
+                        <option key={src.value} value={src.value}>
+                          {src.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
@@ -1036,6 +1132,16 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       min={1}
                       value={adults}
                       onChange={(e) => setAdults(Number(e.target.value))}
+                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Children</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={childrenCount}
+                      onChange={(e) => setChildrenCount(Math.max(0, Number(e.target.value)))}
                       className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
                     />
                   </div>
@@ -1069,6 +1175,91 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   </label>
                 </div>
 
+                {immediateCheckIn && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-2.5">
+                    <p className="font-bold text-slate-900">
+                      Mandatory Check-In Verification
+                    </p>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Guest ID Type</label>
+                        <select
+                          value={quickIdType}
+                          onChange={(e) => setQuickIdType(e.target.value as GuestRecord['idType'])}
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                        >
+                          <option value="NIN">NIN</option>
+                          <option value="International Passport">International Passport</option>
+                          <option value="Driver License">Driver License</option>
+                          <option value="Voter Card">Voter Card</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">ID Number *</label>
+                        <input
+                          type="text"
+                          required
+                          value={quickIdNumber}
+                          onChange={(e) => setQuickIdNumber(e.target.value)}
+                          placeholder="ID / Passport No."
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-mono-tabular"
+                        />
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={quickPayConfirmed}
+                        onChange={(e) => setQuickPayConfirmed(e.target.checked)}
+                      />
+                      <span>1. Payment confirmed (deposit/transfer verified)</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={quickIdVerified}
+                        onChange={(e) => setQuickIdVerified(e.target.checked)}
+                      />
+                      <span>2. Guest government ID inspected &amp; verified</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={quickRoomReady}
+                        onChange={(e) => setQuickRoomReady(e.target.checked)}
+                      />
+                      <span>3. Suite inspected ready for guest</span>
+                    </label>
+                    <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
+                      <span className="font-semibold text-slate-800">4. Key Issued? *</span>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setQuickKeyIssued('yes')}
+                          className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
+                            quickKeyIssued === 'yes'
+                              ? 'bg-emerald-600 border-emerald-600 text-white'
+                              : 'bg-white border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          Yes
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setQuickKeyIssued('no')}
+                          className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
+                            quickKeyIssued === 'no'
+                              ? 'bg-rose-600 border-rose-600 text-white'
+                              : 'bg-white border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          No
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     type="button"
@@ -1079,7 +1270,15 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   </button>
                   <button
                     type="submit"
-                    disabled={busyId === 'book'}
+                    disabled={
+                      busyId === 'book' ||
+                      (immediateCheckIn &&
+                        (!quickPayConfirmed ||
+                          !quickIdVerified ||
+                          quickIdNumber.trim().length < 3 ||
+                          quickKeyIssued !== 'yes' ||
+                          !quickRoomReady))
+                    }
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg disabled:opacity-50"
                   >
                     {busyId === 'book'
@@ -1091,6 +1290,25 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             )}
           </div>
         </div>
+      )}
+
+      {checkInTarget && (
+        <CheckInProcessModal
+          property={property}
+          reservation={checkInTarget}
+          room={rooms.find((r) => r.id === checkInTarget.roomId)}
+          rooms={rooms}
+          guest={
+            guests.find((g) => g.id === checkInTarget.guestId) ||
+            guests.find((g) => g.fullName.toLowerCase() === checkInTarget.guestName.toLowerCase())
+          }
+          actorRole={actorRole}
+          onClose={() => setCheckInTarget(null)}
+          onCompleted={(info) => {
+            onNotify(`Verified & checked in ${info.guestName} into ${info.roomNumber}`);
+            onGuestCheckedIn?.(info);
+          }}
+        />
       )}
     </div>
   );

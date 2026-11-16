@@ -24,9 +24,19 @@ service cloud.firestore {
     }
 
     function isBootstrappedAdmin() {
-      return isVerifiedUser() && (
-        request.auth.token.email == 'purecresthospitality@gmail.com' ||
-        request.auth.token.email == 'rukevwe009@gmail.com'
+      return isVerifiedUser() &&
+        request.auth.token.email is string && (
+          request.auth.token.email.lower() == 'purecresthospitality@gmail.com' ||
+          request.auth.token.email.lower() == 'rukevwe009@gmail.com'
+        );
+    }
+
+    function isPchSuperAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pch_admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true
       );
     }
 
@@ -36,6 +46,10 @@ service cloud.firestore {
 
     function isAuthorizedEmailList(arr) {
       return arr is list && arr.size() >= 1 && arr.size() <= 25 && arr[0] is string && arr[0].size() <= 120;
+    }
+
+    function isStringListMax50(arr) {
+      return arr is list && arr.size() <= 50 && (arr.size() == 0 || arr[0] is string);
     }
 
     function isMemberResource(data) {
@@ -63,7 +77,7 @@ service cloud.firestore {
         'roomCount', 'status', 'adminEmail', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'email',
+        'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
         'currency', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'adminEmail',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
@@ -74,7 +88,9 @@ service cloud.firestore {
       data.country is string && data.country.size() >= 2 && data.country.size() <= 80 &&
       data.address is string && data.address.size() >= 4 && data.address.size() <= 240 &&
       (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+      (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.size() <= 32)) &&
       (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+      (!('logoUrl' in data) || (data.logoUrl is string && data.logoUrl.size() <= 350000)) &&
       data.currency == 'NGN' &&
       data.roomCount is number && data.roomCount >= 1 && data.roomCount <= 500 &&
       data.status in ['active', 'onboarding', 'suspended'] &&
@@ -119,10 +135,14 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'propertyId', 'active', 'ownerUid', 'createdAt', 'updatedAt']) &&
-      data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'propertyId', 'active', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['uid', 'email', 'displayName', 'phone', 'whatsapp', 'jobTitle', 'notes', 'role', 'propertyId', 'active', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
       data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
       data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+      (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+      (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.size() <= 32)) &&
+      (!('jobTitle' in data) || (data.jobTitle is string && data.jobTitle.size() <= 80)) &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 300)) &&
       data.role in ['pch_admin', 'property_admin', 'front_desk', 'housekeeping', 'fnb_kitchen', 'accountant', 'maintenance'] &&
       data.propertyId is string && data.propertyId.size() <= 128 &&
       data.active is bool &&
@@ -182,13 +202,15 @@ service cloud.firestore {
         'totalStays', 'lifetimeSpendNgn', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'propertyId', 'fullName', 'email', 'phone', 'nationality', 'idType', 'idNumber',
+        'propertyId', 'fullName', 'email', 'phone', 'address', 'city', 'nationality', 'idType', 'idNumber',
         'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
       data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
       (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
       data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 32 &&
+      (!('address' in data) || (data.address is string && data.address.size() <= 200)) &&
+      (!('city' in data) || (data.city is string && data.city.size() <= 80)) &&
       (!('nationality' in data) || (data.nationality is string && data.nationality.size() <= 64)) &&
       data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'] &&
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
@@ -209,29 +231,39 @@ service cloud.firestore {
         'paidNgn', 'status', 'paymentMethod', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'propertyId', 'bookingRef', 'roomId', 'roomNumber', 'guestId', 'guestName', 'guestPhone',
-        'checkInDate', 'checkOutDate', 'nights', 'adults', 'channel', 'nightlyRateNgn',
+        'propertyId', 'bookingRef', 'roomId', 'roomNumber', 'requestedRoomType', 'guestId', 'guestName', 'guestPhone',
+        'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'channel', 'nightlyRateNgn',
         'roomChargesNgn', 'posChargesNgn', 'paidNgn', 'status', 'paymentMethod',
+        'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
       data.bookingRef is string && data.bookingRef.size() >= 4 && data.bookingRef.size() <= 32 &&
-      data.roomId is string && data.roomId.size() >= 1 && data.roomId.size() <= 128 &&
-      data.roomNumber is string && data.roomNumber.size() >= 1 && data.roomNumber.size() <= 16 &&
+      data.roomId is string && data.roomId.size() <= 128 &&
+      data.roomNumber is string && data.roomNumber.size() >= 1 && data.roomNumber.size() <= 24 &&
+      (!('requestedRoomType' in data) || (data.requestedRoomType is string && data.requestedRoomType.size() <= 64)) &&
       (!('guestId' in data) || (data.guestId is string && data.guestId.size() <= 128)) &&
       data.guestName is string && data.guestName.size() >= 2 && data.guestName.size() <= 120 &&
       (!('guestPhone' in data) || (data.guestPhone is string && data.guestPhone.size() <= 32)) &&
       data.checkInDate is string && data.checkInDate.size() <= 24 &&
       data.checkOutDate is string && data.checkOutDate.size() <= 24 &&
+      (!('bookedDate' in data) || (data.bookedDate is string && data.bookedDate.size() <= 24)) &&
       data.nights is number && data.nights >= 1 &&
       data.adults is number && data.adults >= 1 &&
-      data.channel in ['Direct Walk-In', 'Direct Web', 'Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng'] &&
+      (!('children' in data) || (data.children is number && data.children >= 0 && data.children <= 20)) &&
+      data.channel in ['Walk-in', 'Website', 'Direct Walk-In', 'Direct Web', 'Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Custom iCal'] &&
       data.nightlyRateNgn is number && data.nightlyRateNgn >= 0 &&
       data.roomChargesNgn is number && data.roomChargesNgn >= 0 &&
       data.posChargesNgn is number && data.posChargesNgn >= 0 &&
       data.paidNgn is number && data.paidNgn >= 0 &&
-      data.status in ['confirmed', 'checked_in', 'checked_out', 'cancelled'] &&
+      data.status in ['confirmed', 'pending', 'checked_in', 'checked_out', 'cancelled', 'no_show'] &&
       data.paymentMethod in ['Bank Transfer', 'Card POS', 'Cash NGN', 'Corporate Invoice', 'Online Gateway'] &&
+      (!('paymentConfirmed' in data) || data.paymentConfirmed is bool) &&
+      (!('idVerified' in data) || data.idVerified is bool) &&
+      (!('idType' in data) || (data.idType is string && data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'])) &&
+      (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
+      (!('keyIssued' in data) || data.keyIssued is bool) &&
+      (!('checkedInAtIso' in data) || (data.checkedInAtIso is string && data.checkedInAtIso.size() <= 40)) &&
       isAuthorizedEmailList(data.authorizedEmails) &&
       data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
       data.createdAt is timestamp &&
@@ -262,14 +294,16 @@ service cloud.firestore {
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'propertyId', 'orderNumber', 'serviceType', 'tableOrRoom', 'reservationId', 'itemsSummary', 'itemCount',
-        'subtotalNgn', 'vatNgn', 'totalNgn', 'paymentStatus', 'paymentMethod', 'kitchenStatus',
+        'propertyId', 'orderNumber', 'orderDate', 'serviceType', 'tableOrRoom', 'guestName', 'reservationId', 'itemsSummary', 'itemCount',
+        'subtotalNgn', 'vatNgn', 'totalNgn', 'paymentStatus', 'paymentMethod', 'kitchenStatus', 'notes',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
       data.orderNumber is string && data.orderNumber.size() >= 3 && data.orderNumber.size() <= 32 &&
+      (!('orderDate' in data) || (data.orderDate is string && data.orderDate.size() <= 24)) &&
       data.serviceType in ['Dine-In', 'Room Service', 'Bar Lounge', 'Takeaway'] &&
-      data.tableOrRoom is string && data.tableOrRoom.size() >= 1 && data.tableOrRoom.size() <= 40 &&
+      data.tableOrRoom is string && data.tableOrRoom.size() >= 1 && data.tableOrRoom.size() <= 64 &&
+      (!('guestName' in data) || (data.guestName is string && data.guestName.size() <= 120)) &&
       (!('reservationId' in data) || (data.reservationId is string && data.reservationId.size() <= 128)) &&
       data.itemsSummary is string && data.itemsSummary.size() >= 2 && data.itemsSummary.size() <= 400 &&
       data.itemCount is number && data.itemCount >= 1 &&
@@ -279,6 +313,29 @@ service cloud.firestore {
       data.paymentStatus in ['paid', 'room_folio', 'unpaid'] &&
       data.paymentMethod in ['Room Folio', 'Card POS', 'Bank Transfer', 'Cash NGN'] &&
       data.kitchenStatus in ['queued', 'preparing', 'ready', 'served'] &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 300)) &&
+      isAuthorizedEmailList(data.authorizedEmails) &&
+      data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidPosMenuItem(data, propertyId) {
+      return data.keys().hasAll([
+        'propertyId', 'name', 'category', 'priceNgn', 'prepMinutes', 'available',
+        'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'propertyId', 'name', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available',
+        'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.propertyId == propertyId &&
+      data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+      data.category is string && data.category.size() >= 2 && data.category.size() <= 48 &&
+      data.priceNgn is number && data.priceNgn >= 0 &&
+      (!('costNgn' in data) || (data.costNgn is number && data.costNgn >= 0)) &&
+      data.prepMinutes is number && data.prepMinutes >= 0 && data.prepMinutes <= 240 &&
+      data.available is bool &&
       isAuthorizedEmailList(data.authorizedEmails) &&
       data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
       data.createdAt is timestamp &&
@@ -361,7 +418,7 @@ service cloud.firestore {
 
     function isValidShift(data, propertyId) {
       return data.keys().hasAll(['propertyId', 'staffId', 'staffName', 'department', 'shiftDate', 'shiftWindow', 'status', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
-      data.keys().hasOnly(['propertyId', 'staffId', 'staffName', 'department', 'shiftDate', 'shiftWindow', 'status', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['propertyId', 'staffId', 'staffName', 'department', 'shiftDate', 'shiftWindow', 'status', 'handoverNotes', 'closedBy', 'closedAtIso', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.propertyId == propertyId &&
       data.staffId is string && data.staffId.size() >= 1 && data.staffId.size() <= 128 &&
       data.staffName is string && data.staffName.size() >= 2 && data.staffName.size() <= 120 &&
@@ -369,6 +426,9 @@ service cloud.firestore {
       data.shiftDate is string && data.shiftDate.size() <= 24 &&
       data.shiftWindow in ['Morning (07:00 - 15:00)', 'Afternoon (15:00 - 23:00)', 'Night (23:00 - 07:00)'] &&
       data.status in ['scheduled', 'completed', 'missed'] &&
+      (!('handoverNotes' in data) || (data.handoverNotes is string && data.handoverNotes.size() <= 400)) &&
+      (!('closedBy' in data) || (data.closedBy is string && data.closedBy.size() <= 120)) &&
+      (!('closedAtIso' in data) || (data.closedAtIso is string && data.closedAtIso.size() <= 40)) &&
       isAuthorizedEmailList(data.authorizedEmails) &&
       data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
       data.createdAt is timestamp &&
@@ -393,9 +453,11 @@ service cloud.firestore {
 
     function isValidPayrollRun(data, propertyId) {
       return data.keys().hasAll(['propertyId', 'periodLabel', 'staffCount', 'grossPayNgn', 'pensionDeductionNgn', 'payeTaxNgn', 'netPayNgn', 'status', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
-      data.keys().hasOnly(['propertyId', 'periodLabel', 'staffCount', 'grossPayNgn', 'pensionDeductionNgn', 'payeTaxNgn', 'netPayNgn', 'status', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['propertyId', 'periodLabel', 'payDate', 'paymentMethod', 'staffCount', 'grossPayNgn', 'pensionDeductionNgn', 'payeTaxNgn', 'netPayNgn', 'status', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.propertyId == propertyId &&
       data.periodLabel is string && data.periodLabel.size() >= 3 && data.periodLabel.size() <= 48 &&
+      (!('payDate' in data) || (data.payDate is string && data.payDate.size() <= 24)) &&
+      (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 48)) &&
       data.staffCount is number && data.staffCount >= 0 &&
       data.grossPayNgn is number && data.grossPayNgn >= 0 &&
       data.pensionDeductionNgn is number && data.pensionDeductionNgn >= 0 &&
@@ -428,10 +490,13 @@ service cloud.firestore {
 
     function isValidOtaChannel(data, propertyId) {
       return data.keys().hasAll(['propertyId', 'channelName', 'propertyListingId', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
-      data.keys().hasOnly(['propertyId', 'channelName', 'propertyListingId', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['propertyId', 'channelName', 'propertyListingId', 'roomNumber', 'icalImportUrl', 'icalExportUrl', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.propertyId == propertyId &&
-      data.channelName in ['Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'Direct Website Engine'] &&
+      data.channelName in ['Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Direct Website Engine', 'Custom iCal'] &&
       data.propertyListingId is string && data.propertyListingId.size() <= 64 &&
+      (!('roomNumber' in data) || (data.roomNumber is string && data.roomNumber.size() <= 24)) &&
+      (!('icalImportUrl' in data) || (data.icalImportUrl is string && data.icalImportUrl.size() <= 500)) &&
+      (!('icalExportUrl' in data) || (data.icalExportUrl is string && data.icalExportUrl.size() <= 500)) &&
       data.commissionPct is number && data.commissionPct >= 0 && data.commissionPct <= 50 &&
       data.autoSync is bool &&
       data.connected is bool &&
@@ -466,6 +531,54 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidCmsConfig(data) {
+      return data.keys().hasAll([
+        'brand', 'login', 'dashboard', 'pages', 'updatedByEmail', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'brand', 'login', 'dashboard', 'pages', 'updatedByEmail', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.brand is map && data.brand.keys().size() <= 16 &&
+      data.login is map && data.login.keys().size() <= 24 &&
+      data.dashboard is map && data.dashboard.keys().size() <= 24 &&
+      data.pages is map && data.pages.keys().size() <= 40 &&
+      data.updatedByEmail is string && data.updatedByEmail.size() <= 120 &&
+      data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidPropertyMessage(data, propertyId) {
+      return data.keys().hasAll([
+        'propertyId', 'senderEmail', 'senderName', 'senderRole', 'senderDepartment',
+        'recipientScope', 'recipientEmails', 'recipientNames', 'subject', 'body',
+        'priority', 'readByEmails', 'createdAtIso', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'propertyId', 'senderEmail', 'senderName', 'senderRole', 'senderDepartment',
+        'recipientScope', 'targetDepartment', 'recipientEmails', 'recipientNames', 'subject', 'body',
+        'priority', 'readByEmails', 'createdAtIso', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.propertyId == propertyId &&
+      data.senderEmail is string && data.senderEmail.size() <= 120 &&
+      data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 120 &&
+      data.senderRole is string && data.senderRole.size() >= 1 && data.senderRole.size() <= 64 &&
+      data.senderDepartment is string && data.senderDepartment.size() >= 1 && data.senderDepartment.size() <= 64 &&
+      data.recipientScope in ['department', 'direct_staff', 'bulk_staff', 'all_staff'] &&
+      (!('targetDepartment' in data) || (data.targetDepartment is string && data.targetDepartment.size() <= 64)) &&
+      isStringListMax50(data.recipientEmails) &&
+      isStringListMax50(data.recipientNames) &&
+      data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 140 &&
+      data.body is string && data.body.size() >= 1 && data.body.size() <= 1500 &&
+      data.priority in ['Normal', 'Urgent'] &&
+      isStringListMax50(data.readByEmails) &&
+      data.createdAtIso is string && data.createdAtIso.size() <= 40 &&
+      isAuthorizedEmailList(data.authorizedEmails) &&
+      data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     // Root collection: Properties
     match /properties/{propertyId} {
       allow get: if isValidId(propertyId) && (isBootstrappedAdmin() || (resource != null && isMemberResource(existing())));
@@ -478,7 +591,7 @@ service cloud.firestore {
         incoming().updatedAt == request.time && (
           isBootstrappedAdmin() || (
             isMemberResource(existing()) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'email', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'authorizedEmails', 'updatedAt'])
           )
         );
       allow delete: if isValidId(propertyId) && isBootstrappedAdmin();
@@ -510,7 +623,7 @@ service cloud.firestore {
           isValidGuest(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'nationality', 'idType', 'idNumber', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'nationality', 'idType', 'idNumber', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(guestId) && isBootstrappedAdmin();
       }
@@ -526,8 +639,8 @@ service cloud.firestore {
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
-              !(existing().status in ['checked_out', 'cancelled']) &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['roomNumber', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'paymentMethod', 'checkOutDate', 'nights', 'roomChargesNgn', 'updatedAt'])
+              !(existing().status in ['checked_out', 'cancelled', 'no_show']) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'updatedAt'])
             )
           );
         allow delete: if isValidId(propertyId) && isValidId(reservationId) && isBootstrappedAdmin();
@@ -567,6 +680,22 @@ service cloud.firestore {
             )
           );
         allow delete: if isValidId(propertyId) && isValidId(orderId) && isBootstrappedAdmin();
+      }
+
+      // Subcollection: POS Menu Items
+      match /pos_menu_items/{itemId} {
+        allow get: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
+        allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
+        allow create: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId) &&
+          isValidPosMenuItem(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        allow update: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId) &&
+          isValidPosMenuItem(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+            isBootstrappedAdmin() ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available', 'updatedAt'])
+          );
+        allow delete: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Accounting Ledger
@@ -643,7 +772,7 @@ service cloud.firestore {
           isValidShift(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'shiftWindow', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'shiftWindow', 'handoverNotes', 'closedBy', 'closedAtIso', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(shiftId) && isBootstrappedAdmin();
       }
@@ -711,9 +840,9 @@ service cloud.firestore {
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'icalImportUrl', 'icalExportUrl', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(channelId) && isBootstrappedAdmin();
+        allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Blocked Dates (Calendar)
@@ -730,6 +859,22 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['startDate', 'endDate', 'reason', 'category', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(blockId) && isPropertyOperator(propertyId);
+      }
+
+      // Subcollection: Inter-Departmental Messages & Alerts
+      match /messages/{messageId} {
+        allow get: if isValidId(propertyId) && isValidId(messageId) && isPropertyOperator(propertyId);
+        allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
+        allow create: if isValidId(propertyId) && isValidId(messageId) && isPropertyOperator(propertyId) &&
+          isValidPropertyMessage(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        allow update: if isValidId(propertyId) && isValidId(messageId) && isPropertyOperator(propertyId) &&
+          isValidPropertyMessage(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+            isBootstrappedAdmin() ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['readByEmails', 'updatedAt'])
+          );
+        allow delete: if isValidId(propertyId) && isValidId(messageId) && isBootstrappedAdmin();
       }
     }
 
@@ -767,7 +912,7 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
           isBootstrappedAdmin() || (
             request.auth.uid == userId &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'whatsapp', 'jobTitle', 'notes', 'updatedAt'])
           )
         );
       allow delete: if isValidId(userId) && isBootstrappedAdmin();
@@ -781,6 +926,19 @@ service cloud.firestore {
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time;
       allow update: if false;
       allow delete: if false;
+    }
+
+    // Root collection: Global Application CMS Config (PCH Super Admin writable)
+    match /app_cms/{cmsId} {
+      allow get: if isValidId(cmsId) && cmsId == 'global' && isVerifiedUser();
+      allow list: if false;
+      allow create: if isValidId(cmsId) && cmsId == 'global' && isPchSuperAdmin() &&
+        isValidCmsConfig(incoming()) && incoming().ownerUid == request.auth.uid &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(cmsId) && cmsId == 'global' && isPchSuperAdmin() &&
+        isValidCmsConfig(incoming()) && incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(cmsId) && cmsId == 'global' && isPchSuperAdmin();
     }
   }
 }

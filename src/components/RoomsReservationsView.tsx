@@ -1,49 +1,97 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeftRight,
+  ArrowRight,
+  Ban,
   BedDouble,
+  BookOpenCheck,
+  CalendarPlus,
   CheckCircle2,
+  ChefHat,
+  CreditCard,
+  DoorOpen,
+  Eye,
   ImagePlus,
+  KeyRound,
+  Mail,
+  MapPin,
   Pencil,
+  Phone,
+  PlaneLanding,
   Plus,
   RefreshCw,
+  Save,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
+  UserCheck,
+  UserCircle2,
   UserPlus,
   X,
 } from 'lucide-react';
+import { useCms } from '../context/CmsContext';
 import {
+  addMiscFolioCharge,
+  changeInHouseRoomWorkflow,
   createGuestRecord,
   createReservationWorkflow,
+  createRoomWorkflow,
+  extendReservationStay,
+  recordReservationFolioPayment,
   syncRichgatesOfficialCatalogIfNeeded,
   transitionReservationStatus,
+  updateGuestRecord,
+  updateReservationDetailsWorkflow,
   updateRoomStatus,
 } from '../services/pmsService';
 import {
   BlockedDateRecord,
+  formatBookingSourceLabel,
   formatNgn,
+  getReservationBookedDate,
+  getReservationPaymentSummary,
+  getReservationRoomDisplay,
   getRoomSection,
   GuestRecord,
+  LicenseRecord,
+  matchesBookingSourceFilter,
   NavSectionId,
+  PaymentStatusLabel,
+  PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
+  RESERVATION_STATUS_LABELS,
   ReservationRecord,
+  ReservationStatus,
   RICHGATES_GALLERY_ASSETS,
+  RICHGATES_MAX_ROOMS,
   RoomRecord,
   RoomSection,
   sortRoomsByNumber,
   StaffRole,
 } from '../types/pms';
+import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 
 interface RoomsReservationsViewProps {
-  section: Extract<NavSectionId, 'rooms' | 'reservations' | 'front_desk' | 'guests'>;
+  section: Extract<
+    NavSectionId,
+    'rooms' | 'reservations' | 'arrivals' | 'in_house' | 'walk_in' | 'front_desk' | 'guests'
+  >;
   property: PropertyRecord;
+  activeLicense?: LicenseRecord;
   rooms: RoomRecord[];
   reservations: ReservationRecord[];
   blockedDates: BlockedDateRecord[];
   guests: GuestRecord[];
   housekeepingTasksCount?: number;
+  selectedReservationId?: string | null;
+  initialReservationIntent?: 'view' | 'edit';
+  onConsumeIntent?: () => void;
+  onSelectReservation?: (id: string | null) => void;
+  onNavigateSection?: (section: NavSectionId) => void;
   activeRole: StaffRole;
   actorRole: string;
   onNotify: (msg: string) => void;
+  onGuestCheckedIn?: (info: CheckedInConfirmationInfo) => void;
 }
 
 const DEFAULT_SUITE_IMAGE =
@@ -93,21 +141,58 @@ function datesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string
   return aStart < bEnd && bStart < aEnd;
 }
 
+function addDaysIso(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + days)).toISOString().slice(0, 10);
+}
+
+function diffNights(startIso: string, endIso: string): number {
+  const start = new Date(`${startIso}T00:00:00Z`).getTime();
+  const end = new Date(`${endIso}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 1;
+  return Math.max(1, Math.round((end - start) / 86400000));
+}
+
 export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   section,
   property,
+  activeLicense,
   rooms,
   reservations,
   blockedDates,
   guests,
+  selectedReservationId,
+  initialReservationIntent = 'view',
+  onConsumeIntent,
+  onSelectReservation,
+  onNavigateSection,
   activeRole,
   actorRole,
   onNotify,
+  onGuestCheckedIn,
 }) => {
+  const { cms } = useCms();
   const canManageRooms = activeRole === 'pch_admin' || activeRole === 'property_admin';
+  const effectiveMaxRooms =
+    property.code === 'RG-ENU-01'
+      ? Math.min(activeLicense?.maxRooms ?? RICHGATES_MAX_ROOMS, RICHGATES_MAX_ROOMS)
+      : (activeLicense?.maxRooms ?? 250);
+  const atRoomCapacity = rooms.length >= effectiveMaxRooms;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const addRoomFileInputRef = useRef<HTMLInputElement | null>(null);
+  const roomDefaultInitRef = useRef(false);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const tomorrowIso = addDaysIso(todayIso, 1);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [filterRoomId, setFilterRoomId] = useState('ALL');
+  const [filterChannel, setFilterChannel] = useState<'ALL' | string>('ALL');
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState<'all' | PaymentStatusLabel>('all');
+  const [filterStayFrom, setFilterStayFrom] = useState('');
+  const [filterStayTo, setFilterStayTo] = useState('');
+
+  const [resStatusFilter, setResStatusFilter] = useState<'all' | ReservationStatus>('all');
   const [showBookingForm, setShowBookingForm] = useState(false);
   const [showGuestForm, setShowGuestForm] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -117,7 +202,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [editingRateRoomId, setEditingRateRoomId] = useState<string | null>(null);
   const [rateDraft, setRateDraft] = useState<number>(65500);
 
-  // Full Room Editor Modal (Admin & Super Admin)
+  // Full Room Editor Modal
   const [editingRoom, setEditingRoom] = useState<RoomRecord | null>(null);
   const [draftRoomNumber, setDraftRoomNumber] = useState('');
   const [draftName, setDraftName] = useState('');
@@ -132,47 +217,228 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [draftImageUrl, setDraftImageUrl] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // New Booking Form state
+  // Add New Room Modal state
+  const [showAddRoomModal, setShowAddRoomModal] = useState(false);
+  const [newRoomNumber, setNewRoomNumber] = useState('');
+  const [newRoomName, setNewRoomName] = useState('');
+  const [newRoomType, setNewRoomType] = useState('Studio Apartment');
+  const [newRoomSection, setNewRoomSection] = useState<RoomSection>('Hotel Rooms');
+  const [newRoomFloor, setNewRoomFloor] = useState<number>(2);
+  const [newRoomRateNgn, setNewRoomRateNgn] = useState<number>(65500);
+  const [newRoomMaxGuests, setNewRoomMaxGuests] = useState<number>(2);
+  const [newRoomAmenitiesText, setNewRoomAmenitiesText] = useState('King Bed, Wi-Fi, Smart TV, 24/7 Power');
+  const [newRoomImageUrl, setNewRoomImageUrl] = useState(DEFAULT_SUITE_IMAGE);
+  const [addRoomError, setAddRoomError] = useState<string | null>(null);
+
+  // Inline Booking Form state (auto-pick today & next day)
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id || '');
+  const [newRequestedRoomType, setNewRequestedRoomType] = useState(
+    rooms[0]?.roomType || 'Deluxe Studio with Kitchenette'
+  );
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('+234 803 ');
   const [guestEmail, setGuestEmail] = useState('');
-  const [checkInDate, setCheckInDate] = useState('2026-11-16');
-  const [checkOutDate, setCheckOutDate] = useState('2026-11-18');
-  const [nights, setNights] = useState(2);
+  const [checkInDate, setCheckInDate] = useState(todayIso);
+  const [checkOutDate, setCheckOutDate] = useState(tomorrowIso);
+  const [nights, setNights] = useState(1);
   const [adults, setAdults] = useState(1);
-  const [channel, setChannel] = useState<ReservationRecord['channel']>('Direct Walk-In');
+  const [childrenCount, setChildrenCount] = useState(0);
+  const [channel, setChannel] = useState<ReservationRecord['channel']>('Walk-in');
+  const [initialBookingStatus, setInitialBookingStatus] = useState<'confirmed' | 'pending'>('confirmed');
   const [paymentMethod, setPaymentMethod] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
   const [depositNgn, setDepositNgn] = useState(65500);
-  const [immediateCheckIn, setImmediateCheckIn] = useState(true);
+  const [immediateCheckIn, setImmediateCheckIn] = useState(false);
+  const [inlineIdType, setInlineIdType] = useState<GuestRecord['idType']>('NIN');
+  const [inlineIdNumber, setInlineIdNumber] = useState('');
+  const [inlinePayConfirmed, setInlinePayConfirmed] = useState(false);
+  const [inlineIdVerified, setInlineIdVerified] = useState(false);
+  const [inlineRoomReady, setInlineRoomReady] = useState(false);
+  const [inlineKeyIssued, setInlineKeyIssued] = useState<'yes' | 'no' | null>(null);
+
+  // Dedicated Walk-in Check-in Form state (auto-pick tomorrow checkout)
+  const [walkInFirstName, setWalkInFirstName] = useState('');
+  const [walkInLastName, setWalkInLastName] = useState('');
+  const [walkInPhone, setWalkInPhone] = useState('+234 ');
+  const [walkInEmail, setWalkInEmail] = useState('');
+  const [walkInIdType, setWalkInIdType] = useState<GuestRecord['idType']>('NIN');
+  const [walkInIdNumber, setWalkInIdNumber] = useState('');
+  const [walkInAddress, setWalkInAddress] = useState('');
+  const [walkInCity, setWalkInCity] = useState('Enugu');
+  const [walkInCountry, setWalkInCountry] = useState('Nigeria');
+  const [walkInRoomTypeFilter, setWalkInRoomTypeFilter] = useState('ALL');
+  const [walkInRoomId, setWalkInRoomId] = useState('');
+  const [walkInCheckOut, setWalkInCheckOut] = useState(tomorrowIso);
+  const [walkInRateNgn, setWalkInRateNgn] = useState(65500);
+  const [walkInPaymentMethod, setWalkInPaymentMethod] =
+    useState<ReservationRecord['paymentMethod']>('Cash NGN');
+  const [walkInDepositNgn, setWalkInDepositNgn] = useState(65500);
+  const [walkInPayConfirmed, setWalkInPayConfirmed] = useState(false);
+  const [walkInIdVerified, setWalkInIdVerified] = useState(false);
+  const [walkInRoomReady, setWalkInRoomReady] = useState(false);
+  const [walkInKeyIssued, setWalkInKeyIssued] = useState<'yes' | 'no' | null>(null);
+  const [walkInError, setWalkInError] = useState<string | null>(null);
 
   // Guest registration form
   const [newGuestName, setNewGuestName] = useState('');
   const [newGuestPhone, setNewGuestPhone] = useState('+234 ');
   const [newGuestEmail, setNewGuestEmail] = useState('');
+  const [newGuestAddress, setNewGuestAddress] = useState('');
+  const [newGuestCity, setNewGuestCity] = useState('Enugu');
   const [newGuestIdType, setNewGuestIdType] = useState<GuestRecord['idType']>('NIN');
   const [newGuestIdNumber, setNewGuestIdNumber] = useState('');
   const [newGuestVip, setNewGuestVip] = useState<GuestRecord['vipTier']>('Standard');
 
-  // Checkout settlement modal state
+  // Guest Profile Modal state
+  const [selectedGuestId, setSelectedGuestId] = useState<string | null>(null);
+  const [editingGuestMode, setEditingGuestMode] = useState(false);
+  const [editGuestName, setEditGuestName] = useState('');
+  const [editGuestPhone, setEditGuestPhone] = useState('');
+  const [editGuestEmail, setEditGuestEmail] = useState('');
+  const [editGuestAddress, setEditGuestAddress] = useState('');
+  const [editGuestCity, setEditGuestCity] = useState('');
+  const [editGuestNationality, setEditGuestNationality] = useState('');
+  const [editGuestIdType, setEditGuestIdType] = useState<GuestRecord['idType']>('NIN');
+  const [editGuestIdNumber, setEditGuestIdNumber] = useState('');
+  const [editGuestVip, setEditGuestVip] = useState<GuestRecord['vipTier']>('Standard');
+  const [editGuestNotes, setEditGuestNotes] = useState('');
+
+  // Check-In Process Modal, Change Room Modal, Cancel Confirm Modal & Checkout settlement modal state
+  const [checkInTarget, setCheckInTarget] = useState<ReservationRecord | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<ReservationRecord | null>(null);
+  const [changeRoomTarget, setChangeRoomTarget] = useState<ReservationRecord | null>(null);
+  const [changeRoomNewId, setChangeRoomNewId] = useState('');
+  const [changeRoomAdjustRate, setChangeRoomAdjustRate] = useState(true);
+  const [changeRoomReason, setChangeRoomReason] = useState('');
+  const [changeRoomError, setChangeRoomError] = useState<string | null>(null);
   const [checkoutTarget, setCheckoutTarget] = useState<ReservationRecord | null>(null);
   const [settlementMethod, setSettlementMethod] =
     useState<ReservationRecord['paymentMethod']>('Card POS');
 
-  const sortedRooms = sortRoomsByNumber(rooms);
-  const bookableRooms = sortedRooms.filter((r) => r.occupancyStatus === 'vacant');
+  // Guest Folio Flow & Reservation Editor modal state
+  const [folioPayAmount, setFolioPayAmount] = useState<number>(0);
+  const [folioPayMethod, setFolioPayMethod] =
+    useState<ReservationRecord['paymentMethod']>('Bank Transfer');
+  const [miscChargeAmount, setMiscChargeAmount] = useState<number>(5000);
+  const [miscChargeDesc, setMiscChargeDesc] = useState('Laundry / Minibar Charge');
+  const [editingStayDetails, setEditingStayDetails] = useState(false);
+  const [editGuestNameRes, setEditGuestNameRes] = useState('');
+  const [editGuestPhoneRes, setEditGuestPhoneRes] = useState('');
+  const [editRoomId, setEditRoomId] = useState('');
+  const [editRequestedRoomType, setEditRequestedRoomType] = useState('Studio');
+  const [editCheckInDate, setEditCheckInDate] = useState('');
+  const [editCheckOutDate, setEditCheckOutDate] = useState('');
+  const [editAdults, setEditAdults] = useState(1);
+  const [editChildren, setEditChildren] = useState(0);
+  const [editChannel, setEditChannel] = useState<ReservationRecord['channel']>('Website');
+  const [editStatus, setEditStatus] = useState<ReservationRecord['status']>('confirmed');
+  const [editPaymentMethodRes, setEditPaymentMethodRes] =
+    useState<ReservationRecord['paymentMethod']>('Bank Transfer');
+  const [editStayError, setEditStayError] = useState<string | null>(null);
+
+  const activeFolioReservation = selectedReservationId
+    ? reservations.find((r) => r.id === selectedReservationId) || null
+    : null;
+
+  const selectedGuest = selectedGuestId
+    ? guests.find((g) => g.id === selectedGuestId) || null
+    : null;
 
   useEffect(() => {
-    if (!selectedRoomId && rooms.length > 0) {
+    if (activeFolioReservation) {
+      const due = Math.max(
+        0,
+        activeFolioReservation.roomChargesNgn +
+          activeFolioReservation.posChargesNgn -
+          activeFolioReservation.paidNgn
+      );
+      setFolioPayAmount(due);
+      setFolioPayMethod(activeFolioReservation.paymentMethod || 'Bank Transfer');
+      setEditingStayDetails(initialReservationIntent === 'edit');
+      setEditGuestNameRes(activeFolioReservation.guestName);
+      setEditGuestPhoneRes(activeFolioReservation.guestPhone || '');
+      setEditRoomId(activeFolioReservation.roomId || '');
+      setEditRequestedRoomType(
+        getReservationRoomDisplay(activeFolioReservation, rooms).roomTypeLabel
+      );
+      setEditCheckInDate(activeFolioReservation.checkInDate);
+      setEditCheckOutDate(activeFolioReservation.checkOutDate);
+      setEditAdults(activeFolioReservation.adults || 1);
+      setEditChildren(activeFolioReservation.children || 0);
+      setEditChannel(activeFolioReservation.channel);
+      setEditStatus(activeFolioReservation.status);
+      setEditPaymentMethodRes(activeFolioReservation.paymentMethod || 'Bank Transfer');
+      setEditStayError(null);
+      if (initialReservationIntent === 'edit') {
+        onConsumeIntent?.();
+      }
+    }
+  }, [activeFolioReservation?.id, initialReservationIntent]);
+
+  const sortedRooms = sortRoomsByNumber(rooms);
+  const bookableRooms = sortedRooms.filter((r) => r.occupancyStatus === 'vacant');
+  const uniqueRoomTypes = Array.from(
+    new Set(['Studio', 'One Bedroom Suite', ...sortedRooms.map((r) => r.roomType)])
+  );
+
+  const walkInEligibleRooms = sortedRooms.filter((r) => {
+    if (r.occupancyStatus === 'out_of_order') return false;
+    if (walkInRoomTypeFilter !== 'ALL' && r.roomType !== walkInRoomTypeFilter) return false;
+    return true;
+  });
+
+  useEffect(() => {
+    if (!roomDefaultInitRef.current && rooms.length > 0) {
+      roomDefaultInitRef.current = true;
       const sorted = sortRoomsByNumber(rooms);
       const first = sorted.find((r) => r.occupancyStatus === 'vacant') || sorted[0];
       if (first) {
         setSelectedRoomId(first.id);
+        setNewRequestedRoomType(first.roomType);
         setDepositNgn(first.nightlyRateNgn);
       }
     }
-  }, [rooms, selectedRoomId]);
+  }, [rooms]);
+
+  useEffect(() => {
+    if (walkInEligibleRooms.length > 0) {
+      const currentValid = walkInEligibleRooms.find((r) => r.id === walkInRoomId);
+      if (!currentValid) {
+        const preferred =
+          walkInEligibleRooms.find((r) => r.occupancyStatus === 'vacant') ||
+          walkInEligibleRooms[0];
+        setWalkInRoomId(preferred.id);
+        setWalkInRateNgn(preferred.nightlyRateNgn);
+        setWalkInDepositNgn(preferred.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
+      }
+    }
+  }, [walkInRoomTypeFilter, rooms.length]);
+
+  const openGuestProfileModal = (guest: GuestRecord) => {
+    setSelectedGuestId(guest.id);
+    setEditingGuestMode(false);
+    setEditGuestName(guest.fullName);
+    setEditGuestPhone(guest.phone);
+    setEditGuestEmail(guest.email || '');
+    setEditGuestAddress(guest.address || '');
+    setEditGuestCity(guest.city || '');
+    setEditGuestNationality(guest.nationality || 'Nigeria');
+    setEditGuestIdType(guest.idType);
+    setEditGuestIdNumber(guest.idNumber || '');
+    setEditGuestVip(guest.vipTier);
+    setEditGuestNotes(guest.notes || '');
+  };
+
+  const openGuestByReservation = (res: ReservationRecord) => {
+    const matched =
+      guests.find((g) => g.id === res.guestId) ||
+      guests.find((g) => g.fullName.toLowerCase() === res.guestName.toLowerCase());
+    if (matched) {
+      openGuestProfileModal(matched);
+    } else {
+      onNotify(`No saved directory profile found for ${res.guestName}`);
+    }
+  };
 
   const openRoomEditor = (room: RoomRecord) => {
     setEditingRoom(room);
@@ -230,15 +496,228 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
   };
 
+  const openAddRoomModal = () => {
+    const nextNum = rooms.length + 1;
+    setNewRoomNumber(`RM-${nextNum}`);
+    setNewRoomName(`Suite ${nextNum}`);
+    setNewRoomType('Deluxe Studio with Kitchenette');
+    setNewRoomSection('Hotel Rooms');
+    setNewRoomFloor(2);
+    setNewRoomRateNgn(65500);
+    setNewRoomMaxGuests(2);
+    setNewRoomAmenitiesText('King Bed, Wi-Fi, Smart TV, 24/7 Power');
+    setNewRoomImageUrl(RICHGATES_GALLERY_ASSETS[nextNum % RICHGATES_GALLERY_ASSETS.length]?.url || DEFAULT_SUITE_IMAGE);
+    setAddRoomError(null);
+    setShowAddRoomModal(true);
+  };
+
+  const handleAddRoomImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAddRoomError(null);
+    try {
+      const compressed = await compressImageToDataUrl(file);
+      setNewRoomImageUrl(compressed);
+    } catch (err) {
+      setAddRoomError(err instanceof Error ? err.message : 'Unable to process room photo.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleCreateNewRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageRooms) return;
+    setAddRoomError(null);
+
+    const trimmedCode = newRoomNumber.trim().toUpperCase();
+    if (!trimmedCode || !newRoomName.trim() || !newRoomType.trim()) {
+      setAddRoomError('Room code, suite title, and room type are required.');
+      return;
+    }
+    if (rooms.some((r) => r.roomNumber.toUpperCase() === trimmedCode)) {
+      setAddRoomError(`Room ${trimmedCode} already exists in ${property.name}.`);
+      return;
+    }
+    if (atRoomCapacity) {
+      setAddRoomError(
+        `License room limit reached (${rooms.length}/${effectiveMaxRooms}). ${property.name} is capped at ${effectiveMaxRooms} rooms.`
+      );
+      return;
+    }
+
+    setBusyId('add-room');
+    try {
+      await createRoomWorkflow({
+        property,
+        currentRoomCount: rooms.length,
+        maxRooms: effectiveMaxRooms,
+        roomNumber: trimmedCode,
+        name: newRoomName.trim(),
+        roomType: newRoomType.trim(),
+        section: newRoomSection,
+        floor: newRoomFloor,
+        nightlyRateNgn: newRoomRateNgn,
+        maxGuests: newRoomMaxGuests,
+        imageUrl: newRoomImageUrl || DEFAULT_SUITE_IMAGE,
+        amenities: newRoomAmenitiesText
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+        actorRole,
+      });
+      onNotify(`Added new room ${trimmedCode} (${newRoomType.trim()}) to ${property.name}`);
+      setShowAddRoomModal(false);
+    } catch (err) {
+      setAddRoomError(err instanceof Error ? err.message : 'Unable to add room.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleCreateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setBookingError(null);
-    const targetRoom =
-      rooms.find((r) => r.id === selectedRoomId) || bookableRooms[0] || sortedRooms[0];
-    if (!targetRoom || !guestName.trim()) return;
+    const targetRoom = selectedRoomId
+      ? rooms.find((r) => r.id === selectedRoomId)
+      : undefined;
+    if (!guestName.trim()) return;
+
+    if (selectedRoomId && !targetRoom) {
+      setBookingError('Selected suite could not be found. Choose a suite or Unassigned.');
+      return;
+    }
 
     if (checkOutDate <= checkInDate) {
       setBookingError('Check-out date must be after check-in date.');
+      return;
+    }
+
+    if (targetRoom) {
+      const resOverlap = reservations.find(
+        (r) =>
+          r.roomId === targetRoom.id &&
+          (r.status === 'confirmed' || r.status === 'checked_in') &&
+          datesOverlap(checkInDate, checkOutDate, r.checkInDate, r.checkOutDate)
+      );
+      if (resOverlap) {
+        setBookingError(
+          `${targetRoom.roomNumber} already has ${resOverlap.bookingRef} (${resOverlap.guestName}) from ${resOverlap.checkInDate} to ${resOverlap.checkOutDate}.`
+        );
+        return;
+      }
+
+      const blockOverlap = blockedDates.find(
+        (b) =>
+          b.roomId === targetRoom.id && datesOverlap(checkInDate, checkOutDate, b.startDate, b.endDate)
+      );
+      if (blockOverlap) {
+        setBookingError(
+          `${targetRoom.roomNumber} is blocked (${blockOverlap.category}: ${blockOverlap.reason}) from ${blockOverlap.startDate} to ${blockOverlap.endDate}.`
+        );
+        return;
+      }
+    }
+
+    if (immediateCheckIn) {
+      if (!targetRoom) {
+        setBookingError('Please assign a specific suite/room before performing immediate check-in.');
+        return;
+      }
+      if (
+        !inlinePayConfirmed ||
+        !inlineIdVerified ||
+        inlineIdNumber.trim().length < 3 ||
+        inlineKeyIssued !== 'yes' ||
+        !inlineRoomReady
+      ) {
+        setBookingError(
+          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming suite readiness.'
+        );
+        return;
+      }
+    }
+
+    const trimmedGuest = guestName.trim();
+    const resolvedRoomType = targetRoom ? targetRoom.roomType : newRequestedRoomType;
+    const fallbackNightlyRate =
+      rooms.find((r) => r.roomType === resolvedRoomType)?.nightlyRateNgn || 55000;
+    const assignedLabel = targetRoom
+      ? targetRoom.roomNumber
+      : `Unassigned (${resolvedRoomType})`;
+
+    setBusyId('booking');
+    try {
+      await createReservationWorkflow({
+        property,
+        room: targetRoom,
+        requestedRoomType: resolvedRoomType,
+        nightlyRateNgn: targetRoom?.nightlyRateNgn ?? fallbackNightlyRate,
+        guestName: trimmedGuest,
+        guestPhone: guestPhone.trim(),
+        guestEmail: guestEmail.trim(),
+        guestIdType: inlineIdType,
+        guestIdNumber: inlineIdNumber.trim(),
+        checkInDate,
+        checkOutDate,
+        bookedDate: todayIso,
+        nights: Math.max(1, nights),
+        adults: Math.max(1, adults),
+        children: Math.max(0, childrenCount),
+        channel,
+        paymentMethod,
+        depositNgn: Math.max(0, depositNgn),
+        immediateCheckIn,
+        initialStatus: initialBookingStatus,
+        paymentConfirmed: immediateCheckIn ? inlinePayConfirmed : false,
+        idVerified: immediateCheckIn ? inlineIdVerified : false,
+        keyIssued: immediateCheckIn ? inlineKeyIssued === 'yes' : false,
+        actorRole,
+      });
+      onNotify(
+        immediateCheckIn && targetRoom
+          ? `Verified & checked in ${trimmedGuest} to ${targetRoom.roomNumber}`
+          : `${RESERVATION_STATUS_LABELS[initialBookingStatus]} reservation for ${trimmedGuest} (${assignedLabel})`
+      );
+      if (immediateCheckIn && targetRoom) {
+        onGuestCheckedIn?.({
+          guestName: trimmedGuest,
+          roomNumber: targetRoom.roomNumber,
+        });
+      }
+      setShowBookingForm(false);
+      setGuestName('');
+      setGuestEmail('');
+      setChildrenCount(0);
+      setInlineIdNumber('');
+      setInlinePayConfirmed(false);
+      setInlineIdVerified(false);
+      setInlineRoomReady(false);
+      setInlineKeyIssued(null);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleWalkInSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWalkInError(null);
+    const fullGuestName = `${walkInFirstName.trim()} ${walkInLastName.trim()}`.trim();
+    const targetRoom =
+      rooms.find((r) => r.id === walkInRoomId) ||
+      walkInEligibleRooms.find((r) => r.occupancyStatus === 'vacant') ||
+      walkInEligibleRooms[0];
+
+    if (!fullGuestName) {
+      setWalkInError('First name and last name are required.');
+      return;
+    }
+    if (!targetRoom) {
+      setWalkInError('Please select an available room.');
+      return;
+    }
+    if (walkInCheckOut <= todayIso) {
+      setWalkInError('Check-out date must be after today.');
       return;
     }
 
@@ -246,51 +725,81 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       (r) =>
         r.roomId === targetRoom.id &&
         (r.status === 'confirmed' || r.status === 'checked_in') &&
-        datesOverlap(checkInDate, checkOutDate, r.checkInDate, r.checkOutDate)
+        datesOverlap(todayIso, walkInCheckOut, r.checkInDate, r.checkOutDate)
     );
     if (resOverlap) {
-      setBookingError(
-        `${targetRoom.roomNumber} already has ${resOverlap.bookingRef} (${resOverlap.guestName}) from ${resOverlap.checkInDate} to ${resOverlap.checkOutDate}.`
+      setWalkInError(
+        `${targetRoom.roomNumber} is already booked (${resOverlap.bookingRef} · ${resOverlap.guestName}) until ${resOverlap.checkOutDate}.`
       );
       return;
     }
 
     const blockOverlap = blockedDates.find(
-      (b) => b.roomId === targetRoom.id && datesOverlap(checkInDate, checkOutDate, b.startDate, b.endDate)
+      (b) =>
+        b.roomId === targetRoom.id && datesOverlap(todayIso, walkInCheckOut, b.startDate, b.endDate)
     );
     if (blockOverlap) {
-      setBookingError(
-        `${targetRoom.roomNumber} is blocked (${blockOverlap.category}: ${blockOverlap.reason}) from ${blockOverlap.startDate} to ${blockOverlap.endDate}.`
+      setWalkInError(
+        `${targetRoom.roomNumber} is blocked (${blockOverlap.category}: ${blockOverlap.reason}) during those dates.`
       );
       return;
     }
 
-    setBusyId('booking');
+    if (
+      !walkInPayConfirmed ||
+      !walkInIdVerified ||
+      walkInIdNumber.trim().length < 3 ||
+      walkInKeyIssued !== 'yes' ||
+      !walkInRoomReady
+    ) {
+      setWalkInError(
+        'Check-in requires completing all steps: Confirm Payment, Verify Guest ID, Key Issued = Yes, and Suite Ready.'
+      );
+      return;
+    }
+
+    const stayNights = diffNights(todayIso, walkInCheckOut);
+    setBusyId('walk_in');
     try {
       await createReservationWorkflow({
         property,
-        room: targetRoom,
-        guestName: guestName.trim(),
-        guestPhone: guestPhone.trim(),
-        guestEmail: guestEmail.trim(),
-        checkInDate,
-        checkOutDate,
-        nights: Math.max(1, nights),
-        adults: Math.max(1, adults),
-        channel,
-        paymentMethod,
-        depositNgn: Math.max(0, depositNgn),
-        immediateCheckIn,
+        room: { ...targetRoom, nightlyRateNgn: Math.max(5000, walkInRateNgn) },
+        guestName: fullGuestName,
+        guestPhone: walkInPhone.trim(),
+        guestEmail: walkInEmail.trim(),
+        guestAddress: walkInAddress.trim(),
+        guestCity: walkInCity.trim(),
+        guestNationality: walkInCountry.trim() || 'Nigeria',
+        guestIdType: walkInIdType,
+        guestIdNumber: walkInIdNumber.trim(),
+        checkInDate: todayIso,
+        checkOutDate: walkInCheckOut,
+        nights: stayNights,
+        adults: 1,
+        channel: 'Direct Walk-In',
+        paymentMethod: walkInPaymentMethod,
+        depositNgn: Math.max(0, walkInDepositNgn),
+        immediateCheckIn: true,
+        paymentConfirmed: true,
+        idVerified: true,
+        keyIssued: true,
         actorRole,
       });
-      onNotify(
-        immediateCheckIn
-          ? `Checked in ${guestName} to ${targetRoom.roomNumber}`
-          : `Confirmed reservation for ${guestName} in ${targetRoom.roomNumber}`
-      );
-      setShowBookingForm(false);
-      setGuestName('');
-      setGuestEmail('');
+      onNotify(`Verified & checked in ${fullGuestName} to ${targetRoom.roomNumber}`);
+      onGuestCheckedIn?.({
+        guestName: fullGuestName,
+        roomNumber: targetRoom.roomNumber,
+      });
+      setWalkInFirstName('');
+      setWalkInLastName('');
+      setWalkInEmail('');
+      setWalkInIdNumber('');
+      setWalkInAddress('');
+      setWalkInPayConfirmed(false);
+      setWalkInIdVerified(false);
+      setWalkInRoomReady(false);
+      setWalkInKeyIssued(null);
+      onNavigateSection?.('in_house');
     } finally {
       setBusyId(null);
     }
@@ -313,16 +822,76 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
   };
 
-  const handleCheckIn = async (res: ReservationRecord) => {
-    setBusyId(res.id);
+  const handleSaveStayDetails = async (res: ReservationRecord) => {
+    setEditStayError(null);
+    if (!editCheckInDate || !editCheckOutDate || editCheckOutDate <= editCheckInDate) {
+      setEditStayError('Check-out date must be after check-in date.');
+      return;
+    }
+    const targetRoomId = editRoomId;
+    const targetRoom = targetRoomId ? rooms.find((r) => r.id === targetRoomId) : undefined;
+    const oldRoom = res.roomId ? rooms.find((r) => r.id === res.roomId) : undefined;
+
+    if (editStatus === 'checked_in' && !targetRoom) {
+      setEditStayError('Assign a suite/room before setting status to Checked-in.');
+      return;
+    }
+
+    const willOccupyRoom =
+      editStatus === 'confirmed' || editStatus === 'pending' || editStatus === 'checked_in';
+    if (willOccupyRoom && targetRoom) {
+      const resOverlap = reservations.find(
+        (r) =>
+          r.id !== res.id &&
+          r.roomId === targetRoom.id &&
+          (r.status === 'confirmed' || r.status === 'pending' || r.status === 'checked_in') &&
+          datesOverlap(editCheckInDate, editCheckOutDate, r.checkInDate, r.checkOutDate)
+      );
+      if (resOverlap) {
+        setEditStayError(
+          `Dates conflict with ${resOverlap.bookingRef} (${resOverlap.guestName}: ${resOverlap.checkInDate} → ${resOverlap.checkOutDate}).`
+        );
+        return;
+      }
+      const blockOverlap = blockedDates.find(
+        (b) =>
+          b.roomId === targetRoom.id &&
+          datesOverlap(editCheckInDate, editCheckOutDate, b.startDate, b.endDate)
+      );
+      if (blockOverlap) {
+        setEditStayError(
+          `Dates conflict with blocked hold (${blockOverlap.category}: ${blockOverlap.startDate} → ${blockOverlap.endDate}).`
+        );
+        return;
+      }
+    }
+
+    const updatedNights = diffNights(editCheckInDate, editCheckOutDate);
+    setBusyId(`stay-${res.id}`);
     try {
-      await transitionReservationStatus({
+      await updateReservationDetailsWorkflow({
         property,
         reservation: res,
-        nextStatus: 'checked_in',
+        newRoom: targetRoom && targetRoom.id !== res.roomId ? targetRoom : undefined,
+        clearRoomAssignment: editRoomId === '' && Boolean(res.roomId),
+        requestedRoomType: targetRoom ? targetRoom.roomType : editRequestedRoomType,
+        oldRoom,
+        guestName: editGuestNameRes,
+        guestPhone: editGuestPhoneRes,
+        checkInDate: editCheckInDate,
+        checkOutDate: editCheckOutDate,
+        nights: updatedNights,
+        adults: editAdults,
+        children: editChildren,
+        channel: editChannel,
+        status: editStatus,
+        paymentMethod: editPaymentMethodRes,
         actorRole,
       });
-      onNotify(`Checked in ${res.guestName} to ${res.roomNumber}`);
+      onNotify(
+        `Updated reservation ${res.bookingRef} (${targetRoom?.roomNumber || 'Unassigned'} · ${RESERVATION_STATUS_LABELS[editStatus]})`
+      );
+      setEditingStayDetails(false);
     } finally {
       setBusyId(null);
     }
@@ -351,6 +920,80 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
   };
 
+  const openChangeRoomModal = (res: ReservationRecord) => {
+    const vacantCandidates = sortedRooms.filter(
+      (r) => r.id !== res.roomId && r.occupancyStatus === 'vacant'
+    );
+    setChangeRoomTarget(res);
+    setChangeRoomNewId(vacantCandidates[0]?.id || '');
+    setChangeRoomAdjustRate(true);
+    setChangeRoomReason('');
+    setChangeRoomError(null);
+  };
+
+  const handleConfirmChangeRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!changeRoomTarget) return;
+    setChangeRoomError(null);
+    const targetRoom = rooms.find((r) => r.id === changeRoomNewId);
+    if (!targetRoom) {
+      setChangeRoomError('Please select a vacant suite to move the guest into.');
+      return;
+    }
+    const resOverlap = reservations.find(
+      (r) =>
+        r.id !== changeRoomTarget.id &&
+        r.roomId === targetRoom.id &&
+        (r.status === 'confirmed' || r.status === 'checked_in') &&
+        datesOverlap(
+          changeRoomTarget.checkInDate,
+          changeRoomTarget.checkOutDate,
+          r.checkInDate,
+          r.checkOutDate
+        )
+    );
+    if (resOverlap) {
+      setChangeRoomError(
+        `${targetRoom.roomNumber} has a conflicting reservation (${resOverlap.bookingRef}: ${resOverlap.checkInDate} → ${resOverlap.checkOutDate}).`
+      );
+      return;
+    }
+    const blkOverlap = blockedDates.find(
+      (b) =>
+        b.roomId === targetRoom.id &&
+        datesOverlap(
+          changeRoomTarget.checkInDate,
+          changeRoomTarget.checkOutDate,
+          b.startDate,
+          b.endDate
+        )
+    );
+    if (blkOverlap) {
+      setChangeRoomError(
+        `${targetRoom.roomNumber} is blocked (${blkOverlap.category}) during this stay.`
+      );
+      return;
+    }
+
+    setBusyId(`moveroom-${changeRoomTarget.id}`);
+    try {
+      await changeInHouseRoomWorkflow({
+        property,
+        reservation: changeRoomTarget,
+        newRoom: targetRoom,
+        adjustRateToNewRoom: changeRoomAdjustRate,
+        reason: changeRoomReason.trim(),
+        actorRole,
+      });
+      onNotify(
+        `Moved ${changeRoomTarget.guestName} from ${changeRoomTarget.roomNumber} to ${targetRoom.roomNumber}`
+      );
+      setChangeRoomTarget(null);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleCreateGuest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGuestName.trim()) return;
@@ -362,7 +1005,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           fullName: newGuestName.trim(),
           phone: newGuestPhone.trim(),
           email: newGuestEmail.trim(),
-          nationality: 'Nigerian',
+          address: newGuestAddress.trim(),
+          city: newGuestCity.trim(),
+          nationality: 'Nigeria',
           idType: newGuestIdType,
           idNumber: newGuestIdNumber.trim(),
           vipTier: newGuestVip,
@@ -375,24 +1020,120 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       onNotify(`Guest ${newGuestName} added to directory`);
       setShowGuestForm(false);
       setNewGuestName('');
+      setNewGuestEmail('');
+      setNewGuestAddress('');
       setNewGuestIdNumber('');
     } finally {
       setBusyId(null);
     }
   };
 
+  const handleSaveGuestProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedGuest) return;
+    setBusyId(`guest-${selectedGuest.id}`);
+    try {
+      await updateGuestRecord({
+        property,
+        guest: selectedGuest,
+        updates: {
+          fullName: editGuestName.trim() || selectedGuest.fullName,
+          phone: editGuestPhone.trim() || selectedGuest.phone,
+          email: editGuestEmail.trim(),
+          address: editGuestAddress.trim(),
+          city: editGuestCity.trim(),
+          nationality: editGuestNationality.trim() || 'Nigeria',
+          idType: editGuestIdType,
+          idNumber: editGuestIdNumber.trim(),
+          vipTier: editGuestVip,
+          notes: editGuestNotes.trim(),
+        },
+        actorRole,
+      });
+      onNotify(`Updated guest profile for ${editGuestName.trim() || selectedGuest.fullName}`);
+      setEditingGuestMode(false);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const filteredReservations = reservations.filter((r) => {
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
+    const sourceLabel = formatBookingSourceLabel(r.channel).toLowerCase();
+    const bookedDate = getReservationBookedDate(r);
+    const roomDisplay = getReservationRoomDisplay(r, rooms);
     const matchesSearch =
       !q ||
       r.guestName.toLowerCase().includes(q) ||
       r.bookingRef.toLowerCase().includes(q) ||
-      r.roomNumber.toLowerCase().includes(q);
-    if (section === 'front_desk') {
-      return matchesSearch && (r.status === 'confirmed' || r.status === 'checked_in');
+      roomDisplay.roomNumberLabel.toLowerCase().includes(q) ||
+      roomDisplay.roomTypeLabel.toLowerCase().includes(q) ||
+      (r.guestPhone || '').toLowerCase().includes(q) ||
+      r.channel.toLowerCase().includes(q) ||
+      sourceLabel.includes(q) ||
+      bookedDate.includes(q);
+    if (!matchesSearch) return false;
+
+    if (filterRoomId === 'UNASSIGNED') {
+      if (roomDisplay.isAssigned) return false;
+    } else if (filterRoomId !== 'ALL' && r.roomId !== filterRoomId) {
+      return false;
     }
-    return matchesSearch;
+    if (filterChannel !== 'ALL' && !matchesBookingSourceFilter(r.channel, filterChannel)) return false;
+    if (filterPaymentStatus !== 'all') {
+      const { paymentStatus } = getReservationPaymentSummary(r);
+      if (paymentStatus !== filterPaymentStatus) return false;
+    }
+    if (filterStayFrom && r.checkOutDate <= filterStayFrom) return false;
+    if (filterStayTo && r.checkInDate >= filterStayTo) return false;
+
+    if (section === 'arrivals') {
+      return r.status === 'confirmed' || r.status === 'pending';
+    }
+    if (section === 'in_house') {
+      return r.status === 'checked_in';
+    }
+    if (section === 'front_desk') {
+      return r.status === 'confirmed' || r.status === 'pending' || r.status === 'checked_in';
+    }
+    if (section === 'reservations' && resStatusFilter !== 'all') {
+      return r.status === resStatusFilter;
+    }
+    return true;
   });
+
+  const activeAdvancedFilterCount =
+    (filterRoomId !== 'ALL' ? 1 : 0) +
+    (filterChannel !== 'ALL' ? 1 : 0) +
+    (filterPaymentStatus !== 'all' ? 1 : 0) +
+    (filterStayFrom ? 1 : 0) +
+    (filterStayTo ? 1 : 0);
+
+  const reservationMetrics = reservations.reduce(
+    (acc, r) => {
+      const { totalAmount, amountPaid, balance } = getReservationPaymentSummary(r);
+      acc.total += 1;
+      acc[r.status] = (acc[r.status] || 0) + 1;
+      if (r.status !== 'cancelled' && r.status !== 'no_show') {
+        acc.totalValue += totalAmount;
+        acc.totalPaid += amountPaid;
+        acc.totalBalance += balance;
+      }
+      return acc;
+    },
+    {
+      total: 0,
+      confirmed: 0,
+      pending: 0,
+      checked_in: 0,
+      checked_out: 0,
+      cancelled: 0,
+      no_show: 0,
+      totalValue: 0,
+      totalPaid: 0,
+      totalBalance: 0,
+    } as Record<string, number>
+  );
 
   const filteredGuests = guests.filter((g) => {
     const q = searchQuery.toLowerCase();
@@ -400,7 +1141,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       !q ||
       g.fullName.toLowerCase().includes(q) ||
       g.phone.includes(q) ||
-      (g.email || '').toLowerCase().includes(q)
+      (g.email || '').toLowerCase().includes(q) ||
+      (g.city || '').toLowerCase().includes(q)
     );
   });
 
@@ -408,14 +1150,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     {
       key: 'Serviced Apartment',
       title: 'Serviced Apartment Section',
-      desc: 'RM-1 to RM-3 — Studio & One Bedroom Apartments with Kitchenette',
+      desc: 'Studio & One Bedroom Serviced Apartments with Kitchenette',
     },
     {
       key: 'Hotel Rooms',
       title: 'Hotel Rooms',
-      desc: 'RM-4 to RM-8 — Deluxe Studios, Standard Studios & One Bedroom Suite',
+      desc: 'Deluxe Studios, Standard Studios & Suites',
     },
   ];
+
+  const isStayTableSection =
+    section === 'reservations' ||
+    section === 'arrivals' ||
+    section === 'in_house' ||
+    section === 'front_desk';
 
   return (
     <div className="space-y-6">
@@ -423,107 +1171,615 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-xl font-bold text-slate-900">
-            {section === 'rooms'
-              ? `${property.name} — Rooms, Rates & Suite Photos`
-              : section === 'front_desk'
-                ? 'Front Desk Operations & Guest Folios'
-                : section === 'guests'
-                  ? 'Guest Management & KYC Directory'
-                  : 'Reservations & Channel Bookings'}
+            {cms.pages[section]?.title || (section === 'rooms' ? 'Rooms & Rates' : 'Reservations')}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            {section === 'rooms'
-              ? canManageRooms
-                ? 'Property & Super Admin control: update nightly Naira rates, room types, sections, and upload suite photos'
-                : 'Suite availability, nightly Naira rates, and housekeeping readiness'
-              : 'Live arrivals, walk-in check-ins, room folio settlements, and guest profiles'}
+            {cms.pages[section]?.subtitle}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {section !== 'rooms' && (
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search guest, ref, RM-1..."
-                className="pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
-              />
+          {section !== 'rooms' && section !== 'walk_in' && (
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search guest, ref, phone, RM-1..."
+                  className="pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+              {isStayTableSection && (
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedSearch((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors cursor-pointer ${
+                    showAdvancedSearch || activeAdvancedFilterCount > 0
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>
+                    Advanced Search
+                    {activeAdvancedFilterCount > 0 ? ` (${activeAdvancedFilterCount})` : ''}
+                  </span>
+                </button>
+              )}
             </div>
           )}
 
-          {section === 'rooms' && canManageRooms && property.code === 'RG-ENU-01' && (
-            <button
-              type="button"
-              disabled={busyId === 'sync-catalog'}
-              onClick={async () => {
-                setBusyId('sync-catalog');
-                try {
-                  const updated = await syncRichgatesOfficialCatalogIfNeeded({
-                    property,
-                    rooms,
-                    reservations,
-                    housekeepingTasks: [],
-                    actorRole,
-                  });
-                  onNotify(
-                    updated
-                      ? 'Synced Richgates official RM-1 to RM-8 room types & rates'
-                      : 'Richgates room catalog is already up to date'
-                  );
-                } finally {
-                  setBusyId(null);
-                }
-              }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Sync Official Rates</span>
-            </button>
-          )}
-
-          {section === 'guests' ? (
+          {section === 'rooms' ? (
+            <div className="flex flex-wrap items-center gap-2.5">
+              {canManageRooms && property.code === 'RG-ENU-01' && (
+                <button
+                  type="button"
+                  disabled={busyId === 'sync-catalog'}
+                  onClick={async () => {
+                    setBusyId('sync-catalog');
+                    try {
+                      const updated = await syncRichgatesOfficialCatalogIfNeeded({
+                        property,
+                        rooms,
+                        reservations,
+                        housekeepingTasks: [],
+                        actorRole,
+                      });
+                      onNotify(
+                        updated
+                          ? 'Synced Richgates official RM-1 to RM-8 room types & rates'
+                          : 'Richgates room catalog is already up to date'
+                      );
+                    } finally {
+                      setBusyId(null);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>{cms.pages.rooms.ctaLabel || 'Sync Official Rates'}</span>
+                </button>
+              )}
+              {canManageRooms && (
+                <button
+                  type="button"
+                  disabled={atRoomCapacity}
+                  title={
+                    atRoomCapacity
+                      ? `Maximum ${effectiveMaxRooms} rooms allowed on active license`
+                      : 'Add a new room to inventory'
+                  }
+                  onClick={openAddRoomModal}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:text-slate-600 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>
+                    {atRoomCapacity
+                      ? `License Cap (${rooms.length}/${effectiveMaxRooms})`
+                      : 'Add New Room'}
+                  </span>
+                </button>
+              )}
+            </div>
+          ) : section === 'guests' ? (
             <button
               type="button"
               onClick={() => setShowGuestForm((v) => !v)}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
               <UserPlus className="w-3.5 h-3.5" />
-              <span>Register Guest</span>
+              <span>{cms.pages.guests.ctaLabel || 'Register Guest'}</span>
             </button>
-          ) : (
+          ) : section === 'walk_in' ? (
             <button
               type="button"
-              onClick={() => {
-                if (!selectedRoomId && bookableRooms[0]) setSelectedRoomId(bookableRooms[0].id);
-                setBookingError(null);
-                setShowBookingForm((v) => !v);
-              }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              onClick={() => onNavigateSection?.('in_house')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>New Booking / Walk-In</span>
+              <DoorOpen className="w-3.5 h-3.5" />
+              <span>{cms.pages.walk_in.ctaLabel || 'View In-House Guests'}</span>
             </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onNavigateSection?.('walk_in')}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>{cms.pages.walk_in.navLabel || 'Walk-in Check-in'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!selectedRoomId && bookableRooms[0]) setSelectedRoomId(bookableRooms[0].id);
+                  setBookingError(null);
+                  setShowBookingForm((v) => !v);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{cms.pages[section]?.ctaLabel || 'New Reservation'}</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Inline New Booking / Walk-in Form */}
-      {showBookingForm && (
+      {/* Expandable Advanced Search Filter Panel */}
+      {isStayTableSection && showAdvancedSearch && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-display font-bold text-slate-900">
+              Advanced Stay &amp; Reservation Search
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setFilterRoomId('ALL');
+                setFilterChannel('ALL');
+                setFilterPaymentStatus('all');
+                setFilterStayFrom('');
+                setFilterStayTo('');
+              }}
+              className="text-emerald-700 font-semibold hover:underline cursor-pointer"
+            >
+              Reset All Filters
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div>
+              <label className="block font-medium text-slate-600 mb-1">Suite / Room</label>
+              <select
+                value={filterRoomId}
+                onChange={(e) => setFilterRoomId(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
+              >
+                <option value="ALL">All Suites</option>
+                <option value="UNASSIGNED">Unassigned (Edit to Assign)</option>
+                {sortedRooms.map((rm) => (
+                  <option key={rm.id} value={rm.id}>
+                    {rm.roomNumber} · {rm.roomType}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block font-medium text-slate-600 mb-1">Booking Source</label>
+              <select
+                value={filterChannel}
+                onChange={(e) => setFilterChannel(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
+              >
+                <option value="ALL">All Sources</option>
+                {PRIMARY_BOOKING_SOURCES.map((src) => (
+                  <option key={src.value} value={src.value}>
+                    {src.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block font-medium text-slate-600 mb-1">Payment Status</label>
+              <select
+                value={filterPaymentStatus}
+                onChange={(e) =>
+                  setFilterPaymentStatus(e.target.value as 'all' | PaymentStatusLabel)
+                }
+                className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
+              >
+                <option value="all">All Payments</option>
+                <option value="Paid">Paid</option>
+                <option value="Partial">Partial</option>
+                <option value="Unpaid">Unpaid</option>
+              </select>
+            </div>
+            <div>
+              <label className="block font-medium text-slate-600 mb-1">Stay From Date</label>
+              <input
+                type="date"
+                value={filterStayFrom}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFilterStayFrom(val);
+                  if (val && filterStayTo && filterStayTo <= val) {
+                    setFilterStayTo(addDaysIso(val, 1));
+                  }
+                }}
+                className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-600 mb-1">Stay To Date</label>
+              <input
+                type="date"
+                min={filterStayFrom ? addDaysIso(filterStayFrom, 1) : undefined}
+                value={filterStayTo}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val && filterStayFrom && val <= filterStayFrom) {
+                    setFilterStayTo(addDaysIso(filterStayFrom, 1));
+                  } else {
+                    setFilterStayTo(val);
+                  }
+                }}
+                className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION: DEDICATED WALK-IN CHECK-IN (matches IMG_2075) */}
+      {section === 'walk_in' && (
+        <form
+          onSubmit={handleWalkInSubmit}
+          className="bg-white border border-slate-200 rounded-xl p-6 space-y-5"
+        >
+          {walkInError && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+              {walkInError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">First Name *</label>
+              <input
+                required
+                type="text"
+                value={walkInFirstName}
+                onChange={(e) => setWalkInFirstName(e.target.value)}
+                placeholder="e.g. Chinedu"
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Last Name *</label>
+              <input
+                required
+                type="text"
+                value={walkInLastName}
+                onChange={(e) => setWalkInLastName(e.target.value)}
+                placeholder="e.g. Okafor"
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Phone *</label>
+              <input
+                required
+                type="text"
+                value={walkInPhone}
+                onChange={(e) => setWalkInPhone(e.target.value)}
+                placeholder="+234 800 000 0000"
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Email</label>
+              <input
+                type="email"
+                value={walkInEmail}
+                onChange={(e) => setWalkInEmail(e.target.value)}
+                placeholder="guest@email.com"
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">ID Type</label>
+              <select
+                value={walkInIdType}
+                onChange={(e) => setWalkInIdType(e.target.value as GuestRecord['idType'])}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+              >
+                <option value="NIN">NIN</option>
+                <option value="International Passport">International Passport</option>
+                <option value="Driver License">Driver License</option>
+                <option value="Voter Card">Voter Card</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">ID Number</label>
+              <input
+                type="text"
+                value={walkInIdNumber}
+                onChange={(e) => setWalkInIdNumber(e.target.value)}
+                placeholder="ID / Passport number"
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Address</label>
+              <input
+                type="text"
+                value={walkInAddress}
+                onChange={(e) => setWalkInAddress(e.target.value)}
+                placeholder="Street address"
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">City</label>
+              <input
+                type="text"
+                value={walkInCity}
+                onChange={(e) => setWalkInCity(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Country</label>
+              <input
+                type="text"
+                value={walkInCountry}
+                onChange={(e) => setWalkInCountry(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Room Type *</label>
+              <select
+                value={walkInRoomTypeFilter}
+                onChange={(e) => {
+                  const nextType = e.target.value;
+                  setWalkInRoomTypeFilter(nextType);
+                  const matching = sortedRooms.filter(
+                    (r) =>
+                      r.occupancyStatus !== 'out_of_order' &&
+                      (nextType === 'ALL' || r.roomType === nextType)
+                  );
+                  const pick =
+                    matching.find((r) => r.occupancyStatus === 'vacant') || matching[0];
+                  if (pick) {
+                    setWalkInRoomId(pick.id);
+                    setWalkInRateNgn(pick.nightlyRateNgn);
+                    setWalkInDepositNgn(pick.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
+                  }
+                }}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+              >
+                <option value="ALL">All Room Types</option>
+                {uniqueRoomTypes.map((rt) => {
+                  const sample = sortedRooms.find((r) => r.roomType === rt);
+                  return (
+                    <option key={rt} value={rt}>
+                      {rt} {sample ? `- ${formatNgn(sample.nightlyRateNgn)}/night` : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Room *</label>
+              <select
+                value={walkInRoomId}
+                onChange={(e) => {
+                  const rm = rooms.find((r) => r.id === e.target.value);
+                  setWalkInRoomId(e.target.value);
+                  if (rm) {
+                    setWalkInRateNgn(rm.nightlyRateNgn);
+                    setWalkInDepositNgn(rm.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
+                  }
+                }}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+              >
+                {walkInEligibleRooms.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.roomNumber} · {r.name} ({r.occupancyStatus === 'vacant' ? 'Available' : r.occupancyStatus})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Check-out *</label>
+              <input
+                required
+                type="date"
+                min={addDaysIso(todayIso, 1)}
+                value={walkInCheckOut}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  const nextOut = !raw || raw <= todayIso ? addDaysIso(todayIso, 1) : raw;
+                  setWalkInCheckOut(nextOut);
+                  setWalkInDepositNgn(walkInRateNgn * diffNights(todayIso, nextOut));
+                }}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Rate/Night (₦)</label>
+              <input
+                type="number"
+                min={5000}
+                step={500}
+                value={walkInRateNgn}
+                onChange={(e) => {
+                  const nextRate = Number(e.target.value);
+                  setWalkInRateNgn(nextRate);
+                  setWalkInDepositNgn(nextRate * diffNights(todayIso, walkInCheckOut));
+                }}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Payment</label>
+              <select
+                value={walkInPaymentMethod}
+                onChange={(e) =>
+                  setWalkInPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
+                }
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+              >
+                <option value="Cash NGN">Cash</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Card POS">Card POS</option>
+                <option value="Corporate Invoice">Corporate Invoice</option>
+                <option value="Online Gateway">Online Gateway</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Deposit Paid Today (₦ · {diffNights(todayIso, walkInCheckOut)} night
+                {diffNights(todayIso, walkInCheckOut) > 1 ? 's' : ''})
+              </label>
+              <input
+                type="number"
+                min={0}
+                step={500}
+                value={walkInDepositNgn}
+                onChange={(e) => setWalkInDepositNgn(Number(e.target.value))}
+                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+          </div>
+
+          {/* Mandatory Check-In Verification Checklist + Explicit Key Issue */}
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 font-bold text-slate-900">
+                <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                <span>Mandatory Check-In Process</span>
+              </div>
+              {cms.brand.checkInPolicyNote && (
+                <span className="text-[11px] text-emerald-800 font-medium">
+                  {cms.brand.checkInPolicyNote}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+              <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={walkInPayConfirmed}
+                  onChange={(e) => setWalkInPayConfirmed(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-emerald-600"
+                />
+                <span>
+                  <strong className="block text-slate-900">1. Confirm Payment</strong>
+                  <span className="text-[11px] text-slate-500">
+                    Deposit / full rate verified ({walkInPaymentMethod})
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={walkInIdVerified}
+                  onChange={(e) => setWalkInIdVerified(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-emerald-600"
+                />
+                <span>
+                  <strong className="block text-slate-900">2. Verify Guest ID (KYC)</strong>
+                  <span className="text-[11px] text-slate-500">
+                    {walkInIdType} number entered above &amp; ID inspected
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={walkInRoomReady}
+                  onChange={(e) => setWalkInRoomReady(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-emerald-600"
+                />
+                <span>
+                  <strong className="block text-slate-900">3. Suite Inspected Ready</strong>
+                  <span className="text-[11px] text-slate-500">
+                    Assigned room clean &amp; ready for occupancy
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-emerald-700" />
+                <div>
+                  <p className="font-semibold text-slate-900">4. Key Issued to Guest? *</p>
+                  <p className="text-[11px] text-slate-500">
+                    Select Yes once physical key is handed to guest
+                  </p>
+                </div>
+              </div>
+              <div className="inline-flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setWalkInKeyIssued('yes')}
+                  className={`px-3.5 py-1.5 rounded-lg font-semibold border cursor-pointer ${
+                    walkInKeyIssued === 'yes'
+                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  Yes — Key Issued
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWalkInKeyIssued('no')}
+                  className={`px-3.5 py-1.5 rounded-lg font-semibold border cursor-pointer ${
+                    walkInKeyIssued === 'no'
+                      ? 'bg-rose-600 border-rose-600 text-white'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  No — Not Issued
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={
+              busyId === 'walk_in' ||
+              !walkInPayConfirmed ||
+              !walkInIdVerified ||
+              walkInIdNumber.trim().length < 3 ||
+              walkInKeyIssued !== 'yes' ||
+              !walkInRoomReady
+            }
+            className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold transition-colors cursor-pointer"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>{busyId === 'walk_in' ? 'Checking In Guest...' : 'Verify & Check In Walk-In'}</span>
+          </button>
+        </form>
+      )}
+
+      {/* Inline New Reservation Form */}
+      {showBookingForm && section !== 'walk_in' && (
         <form
           onSubmit={handleCreateBooking}
           className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <h2 className="font-display text-sm font-bold text-slate-900">
-              Create Reservation or Immediate Walk-In Check-In
+              Create Reservation or Immediate Check-In
             </h2>
             <button
               type="button"
               onClick={() => setShowBookingForm(false)}
-              className="text-xs text-slate-500 hover:text-slate-800"
+              className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer"
             >
               Cancel
             </button>
@@ -541,13 +1797,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <select
                 value={selectedRoomId}
                 onChange={(e) => {
-                  const rm = rooms.find((r) => r.id === e.target.value);
-                  setSelectedRoomId(e.target.value);
+                  const nextId = e.target.value;
+                  const rm = rooms.find((r) => r.id === nextId);
+                  setSelectedRoomId(nextId);
                   setBookingError(null);
-                  if (rm) setDepositNgn(rm.nightlyRateNgn);
+                  if (rm) {
+                    setNewRequestedRoomType(rm.roomType);
+                    setDepositNgn(rm.nightlyRateNgn);
+                  } else {
+                    setImmediateCheckIn(false);
+                  }
                 }}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
               >
+                <option value="">Unassigned — Assign later</option>
                 {sortedRooms.map((r) => (
                   <option key={r.id} value={r.id} disabled={r.occupancyStatus === 'out_of_order'}>
                     {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}) [{r.occupancyStatus}]
@@ -555,6 +1818,30 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 ))}
               </select>
             </div>
+
+            {selectedRoomId === '' && (
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">
+                  Requested Room Type
+                </label>
+                <select
+                  value={newRequestedRoomType}
+                  onChange={(e) => {
+                    const rt = e.target.value;
+                    setNewRequestedRoomType(rt);
+                    const match = rooms.find((r) => r.roomType === rt);
+                    if (match) setDepositNgn(match.nightlyRateNgn);
+                  }}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  {uniqueRoomTypes.map((rt) => (
+                    <option key={rt} value={rt}>
+                      {rt}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div>
               <label className="block font-medium text-slate-700 mb-1">Guest Full Name</label>
@@ -580,18 +1867,17 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             </div>
 
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Booking Channel</label>
+              <label className="block font-medium text-slate-700 mb-1">Booking Source</label>
               <select
                 value={channel}
                 onChange={(e) => setChannel(e.target.value as ReservationRecord['channel'])}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
               >
-                <option value="Direct Walk-In">Direct Walk-In</option>
-                <option value="Direct Web">Direct Web</option>
-                <option value="Booking.com">Booking.com</option>
-                <option value="Airbnb">Airbnb</option>
-                <option value="Hotels.ng">Hotels.ng</option>
-                <option value="Expedia">Expedia</option>
+                {PRIMARY_BOOKING_SOURCES.map((src) => (
+                  <option key={src.value} value={src.value}>
+                    {src.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -601,7 +1887,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="date"
                 value={checkInDate}
                 onChange={(e) => {
-                  setCheckInDate(e.target.value);
+                  const val = e.target.value;
+                  if (!val) return;
+                  setCheckInDate(val);
+                  if (checkOutDate <= val) {
+                    const nextOut = addDaysIso(val, 1);
+                    setCheckOutDate(nextOut);
+                    setNights(1);
+                  } else {
+                    setNights(diffNights(val, checkOutDate));
+                  }
                   setBookingError(null);
                 }}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -612,9 +1907,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <label className="block font-medium text-slate-700 mb-1">Check-Out Date</label>
               <input
                 type="date"
+                min={addDaysIso(checkInDate, 1)}
                 value={checkOutDate}
                 onChange={(e) => {
-                  setCheckOutDate(e.target.value);
+                  const raw = e.target.value;
+                  if (!raw) return;
+                  const safeOut = raw <= checkInDate ? addDaysIso(checkInDate, 1) : raw;
+                  setCheckOutDate(safeOut);
+                  setNights(diffNights(checkInDate, safeOut));
                   setBookingError(null);
                 }}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -622,28 +1922,41 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             </div>
 
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Nights / Adults</label>
-              <div className="grid grid-cols-2 gap-2">
+              <label className="block font-medium text-slate-700 mb-1">
+                Nights · Adults · Children
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
                 <input
                   type="number"
                   min={1}
+                  title="Nights"
                   value={nights}
-                  onChange={(e) => setNights(Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  onChange={(e) => setNights(Math.max(1, Number(e.target.value)))}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
                 />
                 <input
                   type="number"
                   min={1}
+                  title="Adults"
                   value={adults}
-                  onChange={(e) => setAdults(Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  onChange={(e) => setAdults(Math.max(1, Number(e.target.value)))}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
+                />
+                <input
+                  type="number"
+                  min={0}
+                  title="Children"
+                  value={childrenCount}
+                  onChange={(e) => setChildrenCount(Math.max(0, Number(e.target.value)))}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
                 />
               </div>
+              <span className="text-[10px] text-slate-400">Nights / Adults / Children</span>
             </div>
 
             <div>
               <label className="block font-medium text-slate-700 mb-1">
-                Deposit Received (₦) &amp; Method
+                Amount Paid (₦) &amp; Status
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <input
@@ -655,21 +1968,82 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
                 />
                 <select
-                  value={paymentMethod}
+                  value={immediateCheckIn ? 'checked_in' : initialBookingStatus}
+                  disabled={immediateCheckIn}
                   onChange={(e) =>
-                    setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
+                    setInitialBookingStatus(e.target.value as 'confirmed' | 'pending')
                   }
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white"
+                  className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white disabled:bg-slate-50"
                 >
-                  <option value="Bank Transfer">Bank Transfer</option>
-                  <option value="Card POS">Card POS</option>
-                  <option value="Cash NGN">Cash NGN</option>
-                  <option value="Corporate Invoice">Corporate Invoice</option>
-                  <option value="Online Gateway">Online Gateway</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="pending">Pending</option>
+                  {immediateCheckIn && <option value="checked_in">Checked-in</option>}
                 </select>
               </div>
             </div>
+
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">Payment Method</label>
+              <select
+                value={paymentMethod}
+                onChange={(e) =>
+                  setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
+                }
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              >
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Card POS">Card POS</option>
+                <option value="Cash NGN">Cash NGN</option>
+                <option value="Corporate Invoice">Corporate Invoice</option>
+                <option value="Online Gateway">Online Gateway</option>
+              </select>
+            </div>
           </div>
+
+          {(() => {
+            const pickedRoom = selectedRoomId
+              ? rooms.find((r) => r.id === selectedRoomId)
+              : undefined;
+            const ratePerNight =
+              pickedRoom?.nightlyRateNgn ||
+              rooms.find((r) => r.roomType === newRequestedRoomType)?.nightlyRateNgn ||
+              55000;
+            const estTotal = ratePerNight * Math.max(1, nights);
+            const estPaid = Math.max(0, depositNgn);
+            const estBal = Math.max(0, estTotal - estPaid);
+            const estPayStatus =
+              estBal <= 0 && estTotal > 0 ? 'Paid' : estPaid > 0 ? 'Partial' : 'Unpaid';
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-xs">
+                <div className="flex flex-wrap items-center gap-4 text-slate-600 font-mono-tabular">
+                  <span>
+                    Total: <strong className="text-slate-900">{formatNgn(estTotal)}</strong>
+                  </span>
+                  <span>
+                    Paid: <strong className="text-emerald-700">{formatNgn(estPaid)}</strong>
+                  </span>
+                  <span>
+                    Balance: <strong className="text-slate-900">{formatNgn(estBal)}</strong>
+                  </span>
+                  <span>
+                    Payment Status:{' '}
+                    <strong
+                      className={
+                        estPayStatus === 'Paid'
+                          ? 'text-emerald-700'
+                          : estPayStatus === 'Partial'
+                            ? 'text-amber-700'
+                            : 'text-rose-700'
+                      }
+                    >
+                      {estPayStatus}
+                    </strong>
+                  </span>
+                </div>
+                <span className="text-slate-500">Date Booked: {todayIso}</span>
+              </div>
+            );
+          })()}
 
           <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
             <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
@@ -679,21 +2053,116 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 onChange={(e) => setImmediateCheckIn(e.target.checked)}
                 className="rounded border-slate-300 text-emerald-600"
               />
-              <span>Immediate Front Desk Check-In (mark suite Occupied now)</span>
+              <span>Immediate Front Desk Check-In (requires verification steps)</span>
             </label>
 
             <button
               type="submit"
-              disabled={busyId === 'booking'}
-              className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50"
+              disabled={
+                busyId === 'booking' ||
+                (immediateCheckIn &&
+                  (!inlinePayConfirmed ||
+                    !inlineIdVerified ||
+                    inlineIdNumber.trim().length < 3 ||
+                    inlineKeyIssued !== 'yes' ||
+                    !inlineRoomReady))
+              }
+              className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
             >
               {busyId === 'booking'
                 ? 'Saving...'
                 : immediateCheckIn
-                  ? 'Confirm & Check In Guest'
-                  : 'Create Confirmed Booking'}
+                  ? 'Verify & Check In Guest'
+                  : 'Create Confirmed Reservation'}
             </button>
           </div>
+
+          {immediateCheckIn && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
+              <p className="font-bold text-slate-900">
+                Mandatory Check-In Process (Required for Immediate Check-In)
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Guest ID Type</label>
+                  <select
+                    value={inlineIdType}
+                    onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="NIN">NIN</option>
+                    <option value="International Passport">International Passport</option>
+                    <option value="Driver License">Driver License</option>
+                    <option value="Voter Card">Voter Card</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Guest ID Number *</label>
+                  <input
+                    type="text"
+                    required
+                    value={inlineIdNumber}
+                    onChange={(e) => setInlineIdNumber(e.target.value)}
+                    placeholder="Enter NIN / Passport / License No."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={inlinePayConfirmed}
+                    onChange={(e) => setInlinePayConfirmed(e.target.checked)}
+                  />
+                  <span>1. Payment Confirmed</span>
+                </label>
+                <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={inlineIdVerified}
+                    onChange={(e) => setInlineIdVerified(e.target.checked)}
+                  />
+                  <span>2. Guest ID Verified</span>
+                </label>
+                <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={inlineRoomReady}
+                    onChange={(e) => setInlineRoomReady(e.target.checked)}
+                  />
+                  <span>3. Suite Inspected Ready</span>
+                </label>
+              </div>
+              <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
+                <span className="font-semibold text-slate-800">4. Key Issued? *</span>
+                <div className="inline-flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setInlineKeyIssued('yes')}
+                    className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
+                      inlineKeyIssued === 'yes'
+                        ? 'bg-emerald-600 border-emerald-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInlineKeyIssued('no')}
+                    className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
+                      inlineKeyIssued === 'no'
+                        ? 'bg-rose-600 border-rose-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </form>
       )}
 
@@ -706,7 +2175,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           <h2 className="font-display text-sm font-bold text-slate-900">
             Register New Guest Profile (KYC)
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs">
             <input
               required
               type="text"
@@ -730,6 +2199,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               onChange={(e) => setNewGuestEmail(e.target.value)}
               className="border border-slate-200 rounded-lg px-3 py-2"
             />
+            <input
+              type="text"
+              placeholder="City"
+              value={newGuestCity}
+              onChange={(e) => setNewGuestCity(e.target.value)}
+              className="border border-slate-200 rounded-lg px-3 py-2"
+            />
+            <input
+              type="text"
+              placeholder="Residential / Office Address"
+              value={newGuestAddress}
+              onChange={(e) => setNewGuestAddress(e.target.value)}
+              className="sm:col-span-2 border border-slate-200 rounded-lg px-3 py-2"
+            />
             <select
               value={newGuestIdType}
               onChange={(e) => setNewGuestIdType(e.target.value as GuestRecord['idType'])}
@@ -740,23 +2223,25 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <option value="Driver License">Driver License</option>
               <option value="Voter Card">Voter Card</option>
             </select>
-            <input
-              type="text"
-              placeholder="ID Document Number"
-              value={newGuestIdNumber}
-              onChange={(e) => setNewGuestIdNumber(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-2"
-            />
-            <select
-              value={newGuestVip}
-              onChange={(e) => setNewGuestVip(e.target.value as GuestRecord['vipTier'])}
-              className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-            >
-              <option value="Standard">Standard Tier</option>
-              <option value="Silver">Silver VIP</option>
-              <option value="Gold">Gold VIP</option>
-              <option value="Diplomatic">Diplomatic</option>
-            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                placeholder="ID Number"
+                value={newGuestIdNumber}
+                onChange={(e) => setNewGuestIdNumber(e.target.value)}
+                className="border border-slate-200 rounded-lg px-3 py-2"
+              />
+              <select
+                value={newGuestVip}
+                onChange={(e) => setNewGuestVip(e.target.value as GuestRecord['vipTier'])}
+                className="border border-slate-200 rounded-lg px-2 py-2 bg-white"
+              >
+                <option value="Standard">Standard</option>
+                <option value="Silver">Silver VIP</option>
+                <option value="Gold">Gold VIP</option>
+                <option value="Diplomatic">Diplomatic</option>
+              </select>
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             <button
@@ -769,15 +2254,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             <button
               type="submit"
               disabled={busyId === 'guest'}
-              className="px-4 py-2 text-xs font-semibold bg-emerald-600 text-white rounded-lg"
+              className="px-4 py-2 text-xs font-semibold bg-emerald-600 text-white rounded-lg cursor-pointer"
             >
-              Save Guest KYC
+              Save Guest Profile
             </button>
           </div>
         </form>
       )}
 
-      {/* SECTION: ROOMS (Grouped by Serviced Apartment Section & Hotel Rooms) */}
+      {/* SECTION: ROOMS */}
       {section === 'rooms' && (
         <div className="space-y-6">
           {roomSections.map((sec) => {
@@ -951,103 +2436,456 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         </div>
       )}
 
-      {/* SECTION: RESERVATIONS & FRONT DESK */}
-      {(section === 'reservations' || section === 'front_desk') && (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
-                  <th className="py-3 px-4">Booking Ref</th>
-                  <th className="py-3 px-4">Suite</th>
-                  <th className="py-3 px-4">Guest &amp; Channel</th>
-                  <th className="py-3 px-4">Stay Dates</th>
-                  <th className="py-3 px-4 text-right">Room Total</th>
-                  <th className="py-3 px-4 text-right">POS Folio</th>
-                  <th className="py-3 px-4 text-right">Paid</th>
-                  <th className="py-3 px-4 text-right">Balance Due</th>
-                  <th className="py-3 px-4">Status &amp; Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {filteredReservations.map((res) => {
-                  const total = res.roomChargesNgn + res.posChargesNgn;
-                  const balance = Math.max(0, total - res.paidNgn);
+      {/* SECTION: RESERVATION, ARRIVALS, IN-HOUSE, FRONT DESK */}
+      {isStayTableSection && (
+        <div className="space-y-4">
+          {/* Operational Summary Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <p className="text-[11px] font-medium text-slate-500">Total Reservations</p>
+              <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
+                {reservationMetrics.total}
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <p className="text-[11px] font-medium text-slate-500">Confirmed &amp; Pending</p>
+              <p className="font-mono-tabular text-lg font-bold text-blue-700 mt-0.5">
+                {reservationMetrics.confirmed + reservationMetrics.pending}
+                <span className="text-xs font-normal text-slate-500 ml-1.5">
+                  ({reservationMetrics.pending} pending)
+                </span>
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <p className="text-[11px] font-medium text-slate-500">Checked-in</p>
+              <p className="font-mono-tabular text-lg font-bold text-emerald-700 mt-0.5">
+                {reservationMetrics.checked_in}
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <p className="text-[11px] font-medium text-slate-500">Payments Received</p>
+              <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
+                {formatNgn(reservationMetrics.totalPaid)}
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 col-span-2 sm:col-span-1">
+              <p className="text-[11px] font-medium text-slate-500">Outstanding Balance</p>
+              <p className="font-mono-tabular text-lg font-bold text-amber-700 mt-0.5">
+                {formatNgn(reservationMetrics.totalBalance)}
+              </p>
+            </div>
+          </div>
+
+          {/* Interactive Stay Workflow & Filters Bar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection?.('reservations')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    section === 'reservations'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <span>1. {cms.pages.reservations.navLabel || 'Reservations'}</span>
+                </button>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection?.('arrivals')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    section === 'arrivals'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <PlaneLanding className="w-3.5 h-3.5" />
+                  <span>2. Arrivals</span>
+                </button>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection?.('in_house')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    section === 'in_house'
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <DoorOpen className="w-3.5 h-3.5" />
+                  <span>3. In-House</span>
+                </button>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection?.('front_desk')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    section === 'front_desk'
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <BookOpenCheck className="w-3.5 h-3.5" />
+                  <span>4. Front Desk &amp; Folio</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstActive = filteredReservations[0] || reservations[0];
+                    if (firstActive) {
+                      onSelectReservation?.(firstActive.id);
+                    } else {
+                      onNotify('Select or create a reservation to open its Guest Folio.');
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>Open Active Folio</span>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  aria-label="Filter by Booking Source"
+                  value={filterChannel}
+                  onChange={(e) => setFilterChannel(e.target.value)}
+                  className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 font-medium"
+                >
+                  <option value="ALL">All Booking Sources</option>
+                  {PRIMARY_BOOKING_SOURCES.map((src) => (
+                    <option key={src.value} value={src.value}>
+                      {src.label}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="inline-flex items-center gap-0.5 p-0.5 bg-slate-100 rounded-lg">
+                  {(['all', 'Paid', 'Partial', 'Unpaid'] as const).map((payKey) => (
+                    <button
+                      key={payKey}
+                      type="button"
+                      onClick={() => setFilterPaymentStatus(payKey)}
+                      className={`px-2.5 py-1 rounded-md font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                        filterPaymentStatus === payKey
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {payKey === 'all' ? 'All Payments' : payKey}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {section === 'reservations' && (
+              <div className="flex flex-wrap items-center gap-1 pt-2 border-t border-slate-100 text-xs">
+                {(
+                  [
+                    'all',
+                    'confirmed',
+                    'pending',
+                    'checked_in',
+                    'checked_out',
+                    'cancelled',
+                    'no_show',
+                  ] as const
+                ).map((statusKey) => {
+                  const count =
+                    statusKey === 'all'
+                      ? reservationMetrics.total
+                      : reservationMetrics[statusKey] || 0;
                   return (
-                    <tr key={res.id} className="hover:bg-slate-50">
-                      <td className="py-3 px-4 font-mono-tabular font-semibold text-slate-900">
-                        {res.bookingRef}
-                      </td>
-                      <td className="py-3 px-4 font-mono-tabular text-slate-800">
-                        {res.roomNumber}
-                      </td>
-                      <td className="py-3 px-4">
-                        <p className="font-semibold text-slate-900">{res.guestName}</p>
-                        <p className="text-[11px] text-slate-500">
-                          {res.channel} · {res.guestPhone}
-                        </p>
-                      </td>
-                      <td className="py-3 px-4 font-mono-tabular text-slate-600">
-                        {res.checkInDate} → {res.checkOutDate} ({res.nights}n)
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular text-slate-900">
-                        {formatNgn(res.roomChargesNgn)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular text-slate-700">
-                        {formatNgn(res.posChargesNgn)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular text-emerald-700">
-                        {formatNgn(res.paidNgn)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono-tabular font-bold text-slate-900">
-                        {formatNgn(balance)}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          {res.status === 'confirmed' && (
-                            <button
-                              type="button"
-                              disabled={busyId === res.id}
-                              onClick={() => handleCheckIn(res)}
-                              className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium whitespace-nowrap cursor-pointer"
-                            >
-                              Check In
-                            </button>
-                          )}
-                          {res.status === 'checked_in' && (
-                            <button
-                              type="button"
-                              disabled={busyId === res.id}
-                              onClick={() => setCheckoutTarget(res)}
-                              className="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-white font-medium whitespace-nowrap cursor-pointer"
-                            >
-                              Settle &amp; Check Out
-                            </button>
-                          )}
-                          {(res.status === 'checked_out' || res.status === 'cancelled') && (
-                            <span className="text-slate-500 capitalize">
-                              {res.status.replace('_', ' ')}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                    <button
+                      key={statusKey}
+                      type="button"
+                      onClick={() => setResStatusFilter(statusKey)}
+                      className={`px-2.5 py-1 rounded-md font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                        resStatusFilter === statusKey
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {statusKey === 'all' ? 'All' : RESERVATION_STATUS_LABELS[statusKey]}{' '}
+                      <span className="font-mono-tabular opacity-75">({count})</span>
+                    </button>
                   );
                 })}
-                {filteredReservations.length === 0 && (
-                  <tr>
-                    <td colSpan={9} className="py-10 text-center text-xs text-slate-500">
-                      No matching reservations found.
-                    </td>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[1580px]">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600 whitespace-nowrap">
+                    <th className="py-3 px-3.5">Guest Name</th>
+                    <th className="py-3 px-3.5">Room Number</th>
+                    <th className="py-3 px-3.5">Room Type</th>
+                    <th className="py-3 px-3.5">Check-in</th>
+                    <th className="py-3 px-3.5">Check-out</th>
+                    <th className="py-3 px-3.5 text-center">Nights</th>
+                    <th className="py-3 px-3.5">Adults/Children</th>
+                    <th className="py-3 px-3.5">Booking Source</th>
+                    <th className="py-3 px-3.5 text-right">Total Amount</th>
+                    <th className="py-3 px-3.5 text-right">Amount Paid</th>
+                    <th className="py-3 px-3.5 text-right">Balance</th>
+                    <th className="py-3 px-3.5">Payment Status</th>
+                    <th className="py-3 px-3.5">Reservation Status</th>
+                    <th className="py-3 px-3.5">Date Booked</th>
+                    <th className="py-3 px-3.5 text-right">Actions</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {filteredReservations.map((res) => {
+                    const { totalAmount, amountPaid, balance, paymentStatus } =
+                      getReservationPaymentSummary(res);
+                    const bookedDate = getReservationBookedDate(res);
+                    const adultsCount = res.adults || 1;
+                    const kidsCount = res.children || 0;
+                    const roomDisplay = getReservationRoomDisplay(res, rooms);
+                    const isArrivingToday =
+                      (res.status === 'confirmed' || res.status === 'pending') &&
+                      res.checkInDate <= todayIso;
+                    const isDueOutToday =
+                      res.status === 'checked_in' && res.checkOutDate <= todayIso;
+                    const canCheckIn = res.status === 'confirmed' || res.status === 'pending';
+                    const canCancel =
+                      res.status !== 'cancelled' &&
+                      res.status !== 'checked_out' &&
+                      res.status !== 'no_show';
+
+                    const paymentStatusColor =
+                      paymentStatus === 'Paid'
+                        ? 'text-emerald-700'
+                        : paymentStatus === 'Partial'
+                          ? 'text-amber-700'
+                          : 'text-rose-700';
+
+                    const resStatusColor =
+                      res.status === 'checked_in'
+                        ? 'text-emerald-700'
+                        : res.status === 'confirmed'
+                          ? 'text-blue-700'
+                          : res.status === 'pending'
+                            ? 'text-amber-700'
+                            : res.status === 'cancelled' || res.status === 'no_show'
+                              ? 'text-rose-700'
+                              : 'text-slate-600';
+
+                    return (
+                      <tr
+                        key={res.id}
+                        onClick={() => onSelectReservation?.(res.id)}
+                        className="hover:bg-slate-50/80 cursor-pointer transition-colors"
+                      >
+                        <td className="py-3 px-3.5 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => openGuestByReservation(res)}
+                            className="font-semibold text-slate-900 hover:text-emerald-700 hover:underline text-left cursor-pointer"
+                          >
+                            {res.guestName}
+                          </button>
+                          <p className="text-[11px] text-slate-500 font-mono-tabular">
+                            {res.bookingRef}
+                            {res.guestPhone ? ` · ${res.guestPhone}` : ''}
+                          </p>
+                        </td>
+
+                        <td
+                          className="py-3 px-3.5 whitespace-nowrap"
+                          onClick={(e) => {
+                            if (!roomDisplay.isAssigned) e.stopPropagation();
+                          }}
+                        >
+                          {roomDisplay.isAssigned ? (
+                            <span className="font-mono-tabular font-bold text-emerald-700">
+                              {roomDisplay.roomNumberLabel}
+                            </span>
+                          ) : (
+                            <div className="space-y-0.5">
+                              <span className="block text-[11px] font-semibold text-amber-700">
+                                Unassigned
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onSelectReservation?.(res.id);
+                                  setEditingStayDetails(true);
+                                }}
+                                className="text-[11px] font-semibold text-[#1c46be] hover:underline cursor-pointer"
+                              >
+                                Edit to assign
+                              </button>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-slate-700 whitespace-nowrap">
+                          {roomDisplay.roomTypeLabel}
+                        </td>
+
+                        <td className="py-3 px-3.5 font-mono-tabular text-slate-800 whitespace-nowrap">
+                          <span>{res.checkInDate}</span>
+                          {isArrivingToday && (
+                            <span className="block text-[10px] font-sans font-semibold text-blue-700">
+                              Arriving Today
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-3.5 font-mono-tabular text-slate-800 whitespace-nowrap">
+                          <span>{res.checkOutDate}</span>
+                          {isDueOutToday && (
+                            <span className="block text-[10px] font-sans font-semibold text-amber-700">
+                              Due Out
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-center font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
+                          {res.nights}
+                        </td>
+
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <p className="font-mono-tabular font-medium text-slate-800">
+                            {adultsCount}A / {kidsCount}C
+                          </p>
+                          <p className="text-[11px] text-slate-500">
+                            {adultsCount} Adult{adultsCount !== 1 ? 's' : ''} · {kidsCount} Child
+                            {kidsCount !== 1 ? 'ren' : ''}
+                          </p>
+                        </td>
+
+                        <td className="py-3 px-3.5 text-slate-700 font-medium whitespace-nowrap">
+                          {formatBookingSourceLabel(res.channel)}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
+                          {formatNgn(totalAmount)}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right font-mono-tabular text-emerald-700 whitespace-nowrap">
+                          {formatNgn(amountPaid)}
+                        </td>
+
+                        <td
+                          className={`py-3 px-3.5 text-right font-mono-tabular font-bold whitespace-nowrap ${
+                            balance > 0 ? 'text-rose-700' : 'text-slate-600'
+                          }`}
+                        >
+                          {formatNgn(balance)}
+                        </td>
+
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <span className={`font-semibold ${paymentStatusColor}`}>
+                            {paymentStatus}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <span className={`font-semibold ${resStatusColor}`}>
+                            {RESERVATION_STATUS_LABELS[res.status] || res.status}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-3.5 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {bookedDate}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => onSelectReservation?.(res.id)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>View</span>
+                            </button>
+                            {canCancel && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onSelectReservation?.(res.id);
+                                  setEditingStayDetails(true);
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span>Edit</span>
+                              </button>
+                            )}
+                            {canCheckIn && (
+                              <button
+                                type="button"
+                                disabled={busyId === res.id}
+                                onClick={() => setCheckInTarget(res)}
+                                className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                Check-in
+                              </button>
+                            )}
+                            {res.status === 'checked_in' && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={busyId === res.id}
+                                  onClick={() => openChangeRoomModal(res)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                                >
+                                  <ArrowLeftRight className="w-3 h-3" />
+                                  <span>Room</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyId === res.id}
+                                  onClick={() => setCheckoutTarget(res)}
+                                  className="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-white font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                                >
+                                  Check-out
+                                </button>
+                              </>
+                            )}
+                            {canCancel && (
+                              <button
+                                type="button"
+                                disabled={busyId === res.id}
+                                onClick={() => setCancelTarget(res)}
+                                className="px-2.5 py-1 rounded-md border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredReservations.length === 0 && (
+                    <tr>
+                      <td colSpan={15} className="py-10 text-center text-xs text-slate-500">
+                        {section === 'arrivals'
+                          ? 'No pending arrivals waiting for check-in.'
+                          : section === 'in_house'
+                            ? 'No in-house guests checked in at the moment.'
+                            : 'No matching reservations found.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
-      {/* SECTION: GUEST MANAGEMENT */}
+      {/* SECTION: GUEST PROFILES */}
       {section === 'guests' && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
@@ -1056,15 +2894,21 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
                   <th className="py-3 px-4">Guest Name</th>
                   <th className="py-3 px-4">Contact</th>
+                  <th className="py-3 px-4">City / Country</th>
                   <th className="py-3 px-4">KYC Document</th>
                   <th className="py-3 px-4">VIP Tier</th>
                   <th className="py-3 px-4 text-right">Stays</th>
                   <th className="py-3 px-4 text-right">Lifetime Spend</th>
+                  <th className="py-3 px-4 text-right">Profile</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {filteredGuests.map((g) => (
-                  <tr key={g.id} className="hover:bg-slate-50">
+                  <tr
+                    key={g.id}
+                    onClick={() => openGuestProfileModal(g)}
+                    className="hover:bg-emerald-50/40 cursor-pointer transition-colors"
+                  >
                     <td className="py-3 px-4">
                       <p className="font-semibold text-slate-900">{g.fullName}</p>
                       {g.notes && <p className="text-[11px] text-slate-500">{g.notes}</p>}
@@ -1072,6 +2916,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     <td className="py-3 px-4">
                       <p className="font-mono-tabular text-slate-800">{g.phone}</p>
                       <p className="text-[11px] text-slate-500">{g.email || '—'}</p>
+                    </td>
+                    <td className="py-3 px-4 text-slate-600">
+                      {[g.city, g.nationality].filter(Boolean).join(', ') || '—'}
                     </td>
                     <td className="py-3 px-4 font-mono-tabular text-slate-700">
                       {g.idType} {g.idNumber ? `· ${g.idNumber}` : ''}
@@ -1081,6 +2928,18 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     <td className="py-3 px-4 text-right font-mono-tabular font-semibold text-slate-900">
                       {formatNgn(g.lifetimeSpendNgn)}
                     </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openGuestProfileModal(g);
+                        }}
+                        className="px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700 cursor-pointer"
+                      >
+                        View Profile
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1089,7 +2948,275 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         </div>
       )}
 
-      {/* Room Management Modal (Property Admin & Super Admin) */}
+      {/* GUEST PROFILE MODAL */}
+      {selectedGuest && (
+        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-5 my-8">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-display font-bold text-base flex items-center justify-center shrink-0">
+                  {selectedGuest.fullName
+                    .split(/\s+/)
+                    .slice(0, 2)
+                    .map((n) => n[0]?.toUpperCase() || '')
+                    .join('')}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-display text-lg font-bold text-slate-900">
+                      {selectedGuest.fullName}
+                    </h3>
+                    <span className="text-xs font-semibold text-emerald-700">
+                      · {selectedGuest.vipTier}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 font-mono-tabular">
+                    {selectedGuest.totalStays} stay(s) · Lifetime Spend{' '}
+                    {formatNgn(selectedGuest.lifetimeSpendNgn)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingGuestMode((v) => !v)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer"
+                >
+                  <Pencil className="w-3 h-3" />
+                  <span>{editingGuestMode ? 'Cancel Edit' : 'Edit Profile'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedGuestId(null)}
+                  className="text-slate-400 hover:text-slate-700 cursor-pointer p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {editingGuestMode ? (
+              <form onSubmit={handleSaveGuestProfile} className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Full Name</label>
+                    <input
+                      required
+                      type="text"
+                      value={editGuestName}
+                      onChange={(e) => setEditGuestName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                    <input
+                      required
+                      type="text"
+                      value={editGuestPhone}
+                      onChange={(e) => setEditGuestPhone(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={editGuestEmail}
+                      onChange={(e) => setEditGuestEmail(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">VIP Tier</label>
+                    <select
+                      value={editGuestVip}
+                      onChange={(e) => setEditGuestVip(e.target.value as GuestRecord['vipTier'])}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                    >
+                      <option value="Standard">Standard</option>
+                      <option value="Silver">Silver</option>
+                      <option value="Gold">Gold</option>
+                      <option value="Diplomatic">Diplomatic</option>
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block font-medium text-slate-700 mb-1">Address</label>
+                    <input
+                      type="text"
+                      value={editGuestAddress}
+                      onChange={(e) => setEditGuestAddress(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">City</label>
+                    <input
+                      type="text"
+                      value={editGuestCity}
+                      onChange={(e) => setEditGuestCity(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Country / Nationality</label>
+                    <input
+                      type="text"
+                      value={editGuestNationality}
+                      onChange={(e) => setEditGuestNationality(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">ID Type</label>
+                    <select
+                      value={editGuestIdType}
+                      onChange={(e) => setEditGuestIdType(e.target.value as GuestRecord['idType'])}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                    >
+                      <option value="NIN">NIN</option>
+                      <option value="International Passport">International Passport</option>
+                      <option value="Driver License">Driver License</option>
+                      <option value="Voter Card">Voter Card</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">ID Number</label>
+                    <input
+                      type="text"
+                      value={editGuestIdNumber}
+                      onChange={(e) => setEditGuestIdNumber(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block font-medium text-slate-700 mb-1">Guest Preferences / Notes</label>
+                    <textarea
+                      rows={2}
+                      value={editGuestNotes}
+                      onChange={(e) => setEditGuestNotes(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="submit"
+                    disabled={busyId === `guest-${selectedGuest.id}`}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Save Guest Changes</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <div className="space-y-1.5">
+                  <p className="flex items-center gap-2 text-slate-700">
+                    <Phone className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="font-mono-tabular">{selectedGuest.phone}</span>
+                  </p>
+                  <p className="flex items-center gap-2 text-slate-700">
+                    <Mail className="w-3.5 h-3.5 text-slate-400" />
+                    <span>{selectedGuest.email || 'No email recorded'}</span>
+                  </p>
+                  <p className="flex items-start gap-2 text-slate-700">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                    <span>
+                      {[selectedGuest.address, selectedGuest.city, selectedGuest.nationality]
+                        .filter(Boolean)
+                        .join(', ') || 'No address recorded'}
+                    </span>
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-slate-700">
+                    <span className="text-slate-500">KYC ID:</span>{' '}
+                    <span className="font-mono-tabular font-semibold">
+                      {selectedGuest.idType}{' '}
+                      {selectedGuest.idNumber ? `· ${selectedGuest.idNumber}` : '(Not provided)'}
+                    </span>
+                  </p>
+                  <p className="text-slate-700">
+                    <span className="text-slate-500">Notes:</span>{' '}
+                    <span>{selectedGuest.notes || 'None'}</span>
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Stay & Folio History for Guest */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="font-display text-xs font-bold text-slate-900">
+                  Stay &amp; Folio History
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGuestName(selectedGuest.fullName);
+                    setGuestPhone(selectedGuest.phone);
+                    setGuestEmail(selectedGuest.email || '');
+                    setSelectedGuestId(null);
+                    setShowBookingForm(true);
+                    onNavigateSection?.('reservations');
+                  }}
+                  className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+                >
+                  + New Reservation for Guest
+                </button>
+              </div>
+              <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 text-xs">
+                {reservations
+                  .filter(
+                    (r) =>
+                      r.guestId === selectedGuest.id ||
+                      r.guestName.toLowerCase() === selectedGuest.fullName.toLowerCase()
+                  )
+                  .map((r) => (
+                    <div
+                      key={r.id}
+                      onClick={() => {
+                        setSelectedGuestId(null);
+                        onSelectReservation?.(r.id);
+                      }}
+                      className="px-4 py-2.5 flex items-center justify-between hover:bg-emerald-50/40 cursor-pointer"
+                    >
+                      <div>
+                        <p className="font-mono-tabular font-semibold text-slate-900">
+                          {r.bookingRef} · {r.roomNumber}
+                        </p>
+                        <p className="font-mono-tabular text-[11px] text-slate-500">
+                          {r.checkInDate} → {r.checkOutDate} ({r.nights}n) · {r.channel}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-mono-tabular font-semibold text-slate-900">
+                          {formatNgn(r.roomChargesNgn + r.posChargesNgn)}
+                        </p>
+                        <p className="text-[11px] text-emerald-700 capitalize">
+                          {r.status.replace('_', ' ')} · Open Folio →
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                {reservations.filter(
+                  (r) =>
+                    r.guestId === selectedGuest.id ||
+                    r.guestName.toLowerCase() === selectedGuest.fullName.toLowerCase()
+                ).length === 0 && (
+                  <p className="px-4 py-5 text-center text-slate-500">
+                    No reservations linked to this guest yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Room Management Modal */}
       {editingRoom && canManageRooms && (
         <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
           <form
@@ -1145,7 +3272,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   required
                   value={draftRoomType}
                   onChange={(e) => setDraftRoomType(e.target.value)}
-                  placeholder="e.g. Deluxe Studio with Kitchenette"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2"
                 />
               </div>
@@ -1224,7 +3350,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               </div>
             </div>
 
-            {/* Room Photo Upload & Richgates Gallery Selector */}
             <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-semibold text-slate-800">Suite Photography</span>
@@ -1320,6 +3445,827 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         </div>
       )}
 
+      {/* ADD NEW ROOM MODAL (Enforces 20-Room License Maximum for Richgates) */}
+      {showAddRoomModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={handleCreateNewRoom}
+            className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-5 my-8"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Add New Room
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Create a new suite with room code, section, room type, and nightly Naira rate
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddRoomModal(false)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {addRoomError && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+                {addRoomError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Room Code</label>
+                <input
+                  type="text"
+                  required
+                  value={newRoomNumber}
+                  onChange={(e) => setNewRoomNumber(e.target.value)}
+                  placeholder="e.g. RM-9"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular uppercase"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Property Section</label>
+                <select
+                  value={newRoomSection}
+                  onChange={(e) => setNewRoomSection(e.target.value as RoomSection)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  <option value="Serviced Apartment">Serviced Apartment Section</option>
+                  <option value="Hotel Rooms">Hotel Rooms</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Room Type</label>
+                <input
+                  type="text"
+                  required
+                  value={newRoomType}
+                  onChange={(e) => setNewRoomType(e.target.value)}
+                  placeholder="e.g. Deluxe Studio with Kitchenette"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Suite Display Title</label>
+                <input
+                  type="text"
+                  required
+                  value={newRoomName}
+                  onChange={(e) => setNewRoomName(e.target.value)}
+                  placeholder="e.g. Garden View Studio 9"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">
+                  Nightly Rate (₦ NGN)
+                </label>
+                <input
+                  type="number"
+                  min={5000}
+                  step={500}
+                  required
+                  value={newRoomRateNgn}
+                  onChange={(e) => setNewRoomRateNgn(Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Max Guests</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    required
+                    value={newRoomMaxGuests}
+                    onChange={(e) => setNewRoomMaxGuests(Number(e.target.value))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Floor</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    required
+                    value={newRoomFloor}
+                    onChange={(e) => setNewRoomFloor(Number(e.target.value))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block font-medium text-slate-700 mb-1">
+                  Amenities (comma-separated)
+                </label>
+                <input
+                  type="text"
+                  value={newRoomAmenitiesText}
+                  onChange={(e) => setNewRoomAmenitiesText(e.target.value)}
+                  placeholder="King Bed, Wi-Fi, Kitchenette, Smart TV, 24/7 Power"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-slate-800">Suite Photography</span>
+                <div>
+                  <input
+                    ref={addRoomFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAddRoomImageSelect}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => addRoomFileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
+                  >
+                    <ImagePlus className="w-3.5 h-3.5" />
+                    <span>Upload Photo</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+                <div className="sm:col-span-5 h-28 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+                  <img
+                    src={newRoomImageUrl || DEFAULT_SUITE_IMAGE}
+                    alt="New Suite Preview"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
+                    }}
+                  />
+                </div>
+                <div className="sm:col-span-7 space-y-2">
+                  <div className="grid grid-cols-5 gap-2">
+                    {RICHGATES_GALLERY_ASSETS.map((asset) => (
+                      <button
+                        key={asset.id}
+                        type="button"
+                        onClick={() => setNewRoomImageUrl(asset.url)}
+                        title={asset.label}
+                        className={`h-11 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                          newRoomImageUrl === asset.url
+                            ? 'border-emerald-600 ring-2 ring-emerald-200'
+                            : 'border-slate-200 hover:border-slate-400'
+                        }`}
+                      >
+                        <img
+                          src={asset.url}
+                          alt={asset.label}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    value={
+                      newRoomImageUrl.startsWith('data:')
+                        ? '[Uploaded Device Photo]'
+                        : newRoomImageUrl
+                    }
+                    onChange={(e) => setNewRoomImageUrl(e.target.value)}
+                    placeholder="Or paste custom photo URL..."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowAddRoomModal(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busyId === 'add-room' || atRoomCapacity}
+                className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
+              >
+                {busyId === 'add-room' ? 'Adding Room...' : 'Create Room'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Guest Folio & Stay Flow Modal */}
+      {activeFolioReservation && (
+        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-5 my-8">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span className="font-mono-tabular font-bold text-slate-900">
+                    {activeFolioReservation.bookingRef}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono-tabular font-semibold text-emerald-700">
+                    {getReservationRoomDisplay(activeFolioReservation, rooms).roomNumberLabel}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    {getReservationRoomDisplay(activeFolioReservation, rooms).roomTypeLabel}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>{formatBookingSourceLabel(activeFolioReservation.channel)}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono-tabular">
+                    Booked {getReservationBookedDate(activeFolioReservation)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  <h3 className="font-display text-lg font-bold text-slate-900">
+                    Reservation &amp; Folio — {activeFolioReservation.guestName}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = activeFolioReservation;
+                      onSelectReservation?.(null);
+                      openGuestByReservation(target);
+                    }}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+                  >
+                    <UserCircle2 className="w-3.5 h-3.5" />
+                    <span>View Guest Profile</span>
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onSelectReservation?.(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Stay Lifecycle Indicator */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+              {[
+                { label: '1. Reservation Booked', active: true },
+                {
+                  label:
+                    activeFolioReservation.status === 'pending'
+                      ? '2. Awaiting Confirmation'
+                      : '2. Confirmed',
+                  active: activeFolioReservation.status !== 'pending',
+                },
+                {
+                  label: '3. Checked-in / Folio',
+                  active:
+                    activeFolioReservation.status === 'checked_in' ||
+                    activeFolioReservation.status === 'checked_out',
+                },
+                {
+                  label: '4. Checked-out & Settled',
+                  active: activeFolioReservation.status === 'checked_out',
+                },
+              ].map((step) => (
+                <div
+                  key={step.label}
+                  className={`px-3 py-2 rounded-lg border font-semibold ${
+                    step.active
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-500'
+                  }`}
+                >
+                  {step.label}
+                </div>
+              ))}
+            </div>
+
+            {/* Stay Summary & Full Reservation Editor */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
+                <div className="space-y-0.5">
+                  <span className="font-mono-tabular text-slate-700 block">
+                    Stay: <strong>{activeFolioReservation.checkInDate}</strong> →{' '}
+                    <strong>{activeFolioReservation.checkOutDate}</strong> (
+                    {activeFolioReservation.nights} nights @{' '}
+                    {formatNgn(activeFolioReservation.nightlyRateNgn)}/nt)
+                  </span>
+                  <span className="text-[11px] text-slate-500 block">
+                    Guests:{' '}
+                    <strong className="text-slate-700 font-mono-tabular">
+                      {activeFolioReservation.adults} Adult
+                      {activeFolioReservation.adults !== 1 ? 's' : ''},{' '}
+                      {activeFolioReservation.children || 0} Child
+                      {(activeFolioReservation.children || 0) !== 1 ? 'ren' : ''}
+                    </strong>{' '}
+                    · Source:{' '}
+                    <strong className="text-slate-700">
+                      {formatBookingSourceLabel(activeFolioReservation.channel)}
+                    </strong>{' '}
+                    · Payment:{' '}
+                    <strong className="text-slate-900">
+                      {getReservationPaymentSummary(activeFolioReservation).paymentStatus}
+                    </strong>
+                    {activeFolioReservation.paymentConfirmed && ' · Payment Verified'}
+                    {activeFolioReservation.idVerified &&
+                      ` · ID Verified (${activeFolioReservation.idType || 'KYC'})`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  {activeFolioReservation.status !== 'checked_out' &&
+                    activeFolioReservation.status !== 'cancelled' &&
+                    activeFolioReservation.status !== 'no_show' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingStayDetails((v) => !v);
+                          setEditStayError(null);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-100 rounded-md text-[11px] font-semibold text-slate-700 cursor-pointer"
+                      >
+                        <Pencil className="w-3 h-3" />
+                        <span>{editingStayDetails ? 'Close Editor' : 'Edit Reservation'}</span>
+                      </button>
+                    )}
+                  <span className="font-semibold text-emerald-700">
+                    Status: {RESERVATION_STATUS_LABELS[activeFolioReservation.status]}
+                  </span>
+                </div>
+              </div>
+
+              {editingStayDetails && (
+                <div className="bg-white border border-emerald-200 rounded-lg p-3.5 space-y-3">
+                  {editStayError && (
+                    <p className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-[11px]">
+                      {editStayError}
+                    </p>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Guest Name</label>
+                      <input
+                        type="text"
+                        value={editGuestNameRes}
+                        onChange={(e) => setEditGuestNameRes(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Guest Phone</label>
+                      <input
+                        type="text"
+                        value={editGuestPhoneRes}
+                        onChange={(e) => setEditGuestPhoneRes(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Suite / Room</label>
+                      <select
+                        value={editRoomId}
+                        onChange={(e) => {
+                          const nextId = e.target.value;
+                          const matchedRoom = rooms.find((r) => r.id === nextId);
+                          setEditRoomId(nextId);
+                          if (matchedRoom) setEditRequestedRoomType(matchedRoom.roomType);
+                          setEditStayError(null);
+                        }}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                      >
+                        <option value="">Unassigned — Assign later</option>
+                        {sortedRooms.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {editRoomId === '' && (
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">
+                          Requested Room Type
+                        </label>
+                        <select
+                          value={editRequestedRoomType}
+                          onChange={(e) => setEditRequestedRoomType(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                        >
+                          {uniqueRoomTypes.map((rt) => (
+                            <option key={rt} value={rt}>
+                              {rt}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Check-In Date</label>
+                      <input
+                        type="date"
+                        value={editCheckInDate}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditCheckInDate(val);
+                          if (val && editCheckOutDate <= val) {
+                            setEditCheckOutDate(addDaysIso(val, 1));
+                          }
+                          setEditStayError(null);
+                        }}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Check-Out Date</label>
+                      <input
+                        type="date"
+                        min={editCheckInDate ? addDaysIso(editCheckInDate, 1) : undefined}
+                        value={editCheckOutDate}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          const safeOut =
+                            editCheckInDate && raw && raw <= editCheckInDate
+                              ? addDaysIso(editCheckInDate, 1)
+                              : raw;
+                          setEditCheckOutDate(safeOut);
+                          setEditStayError(null);
+                        }}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Adults / Children
+                      </label>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          value={editAdults}
+                          onChange={(e) => setEditAdults(Math.max(1, Number(e.target.value)))}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 font-mono-tabular"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          value={editChildren}
+                          onChange={(e) => setEditChildren(Math.max(0, Number(e.target.value)))}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 font-mono-tabular"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Booking Source</label>
+                      <select
+                        value={editChannel}
+                        onChange={(e) =>
+                          setEditChannel(e.target.value as ReservationRecord['channel'])
+                        }
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                      >
+                        {PRIMARY_BOOKING_SOURCES.map((src) => (
+                          <option key={src.value} value={src.value}>
+                            {src.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Reservation Status
+                      </label>
+                      <select
+                        value={editStatus}
+                        onChange={(e) => setEditStatus(e.target.value as ReservationStatus)}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                      >
+                        <option value="confirmed">Confirmed</option>
+                        <option value="pending">Pending</option>
+                        <option value="checked_in">Checked-in</option>
+                        <option value="checked_out">Checked-out</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="no_show">No-show</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Payment Method</label>
+                      <select
+                        value={editPaymentMethodRes}
+                        onChange={(e) =>
+                          setEditPaymentMethodRes(
+                            e.target.value as ReservationRecord['paymentMethod']
+                          )
+                        }
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                      >
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Card POS">Card POS</option>
+                        <option value="Cash NGN">Cash NGN</option>
+                        <option value="Corporate Invoice">Corporate Invoice</option>
+                        <option value="Online Gateway">Online Gateway</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-500 font-mono-tabular">
+                      Updated Stay: {diffNights(editCheckInDate, editCheckOutDate)} night(s) ·{' '}
+                      {formatNgn(
+                        (rooms.find((r) => r.id === editRoomId)?.nightlyRateNgn ||
+                          activeFolioReservation.nightlyRateNgn) *
+                          diffNights(editCheckInDate, editCheckOutDate)
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busyId === `stay-${activeFolioReservation.id}`}
+                      onClick={() => handleSaveStayDetails(activeFolioReservation)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      <Save className="w-3 h-3" />
+                      <span>Save Reservation Changes</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-between">
+                <span className="text-slate-600">
+                  Room Accommodation ({activeFolioReservation.nights} nights)
+                </span>
+                <span className="font-mono-tabular font-semibold text-slate-900">
+                  {formatNgn(activeFolioReservation.roomChargesNgn)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-600">Restaurant POS / Misc Folio Charges</span>
+                <span className="font-mono-tabular font-semibold text-slate-900">
+                  {formatNgn(activeFolioReservation.posChargesNgn)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-600">Total Amount</span>
+                <span className="font-mono-tabular font-bold text-slate-900">
+                  {formatNgn(getReservationPaymentSummary(activeFolioReservation).totalAmount)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-600">Amount Paid</span>
+                <span className="font-mono-tabular font-semibold text-emerald-700">
+                  -{formatNgn(activeFolioReservation.paidNgn)}
+                </span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-slate-900">
+                <span>
+                  Balance ({getReservationPaymentSummary(activeFolioReservation).paymentStatus})
+                </span>
+                <span className="font-mono-tabular">
+                  {formatNgn(getReservationPaymentSummary(activeFolioReservation).balance)}
+                </span>
+              </div>
+              {cms.brand.folioFooterNote && (
+                <p className="text-[11px] text-slate-500 pt-1">
+                  {cms.brand.folioFooterNote}
+                </p>
+              )}
+            </div>
+
+            {activeFolioReservation.status !== 'checked_out' &&
+              activeFolioReservation.status !== 'cancelled' &&
+              activeFolioReservation.status !== 'no_show' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                    <p className="font-semibold text-slate-900">Post Payment to Folio (₦)</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        min={500}
+                        step={500}
+                        value={folioPayAmount}
+                        onChange={(e) => setFolioPayAmount(Number(e.target.value))}
+                        className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                      />
+                      <select
+                        value={folioPayMethod}
+                        onChange={(e) =>
+                          setFolioPayMethod(e.target.value as ReservationRecord['paymentMethod'])
+                        }
+                        className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                      >
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Card POS">Card POS</option>
+                        <option value="Cash NGN">Cash NGN</option>
+                        <option value="Corporate Invoice">Corporate Invoice</option>
+                        <option value="Online Gateway">Online Gateway</option>
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busyId === activeFolioReservation.id || folioPayAmount <= 0}
+                      onClick={async () => {
+                        setBusyId(activeFolioReservation.id);
+                        try {
+                          await recordReservationFolioPayment({
+                            property,
+                            reservation: activeFolioReservation,
+                            amountNgn: folioPayAmount,
+                            paymentMethod: folioPayMethod,
+                            actorRole,
+                          });
+                          onNotify(
+                            `Posted ${formatNgn(folioPayAmount)} to ${activeFolioReservation.bookingRef}`
+                          );
+                        } finally {
+                          setBusyId(null);
+                        }
+                      }}
+                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      Post Payment
+                    </button>
+                  </div>
+
+                  <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                    <p className="font-semibold text-slate-900">Add Folio / Extra Service Charge</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={miscChargeDesc}
+                        onChange={(e) => setMiscChargeDesc(e.target.value)}
+                        placeholder="Service label"
+                        className="border border-slate-200 rounded-lg px-2.5 py-1.5"
+                      />
+                      <input
+                        type="number"
+                        min={500}
+                        step={500}
+                        value={miscChargeAmount}
+                        onChange={(e) => setMiscChargeAmount(Number(e.target.value))}
+                        className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busyId === activeFolioReservation.id || miscChargeAmount <= 0}
+                      onClick={async () => {
+                        setBusyId(activeFolioReservation.id);
+                        try {
+                          await addMiscFolioCharge({
+                            property,
+                            reservation: activeFolioReservation,
+                            amountNgn: miscChargeAmount,
+                            description: miscChargeDesc.trim() || 'Extra Service Charge',
+                            actorRole,
+                          });
+                          onNotify(
+                            `Added ${formatNgn(miscChargeAmount)} charge to ${activeFolioReservation.bookingRef}`
+                          );
+                        } finally {
+                          setBusyId(null);
+                        }
+                      }}
+                      className="w-full py-1.5 border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-semibold rounded-lg cursor-pointer"
+                    >
+                      Add Charge to Folio
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                {activeFolioReservation.status !== 'checked_out' &&
+                  activeFolioReservation.status !== 'cancelled' &&
+                  activeFolioReservation.status !== 'no_show' && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busyId === activeFolioReservation.id}
+                        onClick={async () => {
+                          setBusyId(activeFolioReservation.id);
+                          try {
+                            await extendReservationStay({
+                              property,
+                              reservation: activeFolioReservation,
+                              extraNights: 1,
+                              actorRole,
+                            });
+                            onNotify(
+                              `Extended ${activeFolioReservation.bookingRef} by +1 night`
+                            );
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg cursor-pointer"
+                      >
+                        <CalendarPlus className="w-3.5 h-3.5" />
+                        <span>Extend +1 Night</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelectReservation?.(null);
+                          onNavigateSection?.('pos_kitchen');
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg cursor-pointer"
+                      >
+                        <ChefHat className="w-3.5 h-3.5" />
+                        <span>Order Restaurant POS</span>
+                      </button>
+                    </>
+                  )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {(activeFolioReservation.status === 'confirmed' ||
+                  activeFolioReservation.status === 'pending') && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busyId === activeFolioReservation.id}
+                      onClick={() => {
+                        const target = activeFolioReservation;
+                        onSelectReservation?.(null);
+                        setCancelTarget(target);
+                      }}
+                      className="px-3 py-2 border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg cursor-pointer"
+                    >
+                      Cancel Booking
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === activeFolioReservation.id}
+                      onClick={() => {
+                        const target = activeFolioReservation;
+                        onSelectReservation?.(null);
+                        setCheckInTarget(target);
+                      }}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      Check In Guest Now
+                    </button>
+                  </>
+                )}
+
+                {activeFolioReservation.status === 'checked_in' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = activeFolioReservation;
+                        onSelectReservation?.(null);
+                        openChangeRoomModal(target);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded-lg cursor-pointer"
+                    >
+                      <ArrowLeftRight className="w-3.5 h-3.5" />
+                      <span>Change Room</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = activeFolioReservation;
+                        onSelectReservation?.(null);
+                        setCheckoutTarget(target);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Settle &amp; Check Out</span>
+                    </button>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => onSelectReservation?.(null)}
+                  className="px-3.5 py-2 text-slate-600 hover:text-slate-900 font-medium cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Checkout Settlement Modal */}
       {checkoutTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-4">
@@ -1396,7 +4342,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 type="button"
                 disabled={busyId === checkoutTarget.id}
                 onClick={handleConfirmCheckout}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Complete Check-Out &amp; Post Ledger</span>
@@ -1404,6 +4350,239 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* In-House Change Room Modal */}
+      {changeRoomTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleConfirmChangeRoom}
+            className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4 text-xs"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Change In-House Guest Room
+                </h3>
+                <p className="text-slate-500 mt-0.5">
+                  {changeRoomTarget.bookingRef} · {changeRoomTarget.guestName} (Currently{' '}
+                  <strong className="font-mono-tabular text-slate-800">
+                    {changeRoomTarget.roomNumber}
+                  </strong>
+                  )
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setChangeRoomTarget(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {changeRoomError && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700">
+                {changeRoomError}
+              </div>
+            )}
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Move Guest to Vacant Suite *
+              </label>
+              <select
+                required
+                value={changeRoomNewId}
+                onChange={(e) => {
+                  setChangeRoomNewId(e.target.value);
+                  setChangeRoomError(null);
+                }}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              >
+                {sortedRooms.filter(
+                  (r) => r.id !== changeRoomTarget.roomId && r.occupancyStatus === 'vacant'
+                ).length === 0 ? (
+                  <option value="">No vacant suites available right now</option>
+                ) : (
+                  sortedRooms
+                    .filter(
+                      (r) => r.id !== changeRoomTarget.roomId && r.occupancyStatus === 'vacant'
+                    )
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}/nt) — HK:{' '}
+                        {r.housekeepingStatus}
+                      </option>
+                    ))
+                )}
+              </select>
+            </div>
+
+            <label className="flex items-start gap-2.5 p-3 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={changeRoomAdjustRate}
+                onChange={(e) => setChangeRoomAdjustRate(e.target.checked)}
+                className="mt-0.5 rounded border-slate-300 text-emerald-600"
+              />
+              <span>
+                <strong className="block text-slate-900">
+                  Update nightly rate to new suite&apos;s rate
+                </strong>
+                <span className="text-[11px] text-slate-500">
+                  Uncheck to keep the original rate of {formatNgn(changeRoomTarget.nightlyRateNgn)}
+                  /night (complimentary upgrade or same-rate move)
+                </span>
+              </span>
+            </label>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Reason for Room Change (Optional)
+              </label>
+              <input
+                type="text"
+                value={changeRoomReason}
+                onChange={(e) => setChangeRoomReason(e.target.value)}
+                placeholder="e.g. Guest requested kitchenette, AC maintenance..."
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setChangeRoomTarget(null)}
+                className="px-4 py-2 text-slate-600 hover:text-slate-900 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!changeRoomNewId || busyId === `moveroom-${changeRoomTarget.id}`}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <span>
+                  {busyId === `moveroom-${changeRoomTarget.id}`
+                    ? 'Moving Guest...'
+                    : 'Confirm Room Change'}
+                </span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {cancelTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4 text-xs">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Ban className="w-4 h-4 text-rose-600" />
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Cancel or Mark No-Show
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCancelTarget(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-slate-600 leading-relaxed">
+              Update reservation{' '}
+              <strong className="font-mono-tabular text-slate-900">
+                {cancelTarget.bookingRef}
+              </strong>{' '}
+              for <strong className="text-slate-900">{cancelTarget.guestName}</strong> (Suite{' '}
+              <strong className="font-mono-tabular">
+                {getReservationRoomDisplay(cancelTarget, rooms).roomNumberLabel}
+              </strong>
+              , {cancelTarget.checkInDate} → {cancelTarget.checkOutDate}). This will release the
+              suite back to available inventory.
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCancelTarget(null)}
+                className="px-3.5 py-2 text-slate-600 hover:text-slate-900 font-medium cursor-pointer"
+              >
+                Keep Booking
+              </button>
+              <button
+                type="button"
+                disabled={busyId === cancelTarget.id}
+                onClick={async () => {
+                  const target = cancelTarget;
+                  setBusyId(target.id);
+                  try {
+                    await transitionReservationStatus({
+                      property,
+                      reservation: target,
+                      room: rooms.find((r) => r.id === target.roomId),
+                      nextStatus: 'no_show',
+                      actorRole,
+                    });
+                    onNotify(`Marked ${target.bookingRef} as No-show`);
+                    setCancelTarget(null);
+                  } finally {
+                    setBusyId(null);
+                  }
+                }}
+                className="px-3.5 py-2 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold rounded-lg cursor-pointer"
+              >
+                Mark No-show
+              </button>
+              <button
+                type="button"
+                disabled={busyId === cancelTarget.id}
+                onClick={async () => {
+                  const target = cancelTarget;
+                  setBusyId(target.id);
+                  try {
+                    await transitionReservationStatus({
+                      property,
+                      reservation: target,
+                      room: rooms.find((r) => r.id === target.roomId),
+                      nextStatus: 'cancelled',
+                      actorRole,
+                    });
+                    onNotify(`Cancelled ${target.bookingRef}`);
+                    setCancelTarget(null);
+                  } finally {
+                    setBusyId(null);
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg cursor-pointer"
+              >
+                Confirm Cancellation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {checkInTarget && (
+        <CheckInProcessModal
+          property={property}
+          reservation={checkInTarget}
+          room={rooms.find((r) => r.id === checkInTarget.roomId)}
+          rooms={rooms}
+          guest={
+            guests.find((g) => g.id === checkInTarget.guestId) ||
+            guests.find((g) => g.fullName.toLowerCase() === checkInTarget.guestName.toLowerCase())
+          }
+          actorRole={actorRole}
+          onClose={() => setCheckInTarget(null)}
+          onCompleted={(info) => {
+            onNotify(`Verified & checked in ${info.guestName} into ${info.roomNumber}`);
+            onGuestCheckedIn?.(info);
+          }}
+        />
       )}
     </div>
   );

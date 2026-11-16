@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BedDouble,
   BookOpenCheck,
@@ -10,21 +10,30 @@ import {
   Clock,
   CloudUpload,
   CreditCard,
+  DoorOpen,
+  FileEdit,
   FileSpreadsheet,
   Globe,
   KeyRound,
   LayoutDashboard,
+  LifeBuoy,
   Link2,
   LogOut,
+  Mail,
   Package,
+  PlaneLanding,
   Shield,
+  ShieldCheck,
   ShoppingCart,
   Sparkles,
+  UserCheck,
+  UserCircle2,
   Users,
   Wallet,
   Wrench,
   X,
 } from 'lucide-react';
+import { useCms } from '../context/CmsContext';
 import {
   NavSectionId,
   PortalMode,
@@ -48,6 +57,7 @@ interface SidebarProps {
   onCloseMobile: () => void;
   onOpenPortalLinksModal: () => void;
   onSignOut: () => void;
+  unreadMessageCount?: number;
 }
 
 const NAV_GROUPS: Array<{
@@ -61,13 +71,17 @@ const NAV_GROUPS: Array<{
   {
     group: 'Operations',
     items: [
-      { id: 'dashboard', label: 'Management Dashboard', icon: LayoutDashboard },
-      { id: 'rooms', label: 'Rooms & Rates', icon: BedDouble },
-      { id: 'calendar', label: 'Calendar & Blocks', icon: Calendar },
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'reservations', label: 'Reservations', icon: CalendarCheck2 },
+      { id: 'calendar', label: 'Calendar & Blocks', icon: Calendar },
+      { id: 'arrivals', label: 'Arrivals', icon: PlaneLanding },
+      { id: 'in_house', label: 'In-House', icon: DoorOpen },
+      { id: 'walk_in', label: 'Walk-in Check-in', icon: UserCheck },
       { id: 'front_desk', label: 'Front Desk & Folios', icon: BookOpenCheck },
-      { id: 'guests', label: 'Guest Directory', icon: Users },
+      { id: 'rooms', label: 'Rooms & Rates', icon: BedDouble },
+      { id: 'guests', label: 'Guest Profiles', icon: Users },
       { id: 'housekeeping', label: 'Housekeeping', icon: Sparkles },
+      { id: 'messages', label: 'Messages & Alerts', icon: Mail },
     ],
   },
   {
@@ -85,18 +99,26 @@ const NAV_GROUPS: Array<{
       { id: 'reports', label: 'Financial Reports', icon: FileSpreadsheet },
       { id: 'staff', label: 'Staff Directory', icon: Users },
       { id: 'shifts_attendance', label: 'Shifts & Attendance', icon: Clock },
-      { id: 'payroll', label: 'Nigerian Payroll', icon: Wallet },
+      { id: 'payroll', label: 'Monthly Payroll', icon: Wallet },
       { id: 'maintenance', label: 'Maintenance', icon: Wrench },
     ],
   },
   {
     group: 'Channels & Admin',
     items: [
-      { id: 'ota_channels', label: 'Online OTA Sync', icon: Globe },
+      { id: 'ota_channels', label: 'Channel Manager & iCal', icon: Globe },
       { id: 'properties_admin', label: 'Multi-Property Admin', icon: Building2 },
       { id: 'licensing', label: 'Software Licensing', icon: KeyRound },
       { id: 'rbac_audit', label: 'RBAC & Audit Logs', icon: Shield },
+      { id: 'cms', label: 'App CMS & Text Editor', icon: FileEdit },
+      { id: 'profile', label: 'Admin & Property Profile', icon: UserCircle2 },
       { id: 'deployment', label: 'Cloudflare Deploy', icon: CloudUpload },
+    ],
+  },
+  {
+    group: 'Support & Training',
+    items: [
+      { id: 'training_help', label: 'Docs, Training & Help', icon: LifeBuoy },
     ],
   },
 ];
@@ -115,8 +137,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
   onOpenPortalLinksModal,
   onSignOut,
+  unreadMessageCount = 0,
 }) => {
+  const { cms } = useCms();
   const allowed = ROLE_ALLOWED_SECTIONS[activeRole];
+  const activeProp = properties.find((p) => p.id === activePropertyId) || properties[0];
+  const [logoError, setLogoError] = useState(false);
+
+  useEffect(() => {
+    setLogoError(false);
+  }, [activeProp?.logoUrl]);
 
   const handleNavClick = (sectionId: NavSectionId) => {
     onSelectSection(sectionId);
@@ -125,26 +155,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const sidebarBody = (
     <div className="w-64 bg-slate-900 text-slate-200 flex flex-col shrink-0 border-r border-slate-800 h-full">
-      {/* Brand Lockup */}
-      <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
-        <div>
-          <span className="font-display text-lg font-bold tracking-tight text-white">
-            PCH PMS
-          </span>
-          <p className="text-[11px] text-slate-400">
-            {portalMode === 'pch-admin'
-              ? 'PCH Super Admin'
-              : portalMode === 'richgates-admin'
-                ? 'Property Admin Portal'
-                : 'Staff Operations'}
-          </p>
+      {/* Brand Lockup — Property logo updates NEVER alter PCH Super Admin emblem */}
+      <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {portalMode === 'pch-admin' ? (
+            <div className="w-9 h-9 rounded-lg bg-[#1c46be] border border-blue-400/40 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4 h-4 text-white" />
+            </div>
+          ) : activeProp?.logoUrl && !logoError ? (
+            <img
+              key={activeProp.logoUrl}
+              src={activeProp.logoUrl}
+              alt={activeProp.name}
+              referrerPolicy="no-referrer"
+              onError={() => setLogoError(true)}
+              className="w-9 h-9 rounded-lg object-contain bg-white p-0.5 shrink-0"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-lg bg-emerald-800 border border-emerald-600/50 flex items-center justify-center shrink-0">
+              <Building2 className="w-4 h-4 text-white" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <span className="font-display text-lg font-bold tracking-tight text-white block truncate">
+              {portalMode === 'pch-admin' ? cms.brand.pchPortalName : cms.brand.richgatesPortalName}
+            </span>
+            <p className="text-[11px] text-slate-400 truncate">
+              {portalMode === 'pch-admin'
+                ? cms.brand.pchRoleSubtitle
+                : portalMode === 'richgates-admin'
+                  ? cms.brand.richgatesAdminSubtitle
+                  : cms.brand.richgatesStaffSubtitle}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={onOpenPortalLinksModal}
             title="Portal Login Links & Switcher"
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <Link2 className="w-4 h-4" />
           </button>
@@ -195,19 +245,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {visibleItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeSection === item.id;
+                const navLabel = cms.pages[item.id]?.navLabel || item.label;
+                const showUnread = item.id === 'messages' && unreadMessageCount > 0;
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => handleNavClick(item.id)}
-                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
                       isActive
                         ? 'bg-emerald-600 text-white'
                         : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                     }`}
                   >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span className="truncate">{item.label}</span>
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <Icon className="w-4 h-4 shrink-0" />
+                      <span className="truncate">{navLabel}</span>
+                    </span>
+                    {showUnread && (
+                      <span
+                        className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                          isActive
+                            ? 'bg-white text-emerald-700'
+                            : 'bg-emerald-500 text-white'
+                        }`}
+                      >
+                        {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -216,7 +281,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
       </nav>
 
-      {/* Bottom Portal Switcher & User Card */}
+      {/* Bottom Portal Switcher & Clickable User Profile Card */}
       <div className="p-3.5 border-t border-slate-800 space-y-2.5 bg-slate-950/40">
         <button
           type="button"
@@ -231,7 +296,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <div className="flex items-center justify-between gap-2 pt-1">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <button
+            type="button"
+            onClick={() => handleNavClick('profile')}
+            title="Open Admin & Property Profile"
+            className="flex items-center gap-2.5 min-w-0 flex-1 text-left rounded-lg p-1 -m-1 hover:bg-slate-800/80 transition-colors cursor-pointer"
+          >
             <img
               src="/src/assets/images/avatar_pch_admin_1794795996224.jpg"
               alt={userName}
@@ -244,7 +314,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {ROLE_LABELS[activeRole]}
               </p>
             </div>
-          </div>
+          </button>
           <button
             type="button"
             onClick={onSignOut}
@@ -261,13 +331,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* Desktop Sticky Sidebar */}
-      <aside className="hidden lg:block w-64 shrink-0 h-screen sticky top-0">
+      <aside className="no-print hidden lg:block w-64 shrink-0 h-screen sticky top-0">
         {sidebarBody}
       </aside>
 
       {/* Mobile Drawer Sidebar */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden flex">
+        <div className="no-print fixed inset-0 z-50 lg:hidden flex">
           <div
             className="fixed inset-0 bg-slate-950/60"
             onClick={onCloseMobile}

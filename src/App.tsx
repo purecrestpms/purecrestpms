@@ -6,18 +6,41 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
-import { AlertTriangle, Check, Copy, ExternalLink, Menu, RefreshCw, X } from 'lucide-react';
+import { collection, doc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import {
+  AlertTriangle,
+  Bell,
+  Check,
+  CheckCircle2,
+  Copy,
+  DoorOpen,
+  ExternalLink,
+  KeyRound,
+  Mail,
+  Megaphone,
+  Menu,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 import { AdminLicensingView } from './components/AdminLicensingView';
+import { AdminReportsAnalyticsView } from './components/AdminReportsAnalyticsView';
+import { CmsAdminView } from './components/CmsAdminView';
 import { DashboardView } from './components/DashboardView';
+import {
+  DepartmentMessagingView,
+  isMessageUnreadForUser,
+} from './components/DepartmentMessagingView';
 import { FinanceInventoryView } from './components/FinanceInventoryView';
+import { HelpDocsTrainingView } from './components/HelpDocsTrainingView';
 import { HousekeepingMaintenanceView } from './components/HousekeepingMaintenanceView';
 import { PortalGateway } from './components/PortalGateway';
 import { PosKitchenView } from './components/PosKitchenView';
+import { ProfileView } from './components/ProfileView';
 import { ReservationsCalendarView } from './components/ReservationsCalendarView';
 import { RoomsReservationsView } from './components/RoomsReservationsView';
 import { Sidebar } from './components/Sidebar';
 import { StaffHrPayrollView } from './components/StaffHrPayrollView';
+import { mergeCmsWithDefaults, useCms } from './context/CmsContext';
 import { RICHGATES_PROPERTY_ID } from './data/seedData';
 import {
   auth,
@@ -27,8 +50,14 @@ import {
   testConnection,
 } from './firebase';
 import {
+  buildPropertyIcalFeed,
+  markMessageReadWorkflow,
   seedRichgatesIfNeeded,
+  syncDefaultMessagesIfNeeded,
+  syncDefaultPosMenuIfNeeded,
+  syncRichgatesLicenseCapIfNeeded,
   syncRichgatesOfficialCatalogIfNeeded,
+  syncRichgatesPropertyInfoIfNeeded,
 } from './services/pmsService';
 import {
   AttendanceRecord,
@@ -45,7 +74,9 @@ import {
   OtaIntegrationRecord,
   PayrollRunRecord,
   PortalMode,
+  PosMenuItemRecord,
   PosOrderRecord,
+  PropertyMessageRecord,
   PropertyRecord,
   PurchaseOrderRecord,
   ReservationRecord,
@@ -55,6 +86,7 @@ import {
   ShiftScheduleRecord,
   StaffMemberRecord,
   StaffRole,
+  UserRoleProfile,
 } from './types/pms';
 
 class PageErrorBoundary extends Component<
@@ -105,9 +137,13 @@ const VALID_SECTIONS: NavSectionId[] = [
   'rooms',
   'calendar',
   'reservations',
+  'arrivals',
+  'in_house',
+  'walk_in',
   'front_desk',
   'guests',
   'housekeeping',
+  'messages',
   'pos_kitchen',
   'accounting',
   'reports',
@@ -121,19 +157,33 @@ const VALID_SECTIONS: NavSectionId[] = [
   'properties_admin',
   'licensing',
   'rbac_audit',
+  'cms',
   'deployment',
+  'profile',
+  'training_help',
 ];
 
 function detectInitialPortal(): PortalMode {
-  if (typeof window === 'undefined') return 'pch-admin';
+  if (typeof window === 'undefined') return 'richgates-admin';
   const params = new URLSearchParams(window.location.search);
   const p = params.get('portal');
   if (p === 'pch-admin' || p === 'richgates-admin' || p === 'staff') return p;
-  if (p === 'admin') return 'richgates-admin';
+  if (p === 'admin' || p === 'richgates' || p === 'richgates-login') return 'richgates-admin';
+  if (p === 'richgates-staff') return 'staff';
   const path = window.location.pathname.toLowerCase();
-  if (path.includes('richgates-admin') || path.includes('admin')) return 'richgates-admin';
+  if (path.includes('pch-admin')) return 'pch-admin';
   if (path.includes('staff')) return 'staff';
-  return 'pch-admin';
+  const host = window.location.hostname.toLowerCase();
+  if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
+    return 'pch-admin';
+  }
+  if (host.startsWith('staff.')) {
+    return 'staff';
+  }
+  if (host.startsWith('richgates.')) {
+    return 'richgates-admin';
+  }
+  return 'richgates-admin';
 }
 
 function detectInitialSection(): NavSectionId {
@@ -145,6 +195,7 @@ function detectInitialSection(): NavSectionId {
 }
 
 export default function App() {
+  const { cms, setCms } = useCms();
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [portalMode, setPortalMode] = useState<PortalMode>(detectInitialPortal);
@@ -156,15 +207,37 @@ export default function App() {
   const [propsLoaded, setPropsLoaded] = useState(false);
   const autoSeedAttemptedRef = useRef<string | null>(null);
   const catalogSyncedPropsRef = useRef<Set<string>>(new Set());
+  const propInfoSyncedRef = useRef<Set<string>>(new Set());
+  const posMenuSyncedRef = useRef<Set<string>>(new Set());
+  const msgSyncedRef = useRef<Set<string>>(new Set());
+  const licenseCapSyncedRef = useRef<Set<string>>(new Set());
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
+  const messagesInitLoadedRef = useRef(false);
 
   const [activeSection, setActiveSection] = useState<NavSectionId>(detectInitialSection);
+  const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
+  const [reservationIntent, setReservationIntent] = useState<'view' | 'edit'>('view');
   const [activePropertyId, setActivePropertyId] = useState<string>(RICHGATES_PROPERTY_ID);
   const [toast, setToast] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPortalModal, setShowPortalModal] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [copiedPortalId, setCopiedPortalId] = useState<string | null>(null);
+  const [checkedInPopup, setCheckedInPopup] = useState<{
+    guestName: string;
+    roomNumber: string;
+    bookingRef?: string;
+    reservationId?: string;
+  } | null>(null);
+  const [icalViewRoom, setIcalViewRoom] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get('ical')) return null;
+    return params.get('room') || 'ALL';
+  });
 
   // Firestore Live State
+  const [userProfile, setUserProfile] = useState<UserRoleProfile | null>(null);
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
   const [licenses, setLicenses] = useState<LicenseRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
@@ -174,6 +247,7 @@ export default function App() {
   const [reservations, setReservations] = useState<ReservationRecord[]>([]);
   const [housekeepingTasks, setHousekeepingTasks] = useState<HousekeepingTaskRecord[]>([]);
   const [posOrders, setPosOrders] = useState<PosOrderRecord[]>([]);
+  const [posMenuItems, setPosMenuItems] = useState<PosMenuItemRecord[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntryRecord[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemRecord[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRecord[]>([]);
@@ -183,6 +257,7 @@ export default function App() {
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>([]);
   const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicketRecord[]>([]);
   const [otaChannels, setOtaChannels] = useState<OtaIntegrationRecord[]>([]);
+  const [messages, setMessages] = useState<PropertyMessageRecord[]>([]);
 
   const notify = (msg: string) => {
     setToast(msg);
@@ -205,6 +280,16 @@ export default function App() {
     syncUrlParams(portalMode, section);
   };
 
+  const handleOpenReservationFolio = (
+    reservationId: string,
+    targetSection: 'reservations' | 'front_desk' = 'front_desk',
+    intent: 'view' | 'edit' = 'view'
+  ) => {
+    setSelectedReservationId(reservationId);
+    setReservationIntent(intent);
+    handleSelectSection(targetSection);
+  };
+
   const runBootstrapSeed = async (customPropertyId?: string) => {
     setDbError(null);
     setSeeding(true);
@@ -212,7 +297,7 @@ export default function App() {
       const createdPropId = await seedRichgatesIfNeeded(customPropertyId);
       if (createdPropId) {
         setActivePropertyId(createdPropId);
-        notify('Provisioned Richgates Apartments, Enugu (8 Suites) & PureCrest Lifetime License');
+        notify('Provisioned Richgates Apartments, Enugu (8 Suites) & Property License');
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -304,9 +389,15 @@ export default function App() {
         const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PropertyRecord);
         setProperties(list);
         setPropsLoaded(true);
-        setActivePropertyId((curr) =>
-          list.length > 0 && !list.some((p) => p.id === curr) ? list[0].id : curr
-        );
+        setActivePropertyId((curr) => {
+          if (list.length === 0) return curr;
+          const host = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
+          if (host.startsWith('richgates.')) {
+            const rg = list.find((p) => p.id === RICHGATES_PROPERTY_ID || p.code === 'RG-ENU-01');
+            if (rg) return rg.id;
+          }
+          return !list.some((p) => p.id === curr) ? list[0].id : curr;
+        });
         if (list.length === 0 && autoSeedAttemptedRef.current !== user.uid) {
           autoSeedAttemptedRef.current = user.uid;
           void runBootstrapSeed(isAdmin ? RICHGATES_PROPERTY_ID : `rg-${user.uid.slice(0, 10)}`);
@@ -331,10 +422,38 @@ export default function App() {
       onSnapshotErr('audit_logs')
     );
 
+    const unsubUserProfile = onSnapshot(
+      doc(db, 'users', user.uid),
+      (snap) => {
+        if (snap.exists()) {
+          setUserProfile({ id: snap.id, ...snap.data() } as UserRoleProfile);
+        } else {
+          setUserProfile(null);
+        }
+      },
+      () => {
+        setUserProfile(null);
+      }
+    );
+
+    const unsubCms = onSnapshot(
+      doc(db, 'app_cms', 'global'),
+      (snap) => {
+        if (snap.exists()) {
+          setCms(mergeCmsWithDefaults(snap.data()));
+        }
+      },
+      () => {
+        // Ignore if global CMS document has not been published yet
+      }
+    );
+
     return () => {
       unsubProps();
       unsubLic();
       unsubAud();
+      unsubUserProfile();
+      unsubCms();
     };
   }, [authReady, user]);
 
@@ -366,6 +485,7 @@ export default function App() {
       sub<ReservationRecord>('reservations', setReservations),
       sub<HousekeepingTaskRecord>('housekeeping_tasks', setHousekeepingTasks),
       sub<PosOrderRecord>('pos_orders', setPosOrders),
+      sub<PosMenuItemRecord>('pos_menu_items', setPosMenuItems),
       sub<LedgerEntryRecord>('ledger_entries', setLedgerEntries),
       sub<InventoryItemRecord>('inventory_items', setInventoryItems),
       sub<PurchaseOrderRecord>('purchase_orders', setPurchaseOrders),
@@ -375,7 +495,11 @@ export default function App() {
       sub<PayrollRunRecord>('payroll_runs', setPayrollRuns),
       sub<MaintenanceTicketRecord>('maintenance_tickets', setMaintenanceTickets),
       sub<OtaIntegrationRecord>('ota_channels', setOtaChannels),
+      sub<PropertyMessageRecord>('messages', setMessages),
     ];
+
+    messagesInitLoadedRef.current = false;
+    seenMessageIdsRef.current = new Set();
 
     return () => unsubs.forEach((u) => u());
   }, [authReady, user, activePropertyId]);
@@ -406,6 +530,72 @@ export default function App() {
       }
     });
   }, [properties, activePropertyId, rooms, reservations, housekeepingTasks, activeRole]);
+
+  // Automatically sync Richgates Apartments official address, phone, WhatsApp, and support email
+  useEffect(() => {
+    const activeProp = properties.find((p) => p.id === activePropertyId);
+    if (!activeProp || activeProp.code !== 'RG-ENU-01') return;
+    if (activeRole !== 'pch_admin' && activeRole !== 'property_admin') return;
+    if (propInfoSyncedRef.current.has(activeProp.id)) return;
+    propInfoSyncedRef.current.add(activeProp.id);
+    void syncRichgatesPropertyInfoIfNeeded(activeProp);
+  }, [properties, activePropertyId, activeRole]);
+
+  // Ensure existing properties have editable POS menu items seeded in Firestore
+  useEffect(() => {
+    const activeProp = properties.find((p) => p.id === activePropertyId);
+    if (!activeProp || posMenuItems.length > 0) return;
+    if (posMenuSyncedRef.current.has(activeProp.id)) return;
+    posMenuSyncedRef.current.add(activeProp.id);
+    void syncDefaultPosMenuIfNeeded(activeProp);
+  }, [properties, activePropertyId, posMenuItems.length]);
+
+  // Enforce Richgates 20-room license cap on legacy Firestore license docs
+  useEffect(() => {
+    const activeProp = properties.find((p) => p.id === activePropertyId);
+    if (!activeProp || activeProp.code !== 'RG-ENU-01' || licenses.length === 0) return;
+    if (activeRole !== 'pch_admin' && activeRole !== 'property_admin') return;
+    if (licenseCapSyncedRef.current.has(activeProp.id)) return;
+    licenseCapSyncedRef.current.add(activeProp.id);
+    void syncRichgatesLicenseCapIfNeeded(activeProp, licenses);
+  }, [properties, activePropertyId, licenses, activeRole]);
+
+  // Seed default inter-departmental messages for existing properties if empty
+  useEffect(() => {
+    const activeProp = properties.find((p) => p.id === activePropertyId);
+    if (!activeProp || messages.length > 0) return;
+    if (msgSyncedRef.current.has(activeProp.id)) return;
+    msgSyncedRef.current.add(activeProp.id);
+    void syncDefaultMessagesIfNeeded(activeProp);
+  }, [properties, activePropertyId, messages.length]);
+
+  // Real-time alert toast when a new incoming message arrives after initial snapshot load
+  useEffect(() => {
+    if (!user?.email) return;
+    const email = user.email.toLowerCase();
+    if (!messagesInitLoadedRef.current) {
+      if (messages.length > 0) {
+        messages.forEach((m) => seenMessageIdsRef.current.add(m.id));
+        messagesInitLoadedRef.current = true;
+      }
+      return;
+    }
+
+    const newlyArrived = messages.filter(
+      (m) =>
+        !seenMessageIdsRef.current.has(m.id) &&
+        m.senderEmail.toLowerCase() !== email &&
+        isMessageUnreadForUser(m, activeRole, email)
+    );
+    messages.forEach((m) => seenMessageIdsRef.current.add(m.id));
+
+    if (newlyArrived.length > 0) {
+      const latest = newlyArrived[0];
+      notify(
+        `New ${latest.priority === 'Urgent' ? 'URGENT ' : ''}message from ${latest.senderName} (${latest.senderDepartment}): ${latest.subject}`
+      );
+    }
+  }, [messages, activeRole, user?.email]);
 
   const handlePortalSelection = (portal: PortalMode) => {
     setPortalMode(portal);
@@ -475,6 +665,9 @@ export default function App() {
   const activeLicense = licenses.find(
     (l) => l.propertyId === activeProperty?.id && l.status === 'active'
   );
+  const unreadMessages = messages
+    .filter((m) => isMessageUnreadForUser(m, activeRole, user.email || ''))
+    .sort((a, b) => b.createdAtIso.localeCompare(a.createdAtIso));
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
@@ -487,16 +680,17 @@ export default function App() {
         portalMode={portalMode}
         activeRole={activeRole}
         userEmail={user.email || ''}
-        userName={user.displayName || 'PureCrest Operator'}
+        userName={userProfile?.displayName || user.displayName || 'Property Operator'}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
         onOpenPortalLinksModal={() => setShowPortalModal(true)}
         onSignOut={handleSignOut}
+        unreadMessageCount={unreadMessages.length}
       />
 
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Top Bar Contract: Breadcrumb on Left, Portal Context & Action on Right */}
-        <header className="h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 sm:gap-8 sticky top-0 z-20">
+        {/* Top Bar Contract: Breadcrumb on Left, Notification Bell + Admin Profile & Portal Action on Right */}
+        <header className="no-print h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 sm:gap-8 sticky top-0 z-20">
           <div className="flex items-center gap-2.5 text-xs text-slate-600 min-w-0">
             <button
               type="button"
@@ -506,28 +700,139 @@ export default function App() {
             >
               <Menu className="w-4 h-4" />
             </button>
-            <span className="font-semibold text-slate-900 whitespace-nowrap">PCH PMS</span>
-            <span aria-hidden="true">/</span>
-            <span className="truncate">{activeProperty?.name || 'Richgates Apartments, Enugu'}</span>
-            <span aria-hidden="true">/</span>
-            <span className="text-emerald-700 font-medium capitalize whitespace-nowrap">
-              {activeSection.replace(/_/g, ' ')}
+            {portalMode === 'pch-admin' && (
+              <>
+                <span className="font-semibold text-slate-900 whitespace-nowrap">
+                  {cms.brand.pchPortalName}
+                </span>
+                <span aria-hidden="true">/</span>
+              </>
+            )}
+            <span className="font-semibold text-slate-900 whitespace-nowrap">
+              {cms.pages[activeSection]?.navLabel || activeSection.replace(/_/g, ' ')}
             </span>
           </div>
 
-          <div className="flex items-center gap-4 shrink-0">
-            <span className="hidden md:inline text-xs text-slate-500 whitespace-nowrap">
-              {ROLE_LABELS[activeRole]} · NGN (₦)
-            </span>
+          <div className="flex items-center gap-2.5 shrink-0">
+            {/* Real-Time Message Alert Bell & Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowNotifications((v) => !v)}
+                aria-label="Message Alerts"
+                className="relative p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors cursor-pointer"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadMessages.length > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-mono-tabular font-bold flex items-center justify-center">
+                    {unreadMessages.length > 9 ? '9+' : unreadMessages.length}
+                  </span>
+                )}
+              </button>
+
+              {showNotifications && (
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-xl shadow-xl z-40 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-4 h-4 text-emerald-700" />
+                      <span className="text-xs font-bold text-slate-900">
+                        Department Message Alerts ({unreadMessages.length})
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNotifications(false);
+                        handleSelectSection('messages');
+                      }}
+                      className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                    >
+                      Open Inbox
+                    </button>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                    {unreadMessages.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-xs text-slate-500">
+                        All caught up — no unread messages.
+                      </div>
+                    ) : (
+                      unreadMessages.slice(0, 8).map((msg) => (
+                        <button
+                          key={msg.id}
+                          type="button"
+                          onClick={() => {
+                            setShowNotifications(false);
+                            handleSelectSection('messages');
+                            if (activeProperty && user.email) {
+                              void markMessageReadWorkflow({
+                                property: activeProperty,
+                                message: msg,
+                                readerEmail: user.email,
+                              });
+                            }
+                          }}
+                          className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors space-y-1 cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="font-semibold text-slate-900 truncate">
+                              {msg.senderName} · {msg.senderDepartment}
+                            </span>
+                            {msg.priority === 'Urgent' && (
+                              <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold text-[10px]">
+                                Urgent
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs font-semibold text-slate-800 truncate">
+                            {msg.subject}
+                          </p>
+                          <p className="text-[11px] text-slate-500 line-clamp-2">{msg.body}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleSelectSection('profile')}
+              className="hidden sm:inline-flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-colors text-left cursor-pointer"
+            >
+              <span className="w-7 h-7 rounded-lg bg-blue-50 text-blue-700 font-mono-tabular text-[11px] font-bold flex items-center justify-center">
+                {(userProfile?.displayName || user.displayName || 'PA')
+                  .split(/\s+/)
+                  .slice(0, 2)
+                  .map((p) => p[0]?.toUpperCase() || '')
+                  .join('')}
+              </span>
+              <span className="leading-tight">
+                <span className="block text-xs font-semibold text-slate-900">
+                  {userProfile?.displayName || user.displayName || 'Property Admin'}
+                </span>
+                <span className="block text-[10px] text-slate-500">
+                  {ROLE_LABELS[activeRole]}
+                </span>
+              </span>
+            </button>
             <button
               type="button"
               onClick={() => setShowPortalModal(true)}
               className="px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
-              Portal Links
+              {cms.brand.portalLinksButton || 'Portal Links'}
             </button>
           </div>
         </header>
+
+        {cms.brand.announcementBanner.trim() && (
+          <div className="no-print mx-4 sm:mx-6 mt-4 px-4 py-2.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-medium text-blue-900 flex items-center gap-2">
+            <Megaphone className="w-4 h-4 text-[#1c46be] shrink-0" />
+            <span>{cms.brand.announcementBanner}</span>
+          </div>
+        )}
 
         {dbError && (
           <div className="mx-6 mt-4 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800 flex flex-wrap items-center justify-between gap-3">
@@ -548,7 +853,7 @@ export default function App() {
         )}
 
         {toast && (
-          <div className="mx-6 mt-4 px-4 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800 flex items-center justify-between">
+          <div className="no-print mx-6 mt-4 px-4 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800 flex items-center justify-between">
             <span>{toast}</span>
             <button type="button" onClick={() => setToast(null)} className="text-emerald-700">
               <X className="w-3.5 h-3.5" />
@@ -556,7 +861,7 @@ export default function App() {
           </div>
         )}
 
-        <main className="flex-1 p-4 sm:p-6 max-w-[1440px] w-full mx-auto">
+        <main className="flex-1 p-4 sm:p-6 max-w-[1440px] w-full mx-auto print:p-0 print:max-w-none">
           {seeding || !activeProperty ? (
             <div className="space-y-4">
               <div className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -567,7 +872,7 @@ export default function App() {
                       : 'Loading Richgates Apartments, Enugu workspace...'}
                   </p>
                   <p className="text-xs text-slate-500">
-                    Syncing suites RM-1 to RM-8, Nigerian Naira ledger, POS menu, staff payroll, and PureCrest Lifetime License.
+                    Syncing suites RM-1 to RM-8, Nigerian Naira ledger, POS menu, staff payroll, and booking channels.
                   </p>
                 </div>
                 {!seeding && propsLoaded && properties.length === 0 && (
@@ -596,17 +901,81 @@ export default function App() {
             </div>
           ) : (
             <PageErrorBoundary onReset={() => handleSelectSection('dashboard')}>
+              {icalViewRoom !== null && (
+                <div className="mb-6 bg-white border border-emerald-300 rounded-xl p-5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-display text-sm font-bold text-slate-900">
+                        iCal Calendar Feed ({icalViewRoom === 'ALL' ? 'All Suites' : icalViewRoom})
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        RFC 5545 .ics calendar feed ready for Booking.com, Airbnb, or VRBO import
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const ics = buildPropertyIcalFeed({
+                            propertyName: activeProperty.name,
+                            reservations,
+                            blockedDates,
+                            roomNumberFilter: icalViewRoom,
+                          });
+                          const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${activeProperty.code.toLowerCase()}-${icalViewRoom.toLowerCase()}.ics`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="px-3 py-1.5 bg-emerald-600 text-white font-semibold rounded-lg cursor-pointer"
+                      >
+                        Download .ics File
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIcalViewRoom(null);
+                          syncUrlParams(portalMode, activeSection);
+                        }}
+                        className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 cursor-pointer"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="bg-slate-900 text-slate-100 p-3 rounded-lg text-[11px] font-mono-tabular max-h-48 overflow-auto">
+                    {buildPropertyIcalFeed({
+                      propertyName: activeProperty.name,
+                      reservations,
+                      blockedDates,
+                      roomNumberFilter: icalViewRoom,
+                    })}
+                  </pre>
+                </div>
+              )}
+
               {activeSection === 'dashboard' && (
                 <DashboardView
                   key={`dashboard-${activeProperty.id}`}
                   property={activeProperty}
                   rooms={rooms}
                   reservations={reservations}
+                  guests={guests}
+                  ledgerEntries={ledgerEntries}
                   posOrders={posOrders}
                   maintenanceTickets={maintenanceTickets}
                   activeLicense={activeLicense}
                   canManageRooms={activeRole === 'pch_admin' || activeRole === 'property_admin'}
+                  actorRole={ROLE_LABELS[activeRole]}
+                  onNotify={notify}
+                  onGuestCheckedIn={(info) => setCheckedInPopup(info)}
                   onNavigate={handleSelectSection}
+                  onOpenReservationFolio={handleOpenReservationFolio}
                 />
               )}
 
@@ -617,25 +986,52 @@ export default function App() {
                   rooms={rooms}
                   reservations={reservations}
                   blockedDates={blockedDates}
+                  guests={guests}
                   actorRole={ROLE_LABELS[activeRole]}
                   onNotify={notify}
+                  onGuestCheckedIn={(info) => setCheckedInPopup(info)}
+                  onOpenReservationFolio={handleOpenReservationFolio}
                 />
               )}
 
               {(activeSection === 'rooms' ||
                 activeSection === 'reservations' ||
+                activeSection === 'arrivals' ||
+                activeSection === 'in_house' ||
+                activeSection === 'walk_in' ||
                 activeSection === 'front_desk' ||
                 activeSection === 'guests') && (
                 <RoomsReservationsView
                   key={`${activeSection}-${activeProperty.id}`}
                   section={activeSection}
                   property={activeProperty}
+                  activeLicense={activeLicense}
                   rooms={rooms}
                   reservations={reservations}
                   blockedDates={blockedDates}
                   guests={guests}
+                  selectedReservationId={selectedReservationId}
+                  initialReservationIntent={reservationIntent}
+                  onConsumeIntent={() => setReservationIntent('view')}
+                  onSelectReservation={setSelectedReservationId}
+                  onNavigateSection={handleSelectSection}
                   activeRole={activeRole}
                   actorRole={ROLE_LABELS[activeRole]}
+                  onNotify={notify}
+                  onGuestCheckedIn={(info) => setCheckedInPopup(info)}
+                />
+              )}
+
+              {activeSection === 'profile' && (
+                <ProfileView
+                  key={`profile-${activeProperty.id}`}
+                  property={activeProperty}
+                  activeLicense={activeLicense}
+                  activeRole={activeRole}
+                  userEmail={user.email || ''}
+                  userUid={user.uid}
+                  defaultDisplayName={user.displayName || 'Property Admin'}
+                  userProfile={userProfile}
                   onNotify={notify}
                 />
               )}
@@ -658,14 +1054,41 @@ export default function App() {
                   key={`pos-${activeProperty.id}`}
                   property={activeProperty}
                   posOrders={posOrders}
+                  posMenuItems={posMenuItems}
+                  inventoryItems={inventoryItems}
+                  ledgerEntries={ledgerEntries}
                   reservations={reservations}
+                  canManageMenu={activeRole === 'pch_admin' || activeRole === 'property_admin'}
                   actorRole={ROLE_LABELS[activeRole]}
                   onNotify={notify}
                 />
               )}
 
+              {activeSection === 'reports' && (
+                <AdminReportsAnalyticsView
+                  key={`reports-${activeProperty.id}`}
+                  property={activeProperty}
+                  activeRole={activeRole}
+                  rooms={rooms}
+                  reservations={reservations}
+                  blockedDates={blockedDates}
+                  guests={guests}
+                  ledgerEntries={ledgerEntries}
+                  posOrders={posOrders}
+                  inventoryItems={inventoryItems}
+                  purchaseOrders={purchaseOrders}
+                  staffMembers={staffMembers}
+                  shifts={shifts}
+                  attendance={attendance}
+                  payrollRuns={payrollRuns}
+                  housekeepingTasks={housekeepingTasks}
+                  maintenanceTickets={maintenanceTickets}
+                  otaChannels={otaChannels}
+                  onNotify={notify}
+                />
+              )}
+
               {(activeSection === 'accounting' ||
-                activeSection === 'reports' ||
                 activeSection === 'inventory' ||
                 activeSection === 'procurement') && (
                 <FinanceInventoryView
@@ -707,7 +1130,10 @@ export default function App() {
                   property={activeProperty}
                   properties={properties}
                   rooms={rooms}
+                  reservations={reservations}
+                  blockedDates={blockedDates}
                   otaChannels={otaChannels}
+                  posMenuItems={posMenuItems}
                   licenses={licenses}
                   auditLogs={auditLogs}
                   activeRole={activeRole}
@@ -716,6 +1142,40 @@ export default function App() {
                     handlePortalSelection(nextPortal);
                     notify(`Switched portal to ${nextPortal}`);
                   }}
+                  onNotify={notify}
+                />
+              )}
+              {activeSection === 'cms' && (
+                <CmsAdminView
+                  key={`cms-${activeProperty.id}`}
+                  property={activeProperty}
+                  activeRole={activeRole}
+                  actorRole={ROLE_LABELS[activeRole]}
+                  onNavigate={handleSelectSection}
+                  onNotify={notify}
+                />
+              )}
+
+              {activeSection === 'messages' && (
+                <DepartmentMessagingView
+                  key={`messages-${activeProperty.id}`}
+                  property={activeProperty}
+                  messages={messages}
+                  staffMembers={staffMembers}
+                  activeRole={activeRole}
+                  userEmail={user.email || ''}
+                  userName={userProfile?.displayName || user.displayName || 'Property Operator'}
+                  onNotify={notify}
+                />
+              )}
+
+              {activeSection === 'training_help' && (
+                <HelpDocsTrainingView
+                  key={`training-${activeProperty.id}`}
+                  property={activeProperty}
+                  activeRole={activeRole}
+                  userEmail={user.email || ''}
+                  userName={userProfile?.displayName || user.displayName || 'Property Operator'}
                   onNotify={notify}
                 />
               )}
@@ -750,19 +1210,19 @@ export default function App() {
               {(
                 [
                   {
-                    id: 'pch-admin',
-                    title: 'PCH Super Admin Portal',
-                    desc: 'Multi-property control, Centralized PureCrest Licensing & Audit Logs',
-                  },
-                  {
                     id: 'richgates-admin',
-                    title: 'Richgates Apartments Property Admin',
-                    desc: 'Scoped to Richgates Apartments, Enugu (8 Rooms, P&L, Payroll)',
+                    title: 'Richgates Property Admin Login',
+                    desc: 'Scoped to Richgates Apartments, Enugu (8 Suites, Folios, Channel Manager & P&L)',
                   },
                   {
                     id: 'staff',
-                    title: 'Staff Operations Portal',
-                    desc: 'Front Desk, Housekeeping, Restaurant POS & KDS, Maintenance',
+                    title: 'Richgates Staff Login',
+                    desc: 'Front Desk, Housekeeping, Restaurant POS & Kitchen, Maintenance',
+                  },
+                  {
+                    id: 'pch-admin',
+                    title: 'PCH Super Admin Portal',
+                    desc: 'Multi-property control, Centralized Licensing & Audit Logs',
                   },
                 ] as Array<{ id: PortalMode; title: string; desc: string }>
               ).map((item) => {
@@ -840,6 +1300,75 @@ export default function App() {
                   </select>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Check-In Confirmation Pop-up Modal */}
+      {checkedInPopup && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <div className="bg-white border border-emerald-200 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-xl text-center">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+                Front Desk Check-In Complete
+              </p>
+              <h3 className="font-display text-xl font-bold text-slate-900">
+                {checkedInPopup.guestName} has been checked in
+              </h3>
+              <p className="text-xs text-slate-600">
+                Suite assigned, payment verified, and room key issued.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-3 gap-2 text-xs text-left">
+              <div>
+                <p className="text-slate-500 text-[11px]">Suite</p>
+                <p className="font-mono-tabular font-bold text-slate-900 flex items-center gap-1 mt-0.5">
+                  <DoorOpen className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>{checkedInPopup.roomNumber}</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-[11px]">Booking Ref</p>
+                <p className="font-mono-tabular font-bold text-slate-900 mt-0.5">
+                  {checkedInPopup.bookingRef || 'In-House'}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-[11px]">Key Issued</p>
+                <p className="font-semibold text-emerald-700 flex items-center gap-1 mt-0.5">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Yes</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-center gap-2.5 pt-1">
+              {checkedInPopup.reservationId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const resId = checkedInPopup.reservationId!;
+                    setCheckedInPopup(null);
+                    handleOpenReservationFolio(resId, 'front_desk');
+                  }}
+                  className="px-4 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg cursor-pointer"
+                >
+                  Open Guest Folio
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setCheckedInPopup(null)}
+                className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>

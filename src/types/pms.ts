@@ -14,6 +14,9 @@ export type NavSectionId =
   | 'rooms'
   | 'calendar'
   | 'reservations'
+  | 'arrivals'
+  | 'in_house'
+  | 'walk_in'
   | 'front_desk'
   | 'guests'
   | 'housekeeping'
@@ -30,9 +33,51 @@ export type NavSectionId =
   | 'properties_admin'
   | 'licensing'
   | 'rbac_audit'
-  | 'deployment';
+  | 'messages'
+  | 'training_help'
+  | 'deployment'
+  | 'profile'
+  | 'cms';
+
+export const RICHGATES_MAX_ROOMS = 20;
 
 export type RoomSection = 'Serviced Apartment' | 'Hotel Rooms';
+
+export type DepartmentName =
+  | 'Management'
+  | 'Front Desk'
+  | 'Housekeeping'
+  | 'Kitchen & F&B'
+  | 'Accounts'
+  | 'Engineering & Security';
+
+export const ALL_DEPARTMENTS: DepartmentName[] = [
+  'Management',
+  'Front Desk',
+  'Housekeeping',
+  'Kitchen & F&B',
+  'Accounts',
+  'Engineering & Security',
+];
+
+export const ROLE_TO_DEPARTMENT: Record<StaffRole, DepartmentName> = {
+  pch_admin: 'Management',
+  property_admin: 'Management',
+  front_desk: 'Front Desk',
+  housekeeping: 'Housekeeping',
+  fnb_kitchen: 'Kitchen & F&B',
+  accountant: 'Accounts',
+  maintenance: 'Engineering & Security',
+};
+
+export const RICHGATES_PROPERTY_INFO = {
+  name: 'Richgates Apartments, Enugu',
+  address: 'Plot C16-C, Fabian Okafor Close, Along Old Airport Road, Thinkers Corner, Enugu',
+  phone: '+234 706 352 2668',
+  whatsapp: '+234 706 352 2668',
+  whatsappUrl: 'https://wa.me/2347063522668',
+  email: 'support@richgatesapartment.com',
+} as const;
 
 export const RICHGATES_EXTERIOR_IMAGE =
   '/assets/aistudio/file_000000003fc881f4b5e66b7352a17edc_c7ca46a2.png';
@@ -190,7 +235,9 @@ export interface PropertyRecord {
   country: string;
   address: string;
   phone?: string;
+  whatsapp?: string;
   email?: string;
+  logoUrl?: string;
   currency: 'NGN';
   roomCount: number;
   status: 'active' | 'onboarding' | 'suspended';
@@ -225,6 +272,10 @@ export interface UserRoleProfile {
   uid: string;
   email: string;
   displayName: string;
+  phone?: string;
+  whatsapp?: string;
+  jobTitle?: string;
+  notes?: string;
   role: StaffRole;
   propertyId: string;
   active: boolean;
@@ -284,6 +335,8 @@ export interface GuestRecord {
   fullName: string;
   email?: string;
   phone: string;
+  address?: string;
+  city?: string;
   nationality?: string;
   idType: 'NIN' | 'International Passport' | 'Driver License' | 'Voter Card';
   idNumber?: string;
@@ -295,28 +348,160 @@ export interface GuestRecord {
   ownerUid: string;
 }
 
+export type BookingSourceOption =
+  | 'Walk-in'
+  | 'Website'
+  | 'Direct Walk-In'
+  | 'Direct Web'
+  | 'Booking.com'
+  | 'Airbnb'
+  | 'Expedia'
+  | 'Hotels.ng'
+  | 'VRBO'
+  | 'Custom iCal';
+
+export const PRIMARY_BOOKING_SOURCES: Array<{ value: BookingSourceOption; label: string }> = [
+  { value: 'Walk-in', label: 'Walk-in' },
+  { value: 'Website', label: 'Website' },
+  { value: 'Booking.com', label: 'Booking.com' },
+  { value: 'Airbnb', label: 'Airbnb' },
+  { value: 'Expedia', label: 'Expedia' },
+  { value: 'Hotels.ng', label: 'Hotels.ng' },
+  { value: 'VRBO', label: 'VRBO' },
+  { value: 'Custom iCal', label: 'Custom iCal' },
+];
+
+export type ReservationStatus =
+  | 'confirmed'
+  | 'pending'
+  | 'checked_in'
+  | 'checked_out'
+  | 'cancelled'
+  | 'no_show';
+
+export type PaymentStatusLabel = 'Paid' | 'Partial' | 'Unpaid';
+
+export const RESERVATION_STATUS_LABELS: Record<ReservationStatus, string> = {
+  confirmed: 'Confirmed',
+  pending: 'Pending',
+  checked_in: 'Checked-in',
+  checked_out: 'Checked-out',
+  cancelled: 'Cancelled',
+  no_show: 'No-show',
+};
+
 export interface ReservationRecord {
   id: string;
   propertyId: string;
   bookingRef: string;
   roomId: string;
   roomNumber: string;
+  requestedRoomType?: string;
   guestId?: string;
   guestName: string;
   guestPhone?: string;
   checkInDate: string;
   checkOutDate: string;
+  bookedDate?: string;
   nights: number;
   adults: number;
-  channel: 'Direct Walk-In' | 'Direct Web' | 'Booking.com' | 'Airbnb' | 'Expedia' | 'Hotels.ng';
+  children?: number;
+  channel: BookingSourceOption;
   nightlyRateNgn: number;
   roomChargesNgn: number;
   posChargesNgn: number;
   paidNgn: number;
-  status: 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled';
+  status: ReservationStatus;
   paymentMethod: 'Bank Transfer' | 'Card POS' | 'Cash NGN' | 'Corporate Invoice' | 'Online Gateway';
+  paymentConfirmed?: boolean;
+  idVerified?: boolean;
+  idType?: GuestRecord['idType'];
+  idNumber?: string;
+  keyIssued?: boolean;
+  checkedInAtIso?: string;
+  createdAt?: { toDate?: () => Date } | string;
   authorizedEmails: string[];
   ownerUid: string;
+}
+
+export function formatBookingSourceLabel(channel: string): string {
+  if (channel === 'Direct Walk-In' || channel === 'Walk-in') return 'Walk-in';
+  if (channel === 'Direct Web' || channel === 'Website') return 'Website';
+  return channel;
+}
+
+export function matchesBookingSourceFilter(channel: string, filter: string): boolean {
+  if (filter === 'ALL') return true;
+  return formatBookingSourceLabel(channel) === formatBookingSourceLabel(filter);
+}
+
+export function getReservationPaymentSummary(
+  res: Pick<ReservationRecord, 'roomChargesNgn' | 'posChargesNgn' | 'paidNgn'>
+): {
+  totalAmount: number;
+  amountPaid: number;
+  balance: number;
+  paymentStatus: PaymentStatusLabel;
+} {
+  const totalAmount = Math.max(0, (res.roomChargesNgn || 0) + (res.posChargesNgn || 0));
+  const amountPaid = Math.max(0, res.paidNgn || 0);
+  const balance = Math.max(0, totalAmount - amountPaid);
+  let paymentStatus: PaymentStatusLabel = 'Unpaid';
+  if (balance <= 0 && (totalAmount > 0 || amountPaid > 0)) {
+    paymentStatus = 'Paid';
+  } else if (amountPaid > 0) {
+    paymentStatus = 'Partial';
+  }
+  return { totalAmount, amountPaid, balance, paymentStatus };
+}
+
+export function getReservationBookedDate(
+  res: Pick<ReservationRecord, 'bookedDate' | 'checkInDate' | 'createdAt'>
+): string {
+  if (res.bookedDate) return res.bookedDate;
+  if (res.createdAt && typeof res.createdAt === 'object' && typeof res.createdAt.toDate === 'function') {
+    try {
+      return res.createdAt.toDate().toISOString().slice(0, 10);
+    } catch {
+      // ignore fallback
+    }
+  }
+  if (typeof res.createdAt === 'string' && res.createdAt.length >= 10) {
+    return res.createdAt.slice(0, 10);
+  }
+  return res.checkInDate;
+}
+
+export function getReservationRoomDisplay(
+  res: Pick<ReservationRecord, 'roomId' | 'roomNumber' | 'requestedRoomType'>,
+  rooms: RoomRecord[]
+): {
+  isAssigned: boolean;
+  roomNumberLabel: string;
+  roomTypeLabel: string;
+  room?: RoomRecord;
+} {
+  const assignedRoom = res.roomId ? rooms.find((r) => r.id === res.roomId) : undefined;
+  const rawNum = (res.roomNumber || '').trim();
+  const isAssigned =
+    Boolean(res.roomId) &&
+    rawNum.length > 0 &&
+    rawNum.toLowerCase() !== 'unassigned';
+  const catalogRoom = !assignedRoom && isAssigned
+    ? RICHGATES_OFFICIAL_ROOMS.find((rm) => rm.roomNumber === rawNum)
+    : undefined;
+  const roomTypeLabel =
+    assignedRoom?.roomType ||
+    res.requestedRoomType ||
+    catalogRoom?.roomType ||
+    'Studio';
+
+  return {
+    isAssigned,
+    roomNumberLabel: isAssigned ? assignedRoom?.roomNumber || rawNum : 'Unassigned',
+    roomTypeLabel,
+    room: assignedRoom,
+  };
 }
 
 export interface HousekeepingTaskRecord {
@@ -337,8 +522,10 @@ export interface PosOrderRecord {
   id: string;
   propertyId: string;
   orderNumber: string;
+  orderDate?: string;
   serviceType: 'Dine-In' | 'Room Service' | 'Bar Lounge' | 'Takeaway';
   tableOrRoom: string;
+  guestName?: string;
   reservationId?: string;
   itemsSummary: string;
   itemCount: number;
@@ -348,6 +535,8 @@ export interface PosOrderRecord {
   paymentStatus: 'paid' | 'room_folio' | 'unpaid';
   paymentMethod: 'Room Folio' | 'Card POS' | 'Bank Transfer' | 'Cash NGN';
   kitchenStatus: 'queued' | 'preparing' | 'ready' | 'served';
+  notes?: string;
+  createdAt?: { toDate?: () => Date } | string;
   authorizedEmails: string[];
   ownerUid: string;
 }
@@ -431,6 +620,9 @@ export interface ShiftScheduleRecord {
   shiftDate: string;
   shiftWindow: 'Morning (07:00 - 15:00)' | 'Afternoon (15:00 - 23:00)' | 'Night (23:00 - 07:00)';
   status: 'scheduled' | 'completed' | 'missed';
+  handoverNotes?: string;
+  closedBy?: string;
+  closedAtIso?: string;
   authorizedEmails: string[];
   ownerUid: string;
 }
@@ -452,6 +644,8 @@ export interface PayrollRunRecord {
   id: string;
   propertyId: string;
   periodLabel: string;
+  payDate?: string;
+  paymentMethod?: string;
   staffCount: number;
   grossPayNgn: number;
   pensionDeductionNgn: number;
@@ -480,8 +674,11 @@ export interface MaintenanceTicketRecord {
 export interface OtaIntegrationRecord {
   id: string;
   propertyId: string;
-  channelName: 'Booking.com' | 'Airbnb' | 'Expedia' | 'Hotels.ng' | 'Direct Website Engine';
+  channelName: 'Booking.com' | 'Airbnb' | 'Expedia' | 'Hotels.ng' | 'VRBO' | 'Direct Website Engine' | 'Custom iCal';
   propertyListingId: string;
+  roomNumber?: string;
+  icalImportUrl?: string;
+  icalExportUrl?: string;
   commissionPct: number;
   autoSync: boolean;
   connected: boolean;
@@ -491,24 +688,64 @@ export interface OtaIntegrationRecord {
   ownerUid: string;
 }
 
+export type MessageRecipientScope = 'department' | 'direct_staff' | 'bulk_staff' | 'all_staff';
+
+export interface PropertyMessageRecord {
+  id: string;
+  propertyId: string;
+  senderEmail: string;
+  senderName: string;
+  senderRole: string;
+  senderDepartment: string;
+  recipientScope: MessageRecipientScope;
+  targetDepartment?: string;
+  recipientEmails: string[];
+  recipientNames: string[];
+  subject: string;
+  body: string;
+  priority: 'Normal' | 'Urgent';
+  readByEmails: string[];
+  createdAtIso: string;
+  authorizedEmails: string[];
+  ownerUid: string;
+}
+
+export const POS_DEFAULT_CATEGORIES = [
+  'Nigerian Kitchen',
+  'Grill & Continental',
+  'Breakfast',
+  'Bar & Cocktails',
+  'Beverage',
+  'Food',
+] as const;
+
 export interface PosMenuItem {
   id: string;
   name: string;
-  category: 'Nigerian Kitchen' | 'Grill & Continental' | 'Bar & Cocktails' | 'Breakfast';
+  category: string;
   priceNgn: number;
+  costNgn?: number;
   prepMinutes: number;
+  available?: boolean;
+}
+
+export interface PosMenuItemRecord extends PosMenuItem {
+  propertyId: string;
+  available: boolean;
+  authorizedEmails: string[];
+  ownerUid: string;
 }
 
 export const POS_MENU_ITEMS: PosMenuItem[] = [
-  { id: 'menu-1', name: 'Smoky Party Jollof & Grilled Croaker', category: 'Nigerian Kitchen', priceNgn: 18500, prepMinutes: 22 },
-  { id: 'menu-2', name: 'Ofe Onugbu (Bitterleaf) & Pounded Yam', category: 'Nigerian Kitchen', priceNgn: 16000, prepMinutes: 18 },
-  { id: 'menu-3', name: 'Enugu Goat Meat Pepper Soup', category: 'Nigerian Kitchen', priceNgn: 12500, prepMinutes: 15 },
-  { id: 'menu-4', name: 'Richgates Signature Suya Platter', category: 'Grill & Continental', priceNgn: 14500, prepMinutes: 16 },
-  { id: 'menu-5', name: 'Herb-Crusted Ribeye & Garlic Mash', category: 'Grill & Continental', priceNgn: 29000, prepMinutes: 25 },
-  { id: 'menu-6', name: 'Executive Continental Breakfast Tray', category: 'Breakfast', priceNgn: 13500, prepMinutes: 14 },
-  { id: 'menu-7', name: 'Zobo Chapman Pitchers (Non-Alcoholic)', category: 'Bar & Cocktails', priceNgn: 6500, prepMinutes: 5 },
-  { id: 'menu-8', name: 'Hennessy VS Glass / Lounge Pour', category: 'Bar & Cocktails', priceNgn: 19000, prepMinutes: 3 },
-  { id: 'menu-9', name: 'Fresh Pineapple & Ginger Cold Press', category: 'Bar & Cocktails', priceNgn: 5000, prepMinutes: 4 },
+  { id: 'menu-1', name: 'Smoky Party Jollof & Grilled Croaker', category: 'Nigerian Kitchen', priceNgn: 18500, costNgn: 9200, prepMinutes: 22, available: true },
+  { id: 'menu-2', name: 'Ofe Onugbu (Bitterleaf) & Pounded Yam', category: 'Nigerian Kitchen', priceNgn: 16000, costNgn: 7800, prepMinutes: 18, available: true },
+  { id: 'menu-3', name: 'Enugu Goat Meat Pepper Soup', category: 'Nigerian Kitchen', priceNgn: 12500, costNgn: 6000, prepMinutes: 15, available: true },
+  { id: 'menu-4', name: 'Richgates Signature Suya Platter', category: 'Grill & Continental', priceNgn: 14500, costNgn: 7200, prepMinutes: 16, available: true },
+  { id: 'menu-5', name: 'Herb-Crusted Ribeye & Garlic Mash', category: 'Grill & Continental', priceNgn: 29000, costNgn: 15500, prepMinutes: 25, available: true },
+  { id: 'menu-6', name: 'Executive Continental Breakfast Tray', category: 'Breakfast', priceNgn: 13500, costNgn: 6200, prepMinutes: 14, available: true },
+  { id: 'menu-7', name: 'Zobo Chapman Pitchers (Non-Alcoholic)', category: 'Bar & Cocktails', priceNgn: 6500, costNgn: 2200, prepMinutes: 5, available: true },
+  { id: 'menu-8', name: 'Hennessy VS Glass / Lounge Pour', category: 'Bar & Cocktails', priceNgn: 19000, costNgn: 11500, prepMinutes: 3, available: true },
+  { id: 'menu-9', name: 'Fresh Pineapple & Ginger Cold Press', category: 'Bar & Cocktails', priceNgn: 5000, costNgn: 1800, prepMinutes: 4, available: true },
 ];
 
 export const ROLE_LABELS: Record<StaffRole, string> = {
@@ -527,6 +764,9 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'rooms',
     'calendar',
     'reservations',
+    'arrivals',
+    'in_house',
+    'walk_in',
     'front_desk',
     'guests',
     'housekeeping',
@@ -540,16 +780,23 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'payroll',
     'maintenance',
     'ota_channels',
+    'messages',
+    'training_help',
     'properties_admin',
     'licensing',
     'rbac_audit',
     'deployment',
+    'profile',
+    'cms',
   ],
   property_admin: [
     'dashboard',
     'rooms',
     'calendar',
     'reservations',
+    'arrivals',
+    'in_house',
+    'walk_in',
     'front_desk',
     'guests',
     'housekeeping',
@@ -563,14 +810,18 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'payroll',
     'maintenance',
     'ota_channels',
+    'messages',
+    'training_help',
     'licensing',
     'rbac_audit',
+    'deployment',
+    'profile',
   ],
-  front_desk: ['dashboard', 'rooms', 'calendar', 'reservations', 'front_desk', 'guests', 'housekeeping', 'pos_kitchen', 'ota_channels'],
-  housekeeping: ['dashboard', 'rooms', 'calendar', 'housekeeping', 'maintenance', 'inventory', 'shifts_attendance'],
-  fnb_kitchen: ['dashboard', 'pos_kitchen', 'inventory', 'procurement', 'shifts_attendance'],
-  accountant: ['dashboard', 'accounting', 'reports', 'inventory', 'procurement', 'payroll', 'rbac_audit'],
-  maintenance: ['dashboard', 'rooms', 'calendar', 'maintenance', 'inventory', 'shifts_attendance'],
+  front_desk: ['dashboard', 'rooms', 'calendar', 'reservations', 'arrivals', 'in_house', 'walk_in', 'front_desk', 'guests', 'housekeeping', 'pos_kitchen', 'ota_channels', 'messages', 'training_help', 'profile'],
+  housekeeping: ['dashboard', 'rooms', 'calendar', 'housekeeping', 'maintenance', 'inventory', 'shifts_attendance', 'messages', 'training_help', 'profile'],
+  fnb_kitchen: ['dashboard', 'pos_kitchen', 'inventory', 'procurement', 'shifts_attendance', 'messages', 'training_help', 'profile'],
+  accountant: ['dashboard', 'accounting', 'inventory', 'procurement', 'payroll', 'rbac_audit', 'messages', 'training_help', 'profile'],
+  maintenance: ['dashboard', 'rooms', 'calendar', 'maintenance', 'inventory', 'shifts_attendance', 'messages', 'training_help', 'profile'],
 };
 
 export function getRoomSection(room: Pick<RoomRecord, 'section' | 'roomNumber' | 'roomType'>): RoomSection {
@@ -604,7 +855,305 @@ export function formatNgn(amount: number): string {
   }).format(Number.isFinite(amount) ? amount : 0);
 }
 
-export function getPortalUrl(portal: PortalMode | 'admin'): string {
+export function getPortalUrl(portal: PortalMode | 'admin' | 'richgates'): string {
   if (typeof window === 'undefined') return `/?portal=${portal}`;
   return `${window.location.origin}/?portal=${portal}`;
 }
+
+export interface CmsPageCopy {
+  navLabel: string;
+  title: string;
+  subtitle: string;
+  ctaLabel: string;
+}
+
+export interface CmsBrandCopy {
+  pchPortalName: string;
+  richgatesPortalName: string;
+  pchRoleSubtitle: string;
+  richgatesAdminSubtitle: string;
+  richgatesStaffSubtitle: string;
+  portalLinksButton: string;
+  announcementBanner: string;
+  checkInPolicyNote: string;
+  folioFooterNote: string;
+}
+
+export interface CmsLoginCopy {
+  richgatesHeroKicker: string;
+  richgatesHeroTitle: string;
+  richgatesHeroDesc: string;
+  staffHeroKicker: string;
+  staffHeroTitle: string;
+  staffHeroDesc: string;
+  pchHeroKicker: string;
+  pchHeroTitle: string;
+  pchHeroDesc: string;
+  richgatesSignInTitle: string;
+  richgatesSignInSubtitle: string;
+  staffSignInTitle: string;
+  staffSignInSubtitle: string;
+  pchSignInTitle: string;
+  pchSignInSubtitle: string;
+  signInLinksHeading: string;
+}
+
+export interface CmsDashboardCopy {
+  reservationsLedgerTitle: string;
+  reservationsLedgerSubtitle: string;
+  roomOverviewTitle: string;
+  scheduleTitle: string;
+  servicedSectionTitle: string;
+  servicedSectionSubtitle: string;
+  hotelSectionTitle: string;
+  hotelSectionSubtitle: string;
+  quickWalkInLabel: string;
+  quickReservationsLabel: string;
+  quickArrivalsLabel: string;
+  quickInHouseLabel: string;
+  quickFrontDeskLabel: string;
+  quickCalendarLabel: string;
+  quickChannelManagerLabel: string;
+}
+
+export interface CmsContent {
+  brand: CmsBrandCopy;
+  login: CmsLoginCopy;
+  dashboard: CmsDashboardCopy;
+  pages: Record<NavSectionId, CmsPageCopy>;
+  updatedByEmail?: string;
+}
+
+export const DEFAULT_CMS_CONTENT: CmsContent = {
+  brand: {
+    pchPortalName: 'PCH PMS',
+    richgatesPortalName: 'Richgates PMS',
+    pchRoleSubtitle: 'PCH Super Admin',
+    richgatesAdminSubtitle: 'Richgates Property Admin',
+    richgatesStaffSubtitle: 'Richgates Staff Ops',
+    portalLinksButton: 'Portal Links',
+    announcementBanner: '',
+    checkInPolicyNote:
+      'All guest check-ins must confirm payment, assign a room, verify government ID, and issue room key before completion.',
+    folioFooterNote:
+      'Thank you for choosing Richgates Apartments, Enugu. Official NGN receipt issued at Front Desk.',
+  },
+  login: {
+    richgatesHeroKicker: 'Serviced Apartments & Hotel Suites',
+    richgatesHeroTitle: 'Richgates Apartments, Enugu',
+    richgatesHeroDesc:
+      'Manage suite reservations, arrivals, in-house folios, nightly Naira rates, availability calendar blocks, and iCal booking channels.',
+    staffHeroKicker: 'Department Staff Workspace',
+    staffHeroTitle: 'Richgates Apartments Staff Operations',
+    staffHeroDesc:
+      'Dedicated staff sign-in for Front Desk folios, Housekeeping dispatch, Restaurant POS & Kitchen, Accounts, and Engineering.',
+    pchHeroKicker: 'Central Management Console',
+    pchHeroTitle: 'PCH PMS Multi-Property Administration',
+    pchHeroDesc:
+      'Manage multi-property portfolios, software licensing keys, role-based access, and platform audit logs.',
+    richgatesSignInTitle: 'Richgates Admin sign-in',
+    richgatesSignInSubtitle: 'Sign in with your Richgates Apartments property administrator account.',
+    staffSignInTitle: 'Richgates Staff sign-in',
+    staffSignInSubtitle: 'Sign in with your verified Richgates staff account.',
+    pchSignInTitle: 'PCH Super Admin sign-in',
+    pchSignInSubtitle: 'Sign in with your PCH multi-property administrator account.',
+    signInLinksHeading: 'SIGN-IN LINKS',
+  },
+  dashboard: {
+    reservationsLedgerTitle: 'Reservations',
+    reservationsLedgerSubtitle:
+      'Guest name, room assignment, room type, stay dates, occupancy, booking source, folio balances, payment & reservation status, date booked, and actions',
+    roomOverviewTitle: 'Room Overview',
+    scheduleTitle: "Today's Schedule",
+    servicedSectionTitle: 'Serviced Apartment Section',
+    servicedSectionSubtitle: 'Self-contained studios and suites equipped with fitted kitchenettes',
+    hotelSectionTitle: 'Hotel Rooms Section',
+    hotelSectionSubtitle: 'Individual executive studios and one-bedroom hospitality suites',
+    quickWalkInLabel: 'Walk-in Check-in',
+    quickReservationsLabel: 'Reservations',
+    quickArrivalsLabel: 'Arrivals',
+    quickInHouseLabel: 'In-House',
+    quickFrontDeskLabel: 'Front Desk & Folios',
+    quickCalendarLabel: 'Calendar',
+    quickChannelManagerLabel: 'Channel Manager',
+  },
+  pages: {
+    dashboard: {
+      navLabel: 'Dashboard',
+      title: 'Property Operations Dashboard',
+      subtitle: 'Live occupancy, reservations overview, room availability, and daily schedule',
+      ctaLabel: 'Reservations',
+    },
+    reservations: {
+      navLabel: 'Reservations',
+      title: 'Reservations',
+      subtitle:
+        'Manage bookings, assign suites, verify payment & payment status, track check-in/out dates, and execute front desk actions',
+      ctaLabel: 'New Reservation',
+    },
+    calendar: {
+      navLabel: 'Calendar & Blocks',
+      title: 'Availability Calendar, Search & Date Blocking',
+      subtitle:
+        'Search stays or available suites by date range, place owner/maintenance date blocks, or click any open date cell to book.',
+      ctaLabel: 'Block Room Dates',
+    },
+    arrivals: {
+      navLabel: 'Arrivals',
+      title: 'Arrivals',
+      subtitle: 'Confirmed and pending reservations awaiting front desk verification and check-in',
+      ctaLabel: 'New Reservation',
+    },
+    in_house: {
+      navLabel: 'In-House',
+      title: 'In-House Guests',
+      subtitle: 'Currently checked-in guests, live suite folios, room changes, extensions, and departures due',
+      ctaLabel: 'New Reservation',
+    },
+    walk_in: {
+      navLabel: 'Walk-in Check-in',
+      title: 'Walk-in Check-in',
+      subtitle: 'Register walk-in guest KYC details, assign an available room, and check in immediately',
+      ctaLabel: 'View In-House Guests',
+    },
+    front_desk: {
+      navLabel: 'Front Desk & Folios',
+      title: 'Front Desk Operations & Guest Folios',
+      subtitle: 'Active stays, room charges, POS postings, folio payments, and check-out settlements',
+      ctaLabel: 'New Reservation',
+    },
+    rooms: {
+      navLabel: 'Rooms & Rates',
+      title: 'Rooms, Rates & Suite Photos',
+      subtitle:
+        'Update nightly Naira rates, room types, sections, and upload suite photography',
+      ctaLabel: 'Sync Official Rates',
+    },
+    guests: {
+      navLabel: 'Guest Profiles',
+      title: 'Guest Profiles & KYC Directory',
+      subtitle: 'Click any guest row to view full guest profile, contact details, KYC, and stay history',
+      ctaLabel: 'Register Guest',
+    },
+    housekeeping: {
+      navLabel: 'Housekeeping',
+      title: 'Housekeeping Dispatch & Room Readiness',
+      subtitle: 'Live turnover schedule, attendant assignments, and suite inspection workflow',
+      ctaLabel: 'Assign Housekeeping Task',
+    },
+    pos_kitchen: {
+      navLabel: 'Restaurant POS & KDS',
+      title: 'Restaurant POS & Kitchen Display System (KDS)',
+      subtitle:
+        'Create dine-in, bar, or room-service tickets in Nigerian Naira (7.5% VAT), post directly to occupied Room Folios, and track live kitchen preparation.',
+      ctaLabel: 'Send Order to Kitchen',
+    },
+    accounting: {
+      navLabel: 'Accounting Ledger',
+      title: 'Accounting Ledger (Nigerian Naira ₦)',
+      subtitle: 'Real-time double-linked journal across Room Settlements, Restaurant POS, Procurement & Payroll',
+      ctaLabel: 'Post Journal Entry',
+    },
+    reports: {
+      navLabel: 'Management Reports',
+      title: 'Admin Management Reports & Analytics',
+      subtitle: 'Real-time executive analytics covering P&L, occupancy, ADR, RevPAR, booking sources, POS sales, departments, inventory, and staff performance',
+      ctaLabel: 'Export PDF',
+    },
+    inventory: {
+      navLabel: 'Store Inventory',
+      title: 'Central Store Inventory Control',
+      subtitle: 'Live stock quantities, reorder thresholds, and automated PO-to-Ledger receiving',
+      ctaLabel: 'Add Inventory Item',
+    },
+    procurement: {
+      navLabel: 'Procurement & POs',
+      title: 'Procurement & Supplier Purchase Orders',
+      subtitle: 'Live stock quantities, reorder thresholds, and automated PO-to-Ledger receiving',
+      ctaLabel: 'New Purchase Order',
+    },
+    staff: {
+      navLabel: 'Staff Directory',
+      title: 'Staff Management & Directory',
+      subtitle: 'Manage property employees, department roles, and monthly compensation',
+      ctaLabel: 'Onboard Staff Member',
+    },
+    shifts_attendance: {
+      navLabel: 'Shifts & Attendance',
+      title: 'Shift Roster & Daily Attendance',
+      subtitle: 'Assign morning/afternoon/night duty rosters and record real-time clock-ins',
+      ctaLabel: 'Export Shift PDF',
+    },
+    payroll: {
+      navLabel: 'Monthly Payroll',
+      title: 'Monthly Payroll & Employee Salaries',
+      subtitle: 'View individual monthly employee salaries, deductions, net take-home pay, pay dates, and payment history',
+      ctaLabel: 'Run & Post Monthly Payroll',
+    },
+    maintenance: {
+      navLabel: 'Maintenance',
+      title: 'Engineering & Preventive Maintenance',
+      subtitle: 'Facility work orders, generator & inverter servicing, and room out-of-order controls',
+      ctaLabel: 'Log Maintenance Ticket',
+    },
+    ota_channels: {
+      navLabel: 'Channel Manager & iCal',
+      title: 'Channel Manager & iCal Links',
+      subtitle:
+        'Connect channels with inbound iCal (.ics) links, export suite calendars, and sync OTA bookings in real time',
+      ctaLabel: 'Add Channel / iCal Link',
+    },
+    properties_admin: {
+      navLabel: 'Multi-Property Admin',
+      title: 'Multi-Property Administration',
+      subtitle: 'Central portfolio administration across hospitality properties',
+      ctaLabel: 'Add New Property',
+    },
+    licensing: {
+      navLabel: 'Software Licensing',
+      title: 'Centralized PureCrest Software Licensing & Activation',
+      subtitle: 'Generate, activate, and enforce property-bound Lifetime and Subscription license keys',
+      ctaLabel: 'Generate License Key',
+    },
+    rbac_audit: {
+      navLabel: 'RBAC & Audit Logs',
+      title: 'Role-Based Access Control & Audit Trail',
+      subtitle: 'Authorized user emails, portal role matrix, and immutable chronological audit logs',
+      ctaLabel: 'Authorize User Email',
+    },
+    messages: {
+      navLabel: 'Messages & Alerts',
+      title: 'Inter-Departmental Messaging & Staff Broadcasts',
+      subtitle:
+        'Send direct department handovers, urgent operational alerts, and bulk messages to staff across all Richgates teams.',
+      ctaLabel: 'New Message',
+    },
+    training_help: {
+      navLabel: 'Docs, Training & Help',
+      title: 'PMS Documentation, Video Training & Help Desk',
+      subtitle:
+        'Interactive video walkthroughs, standard operating procedures, and direct support contacts for every department.',
+      ctaLabel: 'Watch Training',
+    },
+    deployment: {
+      navLabel: 'Cloudflare Deploy',
+      title: 'Cloudflare Edge Deployment & Portal Links',
+      subtitle: 'Direct portal links and Cloudflare Pages edge deployment configuration',
+      ctaLabel: 'Copy Link',
+    },
+    profile: {
+      navLabel: 'Admin & Property Profile',
+      title: 'Admin & Property Profile',
+      subtitle: 'Manage your signed-in operator details, property logo, and official Richgates Apartments contact profile',
+      ctaLabel: 'Update Property Info',
+    },
+    cms: {
+      navLabel: 'App CMS & Text Editor',
+      title: 'PCH Super Admin CMS — Edit All Pages & App Copy',
+      subtitle:
+        'Customize page titles, navigation labels, login pages, dashboard headings, and operational notices across the entire application.',
+      ctaLabel: 'Publish CMS Changes',
+    },
+  },
+};
+

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Package, Plus, ShoppingCart } from 'lucide-react';
+import { Download, FileText, Package, Plus, Printer, ShoppingCart } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   adjustInventoryQty,
   createInventoryItem,
@@ -14,7 +16,13 @@ import {
   NavSectionId,
   PropertyRecord,
   PurchaseOrderRecord,
+  RICHGATES_PROPERTY_INFO,
 } from '../types/pms';
+import { useCms } from '../context/CmsContext';
+
+function formatPdfNgn(amount: number): string {
+  return `NGN ${Math.round(amount).toLocaleString('en-US')}`;
+}
 
 interface FinanceInventoryViewProps {
   section: Extract<NavSectionId, 'accounting' | 'reports' | 'inventory' | 'procurement'>;
@@ -35,6 +43,7 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
   actorRole,
   onNotify,
 }) => {
+  const { cms } = useCms();
   const [showLedgerForm, setShowLedgerForm] = useState(false);
   const [entryType, setEntryType] = useState<'revenue' | 'expense'>('expense');
   const [category, setCategory] =
@@ -103,6 +112,90 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
     onNotify('Exported NGN financial statement CSV');
   };
 
+  const handleExportPdf = () => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const propAddress = property.address || RICHGATES_PROPERTY_INFO.address;
+    const propPhone = property.phone || RICHGATES_PROPERTY_INFO.phone;
+    const propEmail = property.email || RICHGATES_PROPERTY_INFO.email;
+
+    let textStartX = 14;
+    if (property.logoUrl && property.logoUrl.startsWith('data:image/')) {
+      try {
+        const imgFormat = property.logoUrl.includes('image/png') ? 'PNG' : 'JPEG';
+        doc.addImage(property.logoUrl, imgFormat, 14, 12, 16, 16);
+        textStartX = 34;
+      } catch {
+        // Skip logo embedding if image format is incompatible
+      }
+    }
+
+    doc.setFontSize(15);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text(property.name, textStartX, 17);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(71, 85, 105);
+    doc.text(propAddress, textStartX, 22);
+    doc.text(`${propPhone} | ${propEmail}`, textStartX, 26.5);
+
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(4, 120, 87);
+    doc.text('Financial Report & VAT Statement', 14, 36);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Generated: ${new Date().toLocaleDateString('en-GB')} (${todayIso}) | Prepared by: ${actorRole}`, 14, 41);
+
+    autoTable(doc, {
+      startY: 46,
+      head: [['Gross Revenue', 'Operating Expenses', 'Net Operating Surplus', 'VAT Collected (7.5%)']],
+      body: [[
+        formatPdfNgn(totalRevenue),
+        formatPdfNgn(totalExpenses),
+        formatPdfNgn(netProfit),
+        formatPdfNgn(totalVat),
+      ]],
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontSize: 8.5 },
+      bodyStyles: { fontStyle: 'bold', fontSize: 9.5, textColor: [15, 23, 42] },
+    });
+
+    const summaryFinalY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 68;
+
+    autoTable(doc, {
+      startY: summaryFinalY + 6,
+      head: [['Date', 'Reference', 'Category', 'Description', 'Method', 'VAT', 'Amount']],
+      body: ledgerEntries.map((e) => [
+        e.entryDate,
+        e.reference || '-',
+        e.category,
+        e.description,
+        e.paymentMethod,
+        formatPdfNgn(e.vatNgn),
+        `${e.entryType === 'revenue' ? '+' : '-'}${formatPdfNgn(e.amountNgn)}`,
+      ]),
+      theme: 'striped',
+      headStyles: { fillColor: [4, 120, 87], textColor: 255, fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: {
+        5: { halign: 'right' },
+        6: { halign: 'right', fontStyle: 'bold' },
+      },
+    });
+
+    doc.save(`${property.code.toLowerCase()}-financial-report-${todayIso}.pdf`);
+    onNotify('Downloaded Financial Report PDF');
+  };
+
+  const handlePrintReport = () => {
+    window.print();
+  };
+
   const handleAddLedger = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim()) return;
@@ -169,21 +262,44 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Print-Only Formal Letterhead */}
+      {(section === 'accounting' || section === 'reports') && (
+        <div className="hidden print-only border-b-2 border-slate-900 pb-4 mb-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              {property.logoUrl && (
+                <img
+                  src={property.logoUrl}
+                  alt={property.name}
+                  className="w-12 h-12 object-contain"
+                />
+              )}
+              <div>
+                <h2 className="font-display text-lg font-bold text-slate-900">{property.name}</h2>
+                <p className="text-xs text-slate-600">
+                  {property.address || RICHGATES_PROPERTY_INFO.address}
+                </p>
+                <p className="text-xs text-slate-600">
+                  {property.phone || RICHGATES_PROPERTY_INFO.phone} ·{' '}
+                  {property.email || RICHGATES_PROPERTY_INFO.email}
+                </p>
+              </div>
+            </div>
+            <div className="text-right text-xs text-slate-600">
+              <p className="font-bold text-slate-900">Financial Report &amp; VAT Statement</p>
+              <p>Printed: {new Date().toLocaleDateString('en-GB')}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="no-print bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-xl font-bold text-slate-900">
-            {section === 'accounting'
-              ? 'Accounting Ledger (Nigerian Naira ₦)'
-              : section === 'reports'
-                ? 'Financial Reports & VAT Statement'
-                : section === 'inventory'
-                  ? 'Central Store Inventory Control'
-                  : 'Procurement & Supplier Purchase Orders'}
+            {cms.pages[section].title}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            {section === 'accounting' || section === 'reports'
-              ? 'Real-time double-linked journal across Room Settlements, Restaurant POS, Procurement & Payroll'
-              : 'Live stock quantities, reorder thresholds, and automated PO-to-Ledger receiving'}
+            {cms.pages[section].subtitle}
           </p>
         </div>
 
@@ -192,8 +308,24 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
             <>
               <button
                 type="button"
+                onClick={handlePrintReport}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print Report</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportPdf}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>{section === 'reports' ? cms.pages.reports.ctaLabel || 'Export PDF' : 'Export PDF'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={handleExportCsv}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Export CSV</span>
@@ -201,10 +333,10 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
               <button
                 type="button"
                 onClick={() => setShowLedgerForm((v) => !v)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Post Journal Entry</span>
+                <span>{cms.pages.accounting.ctaLabel || 'Post Journal Entry'}</span>
               </button>
             </>
           )}
@@ -212,20 +344,20 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
             <button
               type="button"
               onClick={() => setShowInvForm((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Add Inventory SKU</span>
+              <span>{cms.pages.inventory.ctaLabel || 'Add Inventory Item'}</span>
             </button>
           )}
           {section === 'procurement' && (
             <button
               type="button"
               onClick={() => setShowPoForm((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Create Purchase Order</span>
+              <span>{cms.pages.procurement.ctaLabel || 'New Purchase Order'}</span>
             </button>
           )}
         </div>

@@ -1,38 +1,53 @@
 import React, { useState } from 'react';
 import {
   Building2,
+  Calendar,
   Check,
   CloudUpload,
   Copy,
+  Download,
   Globe,
   KeyRound,
+  Link2,
   Plus,
   RefreshCw,
   Shield,
+  Trash2,
   UserPlus,
 } from 'lucide-react';
 import {
   activateLicenseKeyWorkflow,
   authorizeUserEmailForProperty,
+  buildPropertyIcalFeed,
   createNewPropertyWithRooms,
+  createOtaChannelWithIcal,
+  deleteOtaChannel,
   generateCentralLicense,
+  prepareRichgatesProductionDatabaseWorkflow,
   syncOtaChannelWorkflow,
   updateLicenseStatus,
+  updateOtaChannelIcal,
 } from '../services/pmsService';
 import {
   AuditLogRecord,
+  BlockedDateRecord,
   formatNgn,
   getPortalUrl,
   LicenseRecord,
   NavSectionId,
   OtaIntegrationRecord,
   PortalMode,
+  PosMenuItemRecord,
   PropertyRecord,
+  ReservationRecord,
+  RICHGATES_MAX_ROOMS,
   ROLE_ALLOWED_SECTIONS,
   ROLE_LABELS,
   RoomRecord,
+  sortRoomsByNumber,
   StaffRole,
 } from '../types/pms';
+import { useCms } from '../context/CmsContext';
 
 interface AdminLicensingViewProps {
   section: Extract<
@@ -42,7 +57,10 @@ interface AdminLicensingViewProps {
   property: PropertyRecord;
   properties: PropertyRecord[];
   rooms: RoomRecord[];
+  reservations?: ReservationRecord[];
+  blockedDates?: BlockedDateRecord[];
   otaChannels: OtaIntegrationRecord[];
+  posMenuItems?: PosMenuItemRecord[];
   licenses: LicenseRecord[];
   auditLogs: AuditLogRecord[];
   activeRole: StaffRole;
@@ -63,7 +81,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   property,
   properties,
   rooms,
+  reservations = [],
+  blockedDates = [],
   otaChannels,
+  posMenuItems = [],
   licenses,
   auditLogs,
   activeRole,
@@ -71,6 +92,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   onSwitchPortal,
   onNotify,
 }) => {
+  const { cms } = useCms();
   // New property state
   const [showPropForm, setShowPropForm] = useState(false);
   const [propName, setPropName] = useState('');
@@ -102,7 +124,121 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [grantName, setGrantName] = useState('');
   const [grantRole, setGrantRole] = useState<StaffRole>('front_desk');
 
+  // Channel Manager & iCal state
+  const [showChannelForm, setShowChannelForm] = useState(false);
+  const [newChannelName, setNewChannelName] =
+    useState<OtaIntegrationRecord['channelName']>('Airbnb');
+  const [newChannelSuite, setNewChannelSuite] = useState('All Suites');
+  const [newListingId, setNewListingId] = useState('');
+  const [newIcalUrl, setNewIcalUrl] = useState('');
+  const [newCommissionPct, setNewCommissionPct] = useState(15);
+  const [newAutoSync, setNewAutoSync] = useState(true);
+  const [exportSuiteFilter, setExportSuiteFilter] = useState('ALL');
+  const [icalDrafts, setIcalDrafts] = useState<Record<string, { url: string; room: string }>>({});
+
   const [busy, setBusy] = useState(false);
+  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
+  const sortedRooms = sortRoomsByNumber(rooms);
+
+  const handleDownloadCleanProductionBackup = () => {
+    const cleanRooms = sortedRooms.map((r) => ({
+      id: r.id,
+      roomNumber: r.roomNumber,
+      name: r.name,
+      roomType: r.roomType,
+      section: r.section,
+      floor: r.floor,
+      nightlyRateNgn: r.nightlyRateNgn,
+      maxGuests: r.maxGuests,
+      occupancyStatus: 'vacant' as const,
+      housekeepingStatus: 'clean' as const,
+      currentGuestName: '',
+      currentReservationId: '',
+      imageUrl: r.imageUrl || '',
+      amenities: r.amenities || [],
+    }));
+
+    const backupPayload = {
+      schemaVersion: '1.0-production',
+      exportedAt: new Date().toISOString(),
+      deploymentTarget: 'cloudflare-pages',
+      property: {
+        id: property.id,
+        name: property.name,
+        code: property.code,
+        city: property.city,
+        state: property.state,
+        country: property.country,
+        address: property.address,
+        phone: property.phone || '',
+        whatsapp: property.whatsapp || '',
+        email: property.email || '',
+        currency: property.currency,
+        roomCount: cleanRooms.length,
+        status: property.status,
+        licenseKey: property.licenseKey || '',
+        licensePlan: property.licensePlan || 'Lifetime Sovereign',
+        adminEmail: property.adminEmail,
+        authorizedEmails: property.authorizedEmails,
+      },
+      licenses: licenses.filter((l) => l.propertyId === property.id),
+      rooms: cleanRooms,
+      posMenuItems: posMenuItems.map((m) => ({
+        id: m.id,
+        name: m.name,
+        category: m.category,
+        priceNgn: m.priceNgn,
+        costNgn: m.costNgn ?? 0,
+        prepMinutes: m.prepMinutes,
+        available: m.available,
+      })),
+      otaChannels: otaChannels.map((o) => ({
+        id: o.id,
+        channelName: o.channelName,
+        propertyListingId: o.propertyListingId,
+        roomNumber: o.roomNumber || 'All Suites',
+        commissionPct: o.commissionPct,
+        autoSync: o.autoSync,
+        connected: o.connected,
+        bookingsImported: 0,
+      })),
+      guests: [],
+      reservations: [],
+      blockedDates: [],
+      housekeepingTasks: [],
+      posOrders: [],
+      ledgerEntries: [],
+    };
+
+    const blob = new Blob([JSON.stringify(backupPayload, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${property.code.toLowerCase()}-production-backup-rooms-only.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onNotify(`Downloaded clean production backup (${cleanRooms.length} suites, 0 demo guests)`);
+  };
+
+  const handleConfirmPurgeDemoGuests = async () => {
+    setBusy(true);
+    try {
+      const result = await prepareRichgatesProductionDatabaseWorkflow({
+        property,
+        actorRole: ROLE_LABELS[activeRole],
+      });
+      setShowPurgeConfirm(false);
+      onNotify(
+        `Production ready: kept ${result.roomsResetCount} rooms (vacant & clean) and removed ${result.deletedDocsCount} demo records`
+      );
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Unable to clear demo records.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleCopy = async (text: string, label: string) => {
     try {
@@ -152,19 +288,24 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           ? pricing.annual
           : pricing.monthly;
 
+    const cappedMaxRooms =
+      targetProp.code === 'RG-ENU-01'
+        ? Math.min(pricing.rooms, RICHGATES_MAX_ROOMS)
+        : pricing.rooms;
+
     setBusy(true);
     try {
       const key = await generateCentralLicense({
         property: targetProp,
         plan: licPlan,
         billingCycle: effectiveCycle,
-        maxRooms: pricing.rooms,
+        maxRooms: cappedMaxRooms,
         priceNgn,
         durationDays: effectiveCycle === 'monthly' ? 30 : licDurationDays,
         autoActivate: licAutoActivate,
         actorRole: ROLE_LABELS[activeRole],
       });
-      onNotify(`Generated PureCrest license key ${key}`);
+      onNotify(`Generated PureCrest license key ${key} (Max ${cappedMaxRooms} rooms)`);
     } finally {
       setBusy(false);
     }
@@ -214,35 +355,80 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     }
   };
 
-  const availableRoom = rooms.find((r) => r.occupancyStatus === 'vacant');
+  const availableRoom = sortedRooms.find((r) => r.occupancyStatus === 'vacant');
+
+  const outboundFeedUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/?ical=${encodeURIComponent(property.id)}&room=${encodeURIComponent(exportSuiteFilter)}`
+      : `/?ical=${property.id}&room=${exportSuiteFilter}`;
+
+  const handleDownloadIcs = (roomFilter?: string) => {
+    const ics = buildPropertyIcalFeed({
+      propertyName: property.name,
+      reservations,
+      blockedDates,
+      roomNumberFilter: roomFilter,
+    });
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const suffix = roomFilter && roomFilter !== 'ALL' ? `-${roomFilter}` : '-all-suites';
+    a.download = `${property.code.toLowerCase()}${suffix}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    onNotify(`Downloaded iCal calendar feed (${roomFilter && roomFilter !== 'ALL' ? roomFilter : 'All Suites'})`);
+  };
+
+  const handleCreateChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await createOtaChannelWithIcal({
+        property,
+        channelName: newChannelName,
+        propertyListingId: newListingId,
+        roomNumber: newChannelSuite,
+        icalImportUrl: newIcalUrl,
+        commissionPct: newCommissionPct,
+        autoSync: newAutoSync,
+        actorRole: ROLE_LABELS[activeRole],
+      });
+      onNotify(`Added ${newChannelName} (${newChannelSuite}) to Channel Manager`);
+      setShowChannelForm(false);
+      setNewListingId('');
+      setNewIcalUrl('');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-xl font-bold text-slate-900">
-            {section === 'ota_channels'
-              ? 'Online Booking & OTA Channel Integrations'
-              : section === 'properties_admin'
-                ? `Multi-Property Administration (${properties.length} Properties)`
-                : section === 'licensing'
-                  ? 'Centralized PureCrest Software Licensing & Activation'
-                  : section === 'rbac_audit'
-                    ? 'Role-Based Access Control & Audit Trail'
-                    : 'Cloudflare Edge Deployment & Portal Links'}
+            {section === 'properties_admin'
+              ? `${cms.pages.properties_admin.title} (${properties.length} Properties)`
+              : cms.pages[section].title}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            {section === 'ota_channels'
-              ? 'Two-way inventory sync with Booking.com, Airbnb, Hotels.ng, Expedia, and Direct Booking Engine'
-              : section === 'properties_admin'
-                ? 'Central PureCrest portfolio administration across Nigerian hospitality properties'
-                : section === 'licensing'
-                  ? 'Generate, activate, and enforce property-bound Lifetime and Subscription license keys'
-                  : section === 'rbac_audit'
-                    ? 'Authorized user emails, portal role matrix, and immutable chronological audit logs'
-                    : 'Direct portal links and Cloudflare Pages edge deployment configuration'}
+            {cms.pages[section].subtitle}
           </p>
         </div>
+
+        {section === 'ota_channels' && (
+          <button
+            type="button"
+            onClick={() => setShowChannelForm((v) => !v)}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{cms.pages.ota_channels.ctaLabel || 'Add Channel / iCal Link'}</span>
+          </button>
+        )}
 
         {section === 'properties_admin' && activeRole === 'pch_admin' && (
           <button
@@ -251,100 +437,399 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add New Property</span>
+            <span>{cms.pages.properties_admin.ctaLabel || 'Add New Property'}</span>
           </button>
         )}
       </div>
 
-      {/* SECTION: OTA CHANNELS */}
+      {/* SECTION: CHANNEL MANAGER & iCAL LINKS */}
       {section === 'ota_channels' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {otaChannels.map((ch) => (
-            <div
-              key={ch.id}
-              className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4"
+        <div className="space-y-6">
+          {/* Add New Channel + iCal Link Form */}
+          {showChannelForm && (
+            <form
+              onSubmit={handleCreateChannel}
+              className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 text-xs"
             >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-slate-700" />
-                    <h2 className="font-display text-sm font-bold text-slate-900">
-                      {ch.channelName}
-                    </h2>
-                  </div>
-                  <span
-                    className={`text-xs font-semibold ${
-                      ch.connected ? 'text-emerald-700' : 'text-slate-500'
-                    }`}
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 className="font-display text-sm font-bold text-slate-900">
+                  Add Channel to Channel Manager (Inbound iCal .ics)
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowChannelForm(false)}
+                  className="text-slate-500 hover:text-slate-800"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Channel Platform</label>
+                  <select
+                    value={newChannelName}
+                    onChange={(e) => {
+                      const val = e.target.value as OtaIntegrationRecord['channelName'];
+                      setNewChannelName(val);
+                      if (val === 'Direct Website Engine' || val === 'Custom iCal') {
+                        setNewCommissionPct(0);
+                      } else if (val === 'VRBO') {
+                        setNewCommissionPct(8);
+                      } else {
+                        setNewCommissionPct(15);
+                      }
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                   >
-                    {ch.connected ? 'Connected' : 'Disconnected'}
-                  </span>
+                    <option value="Airbnb">Airbnb</option>
+                    <option value="Booking.com">Booking.com</option>
+                    <option value="VRBO">VRBO</option>
+                    <option value="Hotels.ng">Hotels.ng</option>
+                    <option value="Expedia">Expedia</option>
+                    <option value="Custom iCal">Custom iCal</option>
+                    <option value="Direct Website Engine">Direct Website Engine</option>
+                  </select>
                 </div>
 
-                <p className="font-mono-tabular text-xs text-slate-500">
-                  Listing ID: {ch.propertyListingId}
-                </p>
-
-                <div className="grid grid-cols-2 gap-2 pt-2 text-xs border-t border-slate-100">
-                  <div>
-                    <p className="text-slate-500">Commission</p>
-                    <p className="font-mono-tabular font-semibold text-slate-900">
-                      {ch.commissionPct}%
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500">Bookings Imported</p>
-                    <p className="font-mono-tabular font-semibold text-slate-900">
-                      {ch.bookingsImported}
-                    </p>
-                  </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Suite Mapping</label>
+                  <select
+                    value={newChannelSuite}
+                    onChange={(e) => setNewChannelSuite(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="All Suites">All Suites (Property-wide)</option>
+                    {sortedRooms.map((r) => (
+                      <option key={r.id} value={r.roomNumber}>
+                        {r.roomNumber} · {r.roomType}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <p className="font-mono-tabular text-[11px] text-slate-500">
-                  Last Sync: {ch.lastSyncedIso.slice(0, 16).replace('T', ' ')}
-                </p>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Listing / Ext ID</label>
+                  <input
+                    type="text"
+                    value={newListingId}
+                    onChange={(e) => setNewListingId(e.target.value)}
+                    placeholder="e.g. ABNB-RM1-904"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+
+                <div className="lg:col-span-2">
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Inbound iCal URL (.ics)
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={newIcalUrl}
+                    onChange={(e) => setNewIcalUrl(e.target.value)}
+                    placeholder="https://www.airbnb.com/calendar/ical/12345.ics?s=..."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
+                <div className="flex flex-wrap items-center gap-4">
+                  <label className="inline-flex items-center gap-2 text-slate-700">
+                    <span>Commission %:</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={newCommissionPct}
+                      onChange={(e) => setNewCommissionPct(Number(e.target.value))}
+                      className="w-16 border border-slate-200 rounded-lg px-2 py-1 font-mono-tabular"
+                    />
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newAutoSync}
+                      onChange={(e) => setNewAutoSync(e.target.checked)}
+                    />
+                    <span>Enable two-way auto sync</span>
+                  </label>
+                </div>
+
                 <button
-                  type="button"
-                  onClick={() => {
-                    syncOtaChannelWorkflow({
-                      property,
-                      channel: ch,
-                      toggleConnect: true,
-                      actorRole: ROLE_LABELS[activeRole],
-                    });
-                    onNotify(`${ch.channelName} ${ch.connected ? 'disconnected' : 'connected'}`);
-                  }}
-                  className="px-3 py-1.5 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50"
+                  type="submit"
+                  disabled={busy}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
                 >
-                  {ch.connected ? 'Disconnect' : 'Connect'}
-                </button>
-                <button
-                  type="button"
-                  disabled={!ch.connected}
-                  onClick={() => {
-                    syncOtaChannelWorkflow({
-                      property,
-                      channel: ch,
-                      importSampleBooking: Boolean(availableRoom),
-                      availableRoom,
-                      actorRole: ROLE_LABELS[activeRole],
-                    });
-                    onNotify(
-                      availableRoom
-                        ? `Synced ${ch.channelName} & imported booking into Room ${availableRoom.roomNumber}`
-                        : `Synced inventory with ${ch.channelName}`
-                    );
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Sync &amp; Pull Booking</span>
+                  Save Channel &amp; Connect iCal
                 </button>
               </div>
+            </form>
+          )}
+
+          {/* Outbound iCal Feed Export Generator */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-emerald-700" />
+                <h2 className="font-display text-sm font-bold text-slate-900">
+                  Outbound Property iCal Export Feed (.ics)
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500">
+                Paste this outbound iCal link into Airbnb, Booking.com, or VRBO to block booked &amp; held dates automatically.
+              </p>
             </div>
-          ))}
+
+            <div className="flex flex-wrap items-center gap-2.5 text-xs">
+              <select
+                value={exportSuiteFilter}
+                onChange={(e) => setExportSuiteFilter(e.target.value)}
+                className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              >
+                <option value="ALL">All Suites ({property.code})</option>
+                {sortedRooms.map((r) => (
+                  <option key={r.id} value={r.roomNumber}>
+                    {r.roomNumber} · {r.roomType}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => handleCopy(outboundFeedUrl, 'outbound-ical')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg font-medium text-slate-800 cursor-pointer"
+              >
+                {copiedKey === 'outbound-ical' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Feed Link Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy iCal Link</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleDownloadIcs(exportSuiteFilter)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download .ics</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Connected Channels Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {otaChannels.map((ch) => {
+              const draft = icalDrafts[ch.id] ?? {
+                url: ch.icalImportUrl || '',
+                room: ch.roomNumber || 'All Suites',
+              };
+              const suiteParam = encodeURIComponent(draft.room === 'All Suites' ? 'ALL' : draft.room);
+              const channelExportUrl =
+                ch.icalExportUrl ||
+                (typeof window !== 'undefined'
+                  ? `${window.location.origin}/?ical=${encodeURIComponent(property.id)}&room=${suiteParam}`
+                  : `/?ical=${property.id}&room=${suiteParam}`);
+
+              return (
+                <div
+                  key={ch.id}
+                  className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-slate-700" />
+                        <h2 className="font-display text-sm font-bold text-slate-900">
+                          {ch.channelName}
+                        </h2>
+                      </div>
+                      <span
+                        className={`text-xs font-semibold ${
+                          ch.connected ? 'text-emerald-700' : 'text-slate-500'
+                        }`}
+                      >
+                        {ch.connected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-slate-500 font-mono-tabular">
+                      <span>Listing: {ch.propertyListingId}</span>
+                      <span className="font-semibold text-slate-800">
+                        {ch.roomNumber || 'All Suites'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-2 text-xs border-t border-slate-100">
+                      <div>
+                        <p className="text-slate-500">Commission</p>
+                        <p className="font-mono-tabular font-semibold text-slate-900">
+                          {ch.commissionPct}%
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500">Bookings Imported</p>
+                        <p className="font-mono-tabular font-semibold text-slate-900">
+                          {ch.bookingsImported}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Inbound iCal Link & Suite Assignment */}
+                    <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
+                      <div className="flex items-center justify-between">
+                        <label className="font-semibold text-slate-700 inline-flex items-center gap-1">
+                          <Link2 className="w-3 h-3 text-slate-400" />
+                          <span>Inbound iCal Link (.ics)</span>
+                        </label>
+                        <select
+                          value={draft.room}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: { ...draft, room: e.target.value },
+                            }))
+                          }
+                          className="border border-slate-200 rounded px-2 py-0.5 text-[11px] bg-white"
+                        >
+                          <option value="All Suites">All Suites</option>
+                          {sortedRooms.map((r) => (
+                            <option key={r.id} value={r.roomNumber}>
+                              {r.roomNumber}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="url"
+                          value={draft.url}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: { ...draft, url: e.target.value },
+                            }))
+                          }
+                          placeholder="Paste external .ics calendar link..."
+                          className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              await updateOtaChannelIcal({
+                                property,
+                                channel: ch,
+                                icalImportUrl: draft.url,
+                                roomNumber: draft.room,
+                                actorRole: ROLE_LABELS[activeRole],
+                              });
+                              onNotify(`Saved iCal link for ${ch.channelName}`);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold shrink-0 cursor-pointer"
+                        >
+                          Save iCal
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+                        <span className="truncate font-mono-tabular pr-2">
+                          Last Sync: {ch.lastSyncedIso.slice(0, 16).replace('T', ' ')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(channelExportUrl, `exp-${ch.id}`)}
+                          className="inline-flex items-center gap-1 text-emerald-700 hover:underline font-medium shrink-0 cursor-pointer"
+                        >
+                          {copiedKey === `exp-${ch.id}` ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>Copied Feed</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Export Feed</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          syncOtaChannelWorkflow({
+                            property,
+                            channel: ch,
+                            toggleConnect: true,
+                            actorRole: ROLE_LABELS[activeRole],
+                          });
+                          onNotify(`${ch.channelName} ${ch.connected ? 'disconnected' : 'connected'}`);
+                        }}
+                        className="px-2.5 py-1.5 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                      >
+                        {ch.connected ? 'Disconnect' : 'Connect'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deleteOtaChannel({
+                            property,
+                            channel: ch,
+                            actorRole: ROLE_LABELS[activeRole],
+                          });
+                          onNotify(`Removed ${ch.channelName}`);
+                        }}
+                        title="Remove channel"
+                        className="p-1.5 border border-slate-200 rounded-lg text-slate-400 hover:text-rose-700 hover:border-rose-200 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!ch.connected}
+                      onClick={() => {
+                        syncOtaChannelWorkflow({
+                          property,
+                          channel: ch,
+                          importSampleBooking: Boolean(availableRoom),
+                          availableRoom,
+                          actorRole: ROLE_LABELS[activeRole],
+                        });
+                        onNotify(
+                          availableRoom
+                            ? `Synced ${ch.channelName} & imported booking into ${availableRoom.roomNumber}`
+                            : `Synced inventory with ${ch.channelName}`
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Sync &amp; Pull</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -618,7 +1103,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   disabled={busy || activeRole !== 'pch_admin'}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg"
                 >
-                  Generate License Key
+                  {cms.pages.licensing.ctaLabel || 'Generate License Key'}
                 </button>
               </div>
               {activeRole !== 'pch_admin' && (
@@ -854,7 +1339,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   disabled={busy}
                   className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg whitespace-nowrap"
                 >
-                  Grant Portal Access
+                  {cms.pages.rbac_audit.ctaLabel || 'Authorize User Email'}
                 </button>
               </div>
             </form>
@@ -927,83 +1412,222 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
       {/* SECTION: CLOUDFLARE DEPLOYMENT & PORTAL LINKS */}
       {section === 'deployment' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <CloudUpload className="w-4 h-4 text-emerald-700" />
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Cloudflare Pages Deployment Configuration
-              </h2>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              PCH PMS is configured with <code className="font-mono-tabular">wrangler.toml</code>{' '}
-              and <code className="font-mono-tabular">public/_redirects</code> for zero-server
-              Cloudflare Pages global edge hosting connected to Firebase Firestore.
-            </p>
-            <pre className="bg-slate-900 text-slate-100 p-4 rounded-lg text-xs font-mono-tabular overflow-x-auto">
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <CloudUpload className="w-4 h-4 text-emerald-700" />
+                <h2 className="font-display text-sm font-bold text-slate-900">
+                  Cloudflare Pages Deployment Configuration
+                </h2>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                PCH PMS is configured with <code className="font-mono-tabular">wrangler.toml</code>{' '}
+                and <code className="font-mono-tabular">public/_redirects</code> for zero-server
+                Cloudflare Pages global edge hosting connected to Firebase Firestore.
+              </p>
+              <pre className="bg-slate-900 text-slate-100 p-4 rounded-lg text-xs font-mono-tabular overflow-x-auto">
 {`npm install
 npm run build
 npx wrangler pages deploy dist --project-name=pch-pms`}
-            </pre>
-            <p className="text-xs text-slate-500">
-              After deploying to Cloudflare Pages, add your <code className="font-mono-tabular">*.pages.dev</code> domain
-              under Firebase Console → Authentication → Authorized Domains.
-            </p>
+              </pre>
+              <p className="text-xs text-slate-500">
+                After deploying to Cloudflare Pages, add your <code className="font-mono-tabular">*.pages.dev</code> domain
+                under Firebase Console → Authentication → Authorized Domains.
+              </p>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+              <h2 className="font-display text-sm font-bold text-slate-900 border-b border-slate-100 pb-3">
+                Direct Portal Login Links
+              </h2>
+              {(
+                [
+                  { id: 'richgates-admin', label: 'Richgates Property Admin Login' },
+                  { id: 'staff', label: 'Richgates Staff Login' },
+                  { id: 'pch-admin', label: 'PCH Super Admin Login' },
+                ] as Array<{ id: PortalMode; label: string }>
+              ).map((item) => {
+                const url = getPortalUrl(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900">{item.label}</p>
+                      <p className="font-mono-tabular text-[11px] text-slate-500 truncate">
+                        {url}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(url, item.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-xs font-medium"
+                      >
+                        {copiedKey === item.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>{cms.pages.deployment.ctaLabel || 'Copy Link'}</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onSwitchPortal(item.id)}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium"
+                      >
+                        Launch
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
+          {/* Direct Custom Subdomain Routing (admin.pchpms.com & richgates.pchpms.com) */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <h2 className="font-display text-sm font-bold text-slate-900 border-b border-slate-100 pb-3">
-              Direct Portal Login Links
-            </h2>
-            {(
-              [
-                { id: 'pch-admin', label: 'PCH Super Admin Login' },
-                { id: 'richgates-admin', label: 'Richgates Apartments Property Admin Login' },
-                { id: 'staff', label: 'Staff Operations Login' },
-              ] as Array<{ id: PortalMode; label: string }>
-            ).map((item) => {
-              const url = getPortalUrl(item.id);
-              return (
-                <div
-                  key={item.id}
-                  className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-slate-900">{item.label}</p>
-                    <p className="font-mono-tabular text-[11px] text-slate-500 truncate">
-                      {url}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(url, item.id)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-xs font-medium"
-                    >
-                      {copiedKey === item.id ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>Copy</span>
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onSwitchPortal(item.id)}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium"
-                    >
-                      Launch
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+              <Globe className="w-4 h-4 text-[#1c46be]" />
+              <h2 className="font-display text-sm font-bold text-slate-900">
+                Direct Custom Domains (admin.pchpms.com &amp; richgates.pchpms.com)
+              </h2>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              The application automatically detects the subdomain hostname on load so one Cloudflare Pages deployment serves every property and PCH central admin portal cleanly:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                <p className="font-mono-tabular font-bold text-[#1c46be]">admin.pchpms.com</p>
+                <p className="font-semibold text-slate-900">PCH Super Admin Console</p>
+                <p className="text-slate-600">
+                  Opens PCH Admin directly to manage Richgates, onboard new properties, issue license keys, and edit CMS.
+                </p>
+              </div>
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                <p className="font-mono-tabular font-bold text-emerald-700">richgates.pchpms.com</p>
+                <p className="font-semibold text-slate-900">Richgates Property Admin</p>
+                <p className="text-slate-600">
+                  Opens Richgates Property Admin login and locks the session to Richgates Apartments.
+                </p>
+              </div>
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                <p className="font-mono-tabular font-bold text-slate-800">staff.pchpms.com</p>
+                <p className="font-semibold text-slate-900">Staff Operations Portal</p>
+                <p className="text-slate-600">
+                  Routes Front Desk, Housekeeping, Kitchen, Accounts, and Engineering teams directly to Staff sign-in.
+                </p>
+              </div>
+            </div>
+            <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-4">
+              <li>
+                In <strong>Cloudflare Dashboard → Workers &amp; Pages → pch-pms → Custom domains</strong>, click{' '}
+                <strong>Set up a custom domain</strong> and add <code className="font-mono-tabular">admin.pchpms.com</code>,{' '}
+                <code className="font-mono-tabular">richgates.pchpms.com</code>, and <code className="font-mono-tabular">staff.pchpms.com</code>.
+              </li>
+              <li>
+                In your Cloudflare DNS for <code className="font-mono-tabular">pchpms.com</code>, ensure each subdomain has a{' '}
+                <strong>CNAME</strong> record pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (Proxied orange cloud ON, SSL mode <strong>Full (strict)</strong>).
+              </li>
+              <li>
+                In <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, add{' '}
+                <code className="font-mono-tabular">admin.pchpms.com</code>, <code className="font-mono-tabular">richgates.pchpms.com</code>, and{' '}
+                <code className="font-mono-tabular">staff.pchpms.com</code> so Google Sign-In works on every custom domain.
+              </li>
+            </ol>
           </div>
+
+          {/* Clean Production Backup & Demo Guest Purge */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h2 className="font-display text-sm font-bold text-slate-900">
+                  Richgates Production Backup &amp; Live Database Prep (Cloudflare Ready)
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Preserve all {sortedRooms.length} configured rooms ({sortedRooms.map((r) => r.roomNumber).join(', ') || 'RM-1..RM-8'}) with rates &amp; photos while removing all demo guests, demo bookings, and sample folios.
+                </p>
+              </div>
+              <span className="font-mono-tabular text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-lg shrink-0">
+                {sortedRooms.length} Suites Intact · Clean State
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+                <p className="text-xs font-bold text-slate-900">
+                  1. Download Clean Production Backup File (.json)
+                </p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Exports {property.name} property settings, license key, all {sortedRooms.length} vacant/clean rooms, POS menu items, and channel config with zero demo guests or sample folios.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDownloadCleanProductionBackup}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Clean Production Backup (.json)</span>
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-3">
+                <p className="text-xs font-bold text-slate-900">
+                  2. Remove Demo Guests from Live Firestore DB
+                </p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Resets all {sortedRooms.length} rooms to Vacant &amp; Clean and permanently clears existing demo guests, sample reservations, date blocks, POS orders, and sample ledger entries before go-live.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setShowPurgeConfirm(true)}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white text-xs font-semibold rounded-lg"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Demo Guests &amp; Keep Rooms</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {showPurgeConfirm && (
+            <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Prepare {property.name} for Production?
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  This keeps all {sortedRooms.length} rooms (with their room numbers, Naira rates, sections, and photos) and resets them to <strong>Vacant</strong> and <strong>Clean</strong>, while removing all guest profiles, reservations, POS orders, housekeeping tasks, and ledger entries currently in the database.
+                </p>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setShowPurgeConfirm(false)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={handleConfirmPurgeDemoGuests}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-60"
+                  >
+                    {busy ? 'Clearing...' : 'Confirm & Keep Rooms'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

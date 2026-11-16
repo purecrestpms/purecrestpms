@@ -14,6 +14,7 @@ import {
   PropertyRecord,
   RoomRecord,
 } from '../types/pms';
+import { useCms } from '../context/CmsContext';
 
 interface HousekeepingMaintenanceViewProps {
   section: Extract<NavSectionId, 'housekeeping' | 'maintenance'>;
@@ -34,6 +35,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
   actorRole,
   onNotify,
 }) => {
+  const { cms } = useCms();
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id || '');
   const [taskType, setTaskType] = useState<HousekeepingTaskRecord['taskType']>('Checkout Turnover');
@@ -108,14 +110,10 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-xl font-bold text-slate-900">
-            {section === 'housekeeping'
-              ? 'Housekeeping Dispatch & Room Readiness'
-              : 'Engineering & Preventive Maintenance'}
+            {cms.pages[section].title}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            {section === 'housekeeping'
-              ? 'Live turnover schedule, attendant assignments, and suite inspection workflow'
-              : 'Facility work orders, generator & inverter servicing, and room out-of-order controls'}
+            {cms.pages[section].subtitle}
           </p>
         </div>
 
@@ -129,9 +127,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
           className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap"
         >
           <Plus className="w-3.5 h-3.5" />
-          <span>
-            {section === 'housekeeping' ? 'Assign Housekeeping Task' : 'Log Maintenance Ticket'}
-          </span>
+          <span>{cms.pages[section].ctaLabel}</span>
         </button>
       </div>
 

@@ -12,7 +12,9 @@
         "country": { "type": "string", "minLength": 2, "maxLength": 80 },
         "address": { "type": "string", "minLength": 4, "maxLength": 240 },
         "phone": { "type": "string", "minLength": 6, "maxLength": 32 },
+        "whatsapp": { "type": "string", "maxLength": 32 },
         "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "logoUrl": { "type": "string", "maxLength": 350000 },
         "currency": { "type": "string", "enum": ["NGN"] },
         "roomCount": { "type": "number" },
         "status": { "type": "string", "enum": ["active", "onboarding", "suspended"] },
@@ -90,6 +92,10 @@
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "email": { "type": "string", "format": "email", "maxLength": 120 },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "whatsapp": { "type": "string", "maxLength": 32 },
+        "jobTitle": { "type": "string", "maxLength": 80 },
+        "notes": { "type": "string", "maxLength": 300 },
         "role": { "type": "string", "enum": ["pch_admin", "property_admin", "front_desk", "housekeeping", "fnb_kitchen", "accountant", "maintenance"] },
         "propertyId": { "type": "string", "maxLength": 128 },
         "active": { "type": "boolean" },
@@ -166,6 +172,8 @@
         "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
         "email": { "type": "string", "maxLength": 120 },
         "phone": { "type": "string", "minLength": 6, "maxLength": 32 },
+        "address": { "type": "string", "maxLength": 200 },
+        "city": { "type": "string", "maxLength": 80 },
         "nationality": { "type": "string", "maxLength": 64 },
         "idType": { "type": "string", "enum": ["NIN", "International Passport", "Driver License", "Voter Card"] },
         "idNumber": { "type": "string", "maxLength": 64 },
@@ -187,22 +195,31 @@
       "properties": {
         "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "bookingRef": { "type": "string", "minLength": 4, "maxLength": 32 },
-        "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "roomNumber": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "roomId": { "type": "string", "maxLength": 128 },
+        "roomNumber": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "requestedRoomType": { "type": "string", "maxLength": 64 },
         "guestId": { "type": "string", "maxLength": 128 },
         "guestName": { "type": "string", "minLength": 2, "maxLength": 120 },
         "guestPhone": { "type": "string", "maxLength": 32 },
         "checkInDate": { "type": "string", "maxLength": 24 },
         "checkOutDate": { "type": "string", "maxLength": 24 },
+        "bookedDate": { "type": "string", "maxLength": 24 },
         "nights": { "type": "number" },
         "adults": { "type": "number" },
-        "channel": { "type": "string", "enum": ["Direct Walk-In", "Direct Web", "Booking.com", "Airbnb", "Expedia", "Hotels.ng"] },
+        "children": { "type": "number" },
+        "channel": { "type": "string", "enum": ["Walk-in", "Website", "Direct Walk-In", "Direct Web", "Booking.com", "Airbnb", "Expedia", "Hotels.ng", "VRBO", "Custom iCal"] },
         "nightlyRateNgn": { "type": "number" },
         "roomChargesNgn": { "type": "number" },
         "posChargesNgn": { "type": "number" },
         "paidNgn": { "type": "number" },
-        "status": { "type": "string", "enum": ["confirmed", "checked_in", "checked_out", "cancelled"] },
+        "status": { "type": "string", "enum": ["confirmed", "pending", "checked_in", "checked_out", "cancelled", "no_show"] },
         "paymentMethod": { "type": "string", "enum": ["Bank Transfer", "Card POS", "Cash NGN", "Corporate Invoice", "Online Gateway"] },
+        "paymentConfirmed": { "type": "boolean" },
+        "idVerified": { "type": "boolean" },
+        "idType": { "type": "string", "enum": ["NIN", "International Passport", "Driver License", "Voter Card"] },
+        "idNumber": { "type": "string", "maxLength": 64 },
+        "keyIssued": { "type": "boolean" },
+        "checkedInAtIso": { "type": "string", "maxLength": 40 },
         "authorizedEmails": { "type": "array" },
         "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -258,8 +275,10 @@
       "properties": {
         "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "orderNumber": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "orderDate": { "type": "string", "maxLength": 24 },
         "serviceType": { "type": "string", "enum": ["Dine-In", "Room Service", "Bar Lounge", "Takeaway"] },
-        "tableOrRoom": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "tableOrRoom": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "guestName": { "type": "string", "maxLength": 120 },
         "reservationId": { "type": "string", "maxLength": 128 },
         "itemsSummary": { "type": "string", "minLength": 2, "maxLength": 400 },
         "itemCount": { "type": "number" },
@@ -269,6 +288,7 @@
         "paymentStatus": { "type": "string", "enum": ["paid", "room_folio", "unpaid"] },
         "paymentMethod": { "type": "string", "enum": ["Room Folio", "Card POS", "Bank Transfer", "Cash NGN"] },
         "kitchenStatus": { "type": "string", "enum": ["queued", "preparing", "ready", "served"] },
+        "notes": { "type": "string", "maxLength": 300 },
         "authorizedEmails": { "type": "array" },
         "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -292,6 +312,25 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "PosMenuItem": {
+      "title": "PosMenuItem",
+      "description": "Restaurant and Bar POS catalog item editable by property administrators.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "category": { "type": "string", "minLength": 2, "maxLength": 48 },
+        "priceNgn": { "type": "number" },
+        "costNgn": { "type": "number" },
+        "prepMinutes": { "type": "number" },
+        "available": { "type": "boolean" },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "name", "category", "priceNgn", "prepMinutes", "available", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
     },
     "LedgerEntry": {
       "title": "LedgerEntry",
@@ -391,6 +430,9 @@
         "shiftDate": { "type": "string", "maxLength": 24 },
         "shiftWindow": { "type": "string", "enum": ["Morning (07:00 - 15:00)", "Afternoon (15:00 - 23:00)", "Night (23:00 - 07:00)"] },
         "status": { "type": "string", "enum": ["scheduled", "completed", "missed"] },
+        "handoverNotes": { "type": "string", "maxLength": 400 },
+        "closedBy": { "type": "string", "maxLength": 120 },
+        "closedAtIso": { "type": "string", "maxLength": 40 },
         "authorizedEmails": { "type": "array" },
         "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -419,11 +461,13 @@
     },
     "PayrollRun": {
       "title": "PayrollRun",
-      "description": "Monthly payroll run with Nigerian PAYE & Pension totals.",
+      "description": "Monthly payroll run with staff salary totals, pay date, and deductions.",
       "type": "object",
       "properties": {
         "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "periodLabel": { "type": "string", "minLength": 3, "maxLength": 48 },
+        "payDate": { "type": "string", "maxLength": 24 },
+        "paymentMethod": { "type": "string", "maxLength": 48 },
         "staffCount": { "type": "number" },
         "grossPayNgn": { "type": "number" },
         "pensionDeductionNgn": { "type": "number" },
@@ -464,8 +508,11 @@
       "type": "object",
       "properties": {
         "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "channelName": { "type": "string", "enum": ["Booking.com", "Airbnb", "Expedia", "Hotels.ng", "Direct Website Engine"] },
+        "channelName": { "type": "string", "enum": ["Booking.com", "Airbnb", "Expedia", "Hotels.ng", "VRBO", "Direct Website Engine", "Custom iCal"] },
         "propertyListingId": { "type": "string", "maxLength": 64 },
+        "roomNumber": { "type": "string", "maxLength": 24 },
+        "icalImportUrl": { "type": "string", "maxLength": 500 },
+        "icalExportUrl": { "type": "string", "maxLength": 500 },
         "commissionPct": { "type": "number" },
         "autoSync": { "type": "boolean" },
         "connected": { "type": "boolean" },
@@ -497,6 +544,66 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["propertyId", "roomId", "roomNumber", "startDate", "endDate", "reason", "category", "createdByEmail", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "CmsConfig": {
+      "title": "CmsConfig",
+      "description": "Global application copy and CMS text managed by PCH Super Admin.",
+      "type": "object",
+      "properties": {
+        "brand": { "type": "object" },
+        "login": { "type": "object" },
+        "dashboard": { "type": "object" },
+        "pages": { "type": "object" },
+        "updatedByEmail": { "type": "string", "maxLength": 120 },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["brand", "login", "dashboard", "pages", "updatedByEmail", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "PropertyMessage": {
+      "title": "PropertyMessage",
+      "description": "Inter-departmental message, bulk staff dispatch, or urgent alert inside a property.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "senderEmail": { "type": "string", "maxLength": 120 },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "senderRole": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "senderDepartment": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "recipientScope": { "type": "string", "enum": ["department", "direct_staff", "bulk_staff", "all_staff"] },
+        "targetDepartment": { "type": "string", "maxLength": 64 },
+        "recipientEmails": { "type": "array" },
+        "recipientNames": { "type": "array" },
+        "subject": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 1500 },
+        "priority": { "type": "string", "enum": ["Normal", "Urgent"] },
+        "readByEmails": { "type": "array" },
+        "createdAtIso": { "type": "string", "maxLength": 40 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "propertyId",
+        "senderEmail",
+        "senderName",
+        "senderRole",
+        "senderDepartment",
+        "recipientScope",
+        "recipientEmails",
+        "recipientNames",
+        "subject",
+        "body",
+        "priority",
+        "readByEmails",
+        "createdAtIso",
+        "authorizedEmails",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -536,6 +643,10 @@
       "schema": { "$ref": "#/entities/PosOrder" },
       "description": "Restaurant POS orders and Kitchen Display System queue."
     },
+    "/properties/{propertyId}/pos_menu_items/{itemId}": {
+      "schema": { "$ref": "#/entities/PosMenuItem" },
+      "description": "Editable POS menu items for restaurant, breakfast, and bar lounge."
+    },
     "/properties/{propertyId}/ledger_entries/{entryId}": {
       "schema": { "$ref": "#/entities/LedgerEntry" },
       "description": "Accounting revenue and expense ledger entries in NGN."
@@ -562,7 +673,7 @@
     },
     "/properties/{propertyId}/payroll_runs/{runId}": {
       "schema": { "$ref": "#/entities/PayrollRun" },
-      "description": "Monthly Nigerian PAYE & Pension payroll batches."
+      "description": "Monthly staff salary & payroll batches with pay dates."
     },
     "/properties/{propertyId}/maintenance_tickets/{ticketId}": {
       "schema": { "$ref": "#/entities/MaintenanceTicket" },
@@ -575,6 +686,14 @@
     "/properties/{propertyId}/blocked_dates/{blockId}": {
       "schema": { "$ref": "#/entities/BlockedDate" },
       "description": "Room calendar date blocks for maintenance, owner holds, or VIP reservations."
+    },
+    "/properties/{propertyId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/PropertyMessage" },
+      "description": "Inter-departmental messages, bulk staff broadcasts, and unread alert tracking."
+    },
+    "/app_cms/{cmsId}": {
+      "schema": { "$ref": "#/entities/CmsConfig" },
+      "description": "Global application CMS content configuration editable by PCH Super Admin."
     }
   }
 }

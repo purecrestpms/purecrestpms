@@ -26,3 +26,23 @@
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-clean {
+    border: none !important;
+    box-shadow: none !important;
+  }
+}
