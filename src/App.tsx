@@ -63,7 +63,9 @@ import {
   AttendanceRecord,
   AuditLogRecord,
   BlockedDateRecord,
+  extractPropertySubdomainSlug,
   getPortalUrl,
+  getPropertySubdomainSlug,
   GuestRecord,
   HousekeepingTaskRecord,
   InventoryItemRecord,
@@ -171,16 +173,15 @@ function detectInitialPortal(): PortalMode {
   if (p === 'admin' || p === 'richgates' || p === 'richgates-login') return 'richgates-admin';
   if (p === 'richgates-staff') return 'staff';
   const path = window.location.pathname.toLowerCase();
+  if (path === '/staff' || path.startsWith('/staff/') || path.includes('/login/staff')) {
+    return 'staff';
+  }
   if (path.includes('pch-admin')) return 'pch-admin';
-  if (path.includes('staff')) return 'staff';
   const host = window.location.hostname.toLowerCase();
   if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
     return 'pch-admin';
   }
-  if (host.startsWith('staff.')) {
-    return 'staff';
-  }
-  if (host.startsWith('richgates.')) {
+  if (extractPropertySubdomainSlug(host)) {
     return 'richgates-admin';
   }
   return 'richgates-admin';
@@ -269,6 +270,38 @@ export default function App() {
   const syncUrlParams = (nextPortal: PortalMode, nextSection: NavSectionId) => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
+    const host = window.location.hostname.toLowerCase();
+    const isPropSubdomain = Boolean(extractPropertySubdomainSlug(host));
+    const isAdminSubdomain =
+      host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.');
+
+    if (nextPortal === 'staff') {
+      params.delete('portal');
+      if (nextSection === 'dashboard') {
+        params.delete('page');
+      } else {
+        params.set('page', nextSection);
+      }
+      const qs = params.toString();
+      window.history.replaceState({}, '', qs ? `/staff?${qs}` : '/staff');
+      return;
+    }
+
+    if (
+      (nextPortal === 'richgates-admin' && isPropSubdomain) ||
+      (nextPortal === 'pch-admin' && isAdminSubdomain)
+    ) {
+      params.delete('portal');
+      if (nextSection === 'dashboard') {
+        params.delete('page');
+      } else {
+        params.set('page', nextSection);
+      }
+      const qs = params.toString();
+      window.history.replaceState({}, '', qs ? `/?${qs}` : '/');
+      return;
+    }
+
     params.set('portal', nextPortal);
     params.set('page', nextSection);
     const nextUrl = `/?${params.toString()}`;
@@ -392,9 +425,14 @@ export default function App() {
         setActivePropertyId((curr) => {
           if (list.length === 0) return curr;
           const host = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
-          if (host.startsWith('richgates.')) {
-            const rg = list.find((p) => p.id === RICHGATES_PROPERTY_ID || p.code === 'RG-ENU-01');
-            if (rg) return rg.id;
+          const propSlug = extractPropertySubdomainSlug(host);
+          if (propSlug) {
+            const matched = list.find(
+              (p) =>
+                getPropertySubdomainSlug(p) === propSlug ||
+                p.code.toLowerCase().replace(/[^a-z0-9]/g, '') === propSlug
+            );
+            if (matched) return matched.id;
           }
           return !list.some((p) => p.id === curr) ? list[0].id : curr;
         });
@@ -602,12 +640,16 @@ export default function App() {
     const nextSection: NavSectionId = 'dashboard';
     setActiveSection(nextSection);
     syncUrlParams(portal, nextSection);
-    if (portal === 'richgates-admin') {
-      const richgatesProp = properties.find(
-        (p) => p.id === RICHGATES_PROPERTY_ID || p.code === 'RG-ENU-01'
-      );
-      if (richgatesProp) {
-        setActivePropertyId(richgatesProp.id);
+    if (portal === 'richgates-admin' || portal === 'staff') {
+      const host = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
+      const propSlug = extractPropertySubdomainSlug(host);
+      const targetProp = propSlug
+        ? properties.find((p) => getPropertySubdomainSlug(p) === propSlug)
+        : properties.find((p) => p.id === RICHGATES_PROPERTY_ID || p.code === 'RG-ENU-01');
+      if (targetProp && portal === 'richgates-admin') {
+        setActivePropertyId(targetProp.id);
+      } else if (propSlug && targetProp) {
+        setActivePropertyId(targetProp.id);
       }
     }
   };
@@ -1226,7 +1268,7 @@ export default function App() {
                   },
                 ] as Array<{ id: PortalMode; title: string; desc: string }>
               ).map((item) => {
-                const url = getPortalUrl(item.id);
+                const url = getPortalUrl(item.id, activeProperty);
                 return (
                   <div
                     key={item.id}

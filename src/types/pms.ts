@@ -855,9 +855,67 @@ export function formatNgn(amount: number): string {
   }).format(Number.isFinite(amount) ? amount : 0);
 }
 
-export function getPortalUrl(portal: PortalMode | 'admin' | 'richgates'): string {
-  if (typeof window === 'undefined') return `/?portal=${portal}`;
-  return `${window.location.origin}/?portal=${portal}`;
+export function getPropertySubdomainSlug(
+  property?: Pick<PropertyRecord, 'id' | 'code' | 'name'> | null
+): string {
+  if (!property) return 'richgates';
+  if (
+    property.id === 'prop_richgates_enugu' ||
+    property.code === 'RG-ENU-01' ||
+    property.name.toLowerCase().includes('richgates')
+  ) {
+    return 'richgates';
+  }
+  const slug = property.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return slug || property.code.toLowerCase().replace(/[^a-z0-9]/g, '') || 'property';
+}
+
+export function extractPropertySubdomainSlug(hostname: string): string | null {
+  const host = hostname.toLowerCase().trim();
+  if (!host) return null;
+  if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
+    return null;
+  }
+  if (host.endsWith('.pchpms.com')) {
+    const sub = host.slice(0, -'.pchpms.com'.length).split('.')[0];
+    if (!sub || sub === 'www' || sub === 'app' || sub === 'admin' || sub === 'pch') return null;
+    return sub;
+  }
+  if (host.startsWith('richgates.')) return 'richgates';
+  return null;
+}
+
+export function getPortalUrl(
+  portal: PortalMode | 'admin' | 'richgates',
+  property?: Pick<PropertyRecord, 'id' | 'code' | 'name'> | null
+): string {
+  if (typeof window === 'undefined') {
+    return portal === 'staff' ? '/staff' : `/?portal=${portal}`;
+  }
+  const host = window.location.hostname.toLowerCase();
+  const slug = getPropertySubdomainSlug(property);
+
+  if (host === 'pchpms.com' || host.endsWith('.pchpms.com')) {
+    const proto = window.location.protocol || 'https:';
+    if (portal === 'pch-admin' || portal === 'admin') {
+      return `${proto}//admin.pchpms.com`;
+    }
+    if (portal === 'staff') {
+      return `${proto}//${slug}.pchpms.com/staff`;
+    }
+    return `${proto}//${slug}.pchpms.com`;
+  }
+
+  if (portal === 'staff') {
+    return `${window.location.origin}/staff`;
+  }
+  if (portal === 'pch-admin' || portal === 'admin') {
+    return `${window.location.origin}/?portal=pch-admin`;
+  }
+  return `${window.location.origin}/?portal=richgates-admin`;
 }
 
 export interface CmsPageCopy {

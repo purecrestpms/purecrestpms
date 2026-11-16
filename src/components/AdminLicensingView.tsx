@@ -33,6 +33,7 @@ import {
   BlockedDateRecord,
   formatNgn,
   getPortalUrl,
+  getPropertySubdomainSlug,
   LicenseRecord,
   NavSectionId,
   OtaIntegrationRecord,
@@ -981,8 +982,15 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-2">
-                    <span className="text-xs text-slate-500">Admin: {p.adminEmail}</span>
+                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                    <span>
+                      Admin: <strong className="text-slate-700">{p.adminEmail}</strong>
+                    </span>
+                    <span className="font-mono-tabular text-[#1c46be]">
+                      {getPropertySubdomainSlug(p)}.pchpms.com · /staff
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-end">
                     <button
                       type="button"
                       onClick={() => onSelectProperty(p.id)}
@@ -1448,7 +1456,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
                   { id: 'pch-admin', label: 'PCH Super Admin Login' },
                 ] as Array<{ id: PortalMode; label: string }>
               ).map((item) => {
-                const url = getPortalUrl(item.id);
+                const url = getPortalUrl(item.id, property);
                 return (
                   <div
                     key={item.id}
@@ -1492,54 +1500,53 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
             </div>
           </div>
 
-          {/* Direct Custom Subdomain Routing (admin.pchpms.com & richgates.pchpms.com) */}
+          {/* Direct Custom Subdomain Routing (admin.pchpms.com & property.pchpms.com/staff) */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
               <Globe className="w-4 h-4 text-[#1c46be]" />
               <h2 className="font-display text-sm font-bold text-slate-900">
-                Direct Custom Domains (admin.pchpms.com &amp; richgates.pchpms.com)
+                Direct Custom Domains (admin.pchpms.com, richgates.pchpms.com &amp; /staff)
               </h2>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              The application automatically detects the subdomain hostname on load so one Cloudflare Pages deployment serves every property and PCH central admin portal cleanly:
+              The application routes each property by subdomain, with Staff access nested directly under each property&apos;s own domain (<code className="font-mono-tabular">/staff</code>):
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
               <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
                 <p className="font-mono-tabular font-bold text-[#1c46be]">admin.pchpms.com</p>
                 <p className="font-semibold text-slate-900">PCH Super Admin Console</p>
                 <p className="text-slate-600">
-                  Opens PCH Admin directly to manage Richgates, onboard new properties, issue license keys, and edit CMS.
+                  Central PCH console to manage Richgates, onboard new properties, issue license keys, and edit CMS.
                 </p>
               </div>
               <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
                 <p className="font-mono-tabular font-bold text-emerald-700">richgates.pchpms.com</p>
                 <p className="font-semibold text-slate-900">Richgates Property Admin</p>
                 <p className="text-slate-600">
-                  Opens Richgates Property Admin login and locks the session to Richgates Apartments.
+                  Opens Richgates Property Admin login and locks the workspace to Richgates Apartments.
                 </p>
               </div>
               <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
-                <p className="font-mono-tabular font-bold text-slate-800">staff.pchpms.com</p>
-                <p className="font-semibold text-slate-900">Staff Operations Portal</p>
+                <p className="font-mono-tabular font-bold text-slate-800">richgates.pchpms.com/staff</p>
+                <p className="font-semibold text-slate-900">Property Staff Portal (/staff)</p>
                 <p className="text-slate-600">
-                  Routes Front Desk, Housekeeping, Kitchen, Accounts, and Engineering teams directly to Staff sign-in.
+                  Routes Front Desk, Housekeeping, Kitchen, Accounts, and Engineering teams under that property&apos;s domain.
                 </p>
               </div>
             </div>
             <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-4">
               <li>
                 In <strong>Cloudflare Dashboard → Workers &amp; Pages → pch-pms → Custom domains</strong>, click{' '}
-                <strong>Set up a custom domain</strong> and add <code className="font-mono-tabular">admin.pchpms.com</code>,{' '}
-                <code className="font-mono-tabular">richgates.pchpms.com</code>, and <code className="font-mono-tabular">staff.pchpms.com</code>.
+                <strong>Set up a custom domain</strong> and add <code className="font-mono-tabular">admin.pchpms.com</code> and{' '}
+                <code className="font-mono-tabular">richgates.pchpms.com</code> (plus any future <code className="font-mono-tabular">&lt;property&gt;.pchpms.com</code>).
               </li>
               <li>
                 In your Cloudflare DNS for <code className="font-mono-tabular">pchpms.com</code>, ensure each subdomain has a{' '}
-                <strong>CNAME</strong> record pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (Proxied orange cloud ON, SSL mode <strong>Full (strict)</strong>).
+                <strong>CNAME</strong> record pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (Proxied orange cloud ON, SSL mode <strong>Full (strict)</strong>). No separate DNS record is needed for <code className="font-mono-tabular">/staff</code>.
               </li>
               <li>
                 In <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, add{' '}
-                <code className="font-mono-tabular">admin.pchpms.com</code>, <code className="font-mono-tabular">richgates.pchpms.com</code>, and{' '}
-                <code className="font-mono-tabular">staff.pchpms.com</code> so Google Sign-In works on every custom domain.
+                <code className="font-mono-tabular">admin.pchpms.com</code> and <code className="font-mono-tabular">richgates.pchpms.com</code> so Google Sign-In works on both Property Admin and <code className="font-mono-tabular">/staff</code>.
               </li>
             </ol>
           </div>
