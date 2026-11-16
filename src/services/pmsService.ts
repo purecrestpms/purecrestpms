@@ -21,12 +21,15 @@ import {
 } from '../firebase';
 import { mergeCmsWithDefaults } from '../context/CmsContext';
 import { buildRichgatesSeedPayload, generateLicenseKey, RICHGATES_PROPERTY_ID } from '../data/seedData';
-import { deterministicOtaReservationId, parseIcalEvents } from '../utils/icalParser';
+import { deterministicOtaReservationId, ParsedIcalEvent, parseIcalEvents } from '../utils/icalParser';
 import {
   AttendanceRecord,
   BlockedDateRecord,
+  ChannelCurrency,
   CmsContent,
+  convertCurrencyToNgn,
   DEFAULT_CMS_CONTENT,
+  getFxRateToNgn,
   GuestRecord,
   HousekeepingTaskRecord,
   InventoryItemRecord,
@@ -50,6 +53,7 @@ import {
   RoomRecord,
   RoomSection,
   ShiftScheduleRecord,
+  sortRoomsByNumber,
   StaffMemberRecord,
   StaffRole,
   UserRoleProfile,
@@ -2298,6 +2302,7 @@ export async function syncOtaChannelWorkflow(params: {
     const roomsSnap = await getDocs(collection(db, 'properties', params.property.id, 'rooms'));
     roomList = roomsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RoomRecord, 'id'>) }));
   }
+  roomList = sortRoomsByNumber(roomList);
   if (roomList.length === 0) {
     throw new Error('No rooms exist in this property to assign imported OTA bookings.');
   }
@@ -2325,25 +2330,166 @@ export async function syncOtaChannelWorkflow(params: {
   const yesterdayIso = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const todayIso = new Date().toISOString().slice(0, 10);
 
-  const mappedRoom =
-    params.channel.roomNumber && params.channel.roomNumber !== 'All Suites'
-      ? roomList.find((r) => r.roomNumber === params.channel.roomNumber)
-      : undefined;
+  const normalizedMappedRoom = (params.channel.roomNumber || '').trim();
+  const isSpecificMappedSuite =
+    Boolean(normalizedMappedRoom) &&
+    normalizedMappedRoom.toLowerCase() !== 'all suites' &&
+    normalizedMappedRoom.toLowerCase() !== 'all';
 
-  const pickRoomForDates = (checkIn: string, checkOut: string): RoomRecord => {
-    if (mappedRoom) return mappedRoom;
-    const freeRoom = roomList.find((room) => {
-      const hasConflict = existingReservations.some(
+  const findRoomsMatchingHint = (hint?: string): RoomRecord[] => {
+    const raw = (hint || '').trim().toLowerCase();
+    if (!raw) return [];
+
+    // 1. Direct RM-X code match
+    const rmMatch = raw.match(/\b(rm-\d{1,2})\b/i);
+    if (rmMatch) {
+      const byCode = roomList.filter((r) => r.roomNumber.toLowerCase() === rmMatch[1].toLowerCase());
+      if (byCode.length > 0) return byCode;
+    }
+
+    // 2. Exact roomNumber or roomName match
+    const exactCodeOrName = roomList.filter(
+      (r) =>
+        r.roomNumber.toLowerCase() === raw ||
+        r.name.toLowerCase() === raw ||
+        raw.includes(r.name.toLowerCase())
+    );
+    if (exactCodeOrName.length > 0) return exactCodeOrName;
+
+    // 3. Longest roomType match first (so "Deluxe Studio with Kitchenette" beats "Deluxe Studio")
+    const byTypeLengthDesc = [...roomList].sort((a, b) => b.roomType.length - a.roomType.length);
+    for (const candidate of byTypeLengthDesc) {
+      const rt = candidate.roomType.trim().toLowerCase();
+      if (rt && (raw.includes(rt) || rt.includes(raw))) {
+        return roomList.filter((r) => r.roomType.trim().toLowerCase() === rt);
+      }
+    }
+
+    return [];
+  };
+
+  const mappedRoomsFromChannel = isSpecificMappedSuite
+    ? roomList.filter((r) => r.roomNumber.trim().toLowerCase() === normalizedMappedRoom.toLowerCase())
+    : [];
+
+  const pickRoomForEvent = (ev: ParsedIcalEvent, ignoreReservationId?: string): RoomRecord => {
+    if (mappedRoomsFromChannel.length > 0) {
+      return mappedRoomsFromChannel[0];
+    }
+
+    const hintCandidates = findRoomsMatchingHint(ev.roomHint);
+    const listingCandidates =
+      hintCandidates.length > 0 ? hintCandidates : findRoomsMatchingHint(params.channel.propertyListingId);
+    const candidatePool = listingCandidates.length > 0 ? listingCandidates : roomList;
+
+    const isFree = (room: RoomRecord) =>
+      !existingReservations.some(
         (res) =>
+          res.id !== ignoreReservationId &&
           res.roomId === room.id &&
           res.status !== 'cancelled' &&
           res.status !== 'no_show' &&
           res.status !== 'checked_out' &&
-          datesOverlap(checkIn, checkOut, res.checkInDate, res.checkOutDate)
+          datesOverlap(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
       );
-      return !hasConflict;
+
+    const freeCandidate = candidatePool.find(isFree);
+    if (freeCandidate) return freeCandidate;
+
+    if (listingCandidates.length > 0) {
+      return listingCandidates[0];
+    }
+
+    // Spread fallback across rooms with fewest overlapping reservations rather than piling on roomList[0]
+    const sortedByLoad = [...candidatePool].sort((a, b) => {
+      const countA = existingReservations.filter(
+        (res) =>
+          res.id !== ignoreReservationId &&
+          res.roomId === a.id &&
+          res.status !== 'cancelled' &&
+          res.status !== 'no_show' &&
+          res.status !== 'checked_out' &&
+          datesOverlap(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
+      ).length;
+      const countB = existingReservations.filter(
+        (res) =>
+          res.id !== ignoreReservationId &&
+          res.roomId === b.id &&
+          res.status !== 'cancelled' &&
+          res.status !== 'no_show' &&
+          res.status !== 'checked_out' &&
+          datesOverlap(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
+      ).length;
+      return countA - countB;
     });
-    return freeRoom || roomList[0];
+    return sortedByLoad[0] || roomList[0];
+  };
+
+  const resolveChannelPricing = (ev: ParsedIcalEvent, assignedRoom: RoomRecord) => {
+    const usdRate = params.property.usdExchangeRateNgn;
+    const configuredCurrency: ChannelCurrency = params.channel.defaultCurrency || 'NGN';
+    const configuredNightlyRate = params.channel.defaultNightlyRate || 0;
+
+    if (ev.parsedCurrency && ev.parsedNightlyRate && ev.parsedNightlyRate > 0) {
+      const sourceCurrency = ev.parsedCurrency;
+      const fxRateToNgn = getFxRateToNgn(sourceCurrency, usdRate);
+      const sourceNightlyRate = Number(ev.parsedNightlyRate.toFixed(2));
+      const sourceTotalAmount =
+        ev.parsedTotalAmount && ev.parsedTotalAmount > 0
+          ? Number(ev.parsedTotalAmount.toFixed(2))
+          : Number((sourceNightlyRate * ev.nights).toFixed(2));
+      const nightlyRateNgn = convertCurrencyToNgn(sourceNightlyRate, sourceCurrency, usdRate);
+      const roomChargesNgn = convertCurrencyToNgn(sourceTotalAmount, sourceCurrency, usdRate);
+      return {
+        sourceCurrency,
+        sourceNightlyRate,
+        sourceTotalAmount,
+        fxRateToNgn,
+        nightlyRateNgn,
+        roomChargesNgn,
+      };
+    }
+
+    if (configuredNightlyRate > 0) {
+      const sourceCurrency = configuredCurrency;
+      const fxRateToNgn = getFxRateToNgn(sourceCurrency, usdRate);
+      const sourceNightlyRate = Number(configuredNightlyRate.toFixed(2));
+      const sourceTotalAmount = Number((sourceNightlyRate * ev.nights).toFixed(2));
+      const nightlyRateNgn = convertCurrencyToNgn(sourceNightlyRate, sourceCurrency, usdRate);
+      const roomChargesNgn = convertCurrencyToNgn(sourceTotalAmount, sourceCurrency, usdRate);
+      return {
+        sourceCurrency,
+        sourceNightlyRate,
+        sourceTotalAmount,
+        fxRateToNgn,
+        nightlyRateNgn,
+        roomChargesNgn,
+      };
+    }
+
+    const nightlyRateNgn = assignedRoom.nightlyRateNgn || 0;
+    const roomChargesNgn = nightlyRateNgn * ev.nights;
+    if (configuredCurrency !== 'NGN') {
+      const fxRateToNgn = getFxRateToNgn(configuredCurrency, usdRate);
+      const safeFx = Math.max(1, fxRateToNgn);
+      return {
+        sourceCurrency: configuredCurrency,
+        sourceNightlyRate: Number((nightlyRateNgn / safeFx).toFixed(2)),
+        sourceTotalAmount: Number((roomChargesNgn / safeFx).toFixed(2)),
+        fxRateToNgn: safeFx,
+        nightlyRateNgn,
+        roomChargesNgn,
+      };
+    }
+
+    return {
+      sourceCurrency: 'NGN' as const,
+      sourceNightlyRate: nightlyRateNgn,
+      sourceTotalAmount: roomChargesNgn,
+      fxRateToNgn: 1,
+      nightlyRateNgn,
+      roomChargesNgn,
+    };
   };
 
   let created = 0;
@@ -2355,6 +2501,12 @@ export async function syncOtaChannelWorkflow(params: {
   const now = serverTimestamp();
 
   for (const ev of parsedEvents) {
+    // Ignore events exported by this property's own PMS feed to avoid circular duplicates
+    if (ev.uid.endsWith('@richgates-pms')) {
+      skipped += 1;
+      continue;
+    }
+
     const deterministicId = deterministicOtaReservationId(params.channel.id, ev.uid);
     const existing =
       byId.get(deterministicId) ||
@@ -2380,24 +2532,47 @@ export async function syncOtaChannelWorkflow(params: {
         continue;
       }
 
-      if (
-        !ev.cancelled &&
-        (existing.checkInDate !== ev.checkInDate ||
+      if (!ev.cancelled) {
+        const assignedRoom = pickRoomForEvent(ev, existing.id);
+        const pricing = resolveChannelPricing(ev, assignedRoom);
+        const needsUpdate =
+          existing.checkInDate !== ev.checkInDate ||
           existing.checkOutDate !== ev.checkOutDate ||
-          existing.guestName !== ev.guestName)
-      ) {
-        const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
-        const roomRate = existing.nightlyRateNgn;
-        batch.update(resRef, {
-          checkInDate: ev.checkInDate,
-          checkOutDate: ev.checkOutDate,
-          nights: ev.nights,
-          guestName: ev.guestName,
-          roomChargesNgn: roomRate * ev.nights,
-          updatedAt: now,
-        });
-        updated += 1;
-        continue;
+          existing.nights !== ev.nights ||
+          existing.guestName !== ev.guestName ||
+          (ev.guestPhone && existing.guestPhone !== ev.guestPhone) ||
+          existing.roomId !== assignedRoom.id ||
+          existing.roomNumber !== assignedRoom.roomNumber ||
+          (existing.requestedRoomType || '') !== assignedRoom.roomType ||
+          existing.nightlyRateNgn !== pricing.nightlyRateNgn ||
+          existing.roomChargesNgn !== pricing.roomChargesNgn ||
+          (existing.sourceCurrency || 'NGN') !== pricing.sourceCurrency ||
+          (existing.sourceNightlyRate ?? 0) !== pricing.sourceNightlyRate ||
+          (existing.sourceTotalAmount ?? 0) !== pricing.sourceTotalAmount ||
+          (existing.fxRateToNgn ?? 1) !== pricing.fxRateToNgn;
+
+        if (needsUpdate) {
+          const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
+          batch.update(resRef, {
+            roomId: assignedRoom.id,
+            roomNumber: assignedRoom.roomNumber,
+            requestedRoomType: assignedRoom.roomType,
+            checkInDate: ev.checkInDate,
+            checkOutDate: ev.checkOutDate,
+            nights: ev.nights,
+            guestName: ev.guestName,
+            ...(ev.guestPhone ? { guestPhone: ev.guestPhone } : {}),
+            nightlyRateNgn: pricing.nightlyRateNgn,
+            roomChargesNgn: pricing.roomChargesNgn,
+            sourceCurrency: pricing.sourceCurrency,
+            sourceNightlyRate: pricing.sourceNightlyRate,
+            sourceTotalAmount: pricing.sourceTotalAmount,
+            fxRateToNgn: pricing.fxRateToNgn,
+            updatedAt: now,
+          });
+          updated += 1;
+          continue;
+        }
       }
 
       skipped += 1;
@@ -2410,9 +2585,8 @@ export async function syncOtaChannelWorkflow(params: {
       continue;
     }
 
-    const assignedRoom = pickRoomForDates(ev.checkInDate, ev.checkOutDate);
-    const nightlyRate = assignedRoom.nightlyRateNgn || 0;
-    const roomCharges = nightlyRate * ev.nights;
+    const assignedRoom = pickRoomForEvent(ev);
+    const pricing = resolveChannelPricing(ev, assignedRoom);
     const bookingRef = `OTA-${deterministicId.slice(4, 10).toUpperCase()}`;
 
     const resRef = doc(db, 'properties', params.property.id, 'reservations', deterministicId);
@@ -2434,10 +2608,14 @@ export async function syncOtaChannelWorkflow(params: {
       adults: Math.min(2, assignedRoom.maxGuests || 2),
       children: 0,
       channel: params.channel.channelName === 'Direct Website Engine' ? 'Direct Web' : params.channel.channelName,
-      nightlyRateNgn: nightlyRate,
-      roomChargesNgn: roomCharges,
+      nightlyRateNgn: pricing.nightlyRateNgn,
+      roomChargesNgn: pricing.roomChargesNgn,
       posChargesNgn: 0,
       paidNgn: 0,
+      sourceCurrency: pricing.sourceCurrency,
+      sourceNightlyRate: pricing.sourceNightlyRate,
+      sourceTotalAmount: pricing.sourceTotalAmount,
+      fxRateToNgn: pricing.fxRateToNgn,
       status: 'confirmed',
       paymentMethod: 'Online Gateway',
       externalUid: ev.uid,
@@ -2486,6 +2664,8 @@ export async function createOtaChannelWithIcal(params: {
   channelName: OtaIntegrationRecord['channelName'];
   propertyListingId: string;
   roomNumber: string;
+  defaultCurrency?: ChannelCurrency;
+  defaultNightlyRate?: number;
   icalImportUrl: string;
   commissionPct: number;
   autoSync: boolean;
@@ -2495,21 +2675,26 @@ export async function createOtaChannelWithIcal(params: {
   const id = cleanId('ota');
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', id);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const exportRoom = encodeURIComponent(params.roomNumber || 'ALL');
+  const normalizedRoom = params.roomNumber || 'All Suites';
+  const exportRoom = encodeURIComponent(normalizedRoom === 'All Suites' ? 'ALL' : normalizedRoom);
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${exportRoom}`;
+  const defaultCurrency: ChannelCurrency = params.defaultCurrency || 'NGN';
+  const defaultNightlyRate = Math.max(0, Number(params.defaultNightlyRate) || 0);
 
   try {
     await setDoc(ref, {
       propertyId: params.property.id,
       channelName: params.channelName,
       propertyListingId: params.propertyListingId.trim() || `ICAL-${id.slice(-5).toUpperCase()}`,
-      roomNumber: params.roomNumber || 'All Suites',
+      roomNumber: normalizedRoom,
+      defaultCurrency,
+      defaultNightlyRate,
       icalImportUrl: params.icalImportUrl.trim(),
       icalExportUrl,
       commissionPct: Math.max(0, Math.min(50, params.commissionPct)),
       autoSync: params.autoSync,
       connected: true,
-      lastSyncedIso: new Date().toISOString(),
+      lastSyncedIso: '',
       bookingsImported: 0,
       authorizedEmails: params.property.authorizedEmails,
       ownerUid: uid,
@@ -2521,7 +2706,7 @@ export async function createOtaChannelWithIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Added ${params.channelName} with iCal Link`,
-      details: `${params.roomNumber || 'All Suites'} · ${params.icalImportUrl.trim() || 'Export-only feed'}`,
+      details: `${normalizedRoom} · ${defaultCurrency} ${defaultNightlyRate}/nt · ${params.icalImportUrl.trim() || 'Export-only feed'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -2534,17 +2719,36 @@ export async function updateOtaChannelIcal(params: {
   channel: OtaIntegrationRecord;
   icalImportUrl: string;
   roomNumber: string;
+  defaultCurrency?: ChannelCurrency;
+  defaultNightlyRate?: number;
   actorRole: string;
 }) {
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', params.channel.id);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${encodeURIComponent(params.roomNumber || 'ALL')}`;
+  const normalizedRoom = params.roomNumber || 'All Suites';
+  const exportRoom = normalizedRoom === 'All Suites' ? 'ALL' : normalizedRoom;
+  const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${encodeURIComponent(exportRoom)}`;
+  const cleanImportUrl = params.icalImportUrl.trim();
+  const urlChanged = cleanImportUrl !== (params.channel.icalImportUrl || '').trim();
+  const defaultCurrency: ChannelCurrency =
+    params.defaultCurrency || params.channel.defaultCurrency || 'NGN';
+  const defaultNightlyRate = Math.max(
+    0,
+    Number(
+      params.defaultNightlyRate !== undefined
+        ? params.defaultNightlyRate
+        : params.channel.defaultNightlyRate ?? 0
+    ) || 0
+  );
+
   try {
     await updateDoc(ref, {
-      icalImportUrl: params.icalImportUrl.trim(),
-      roomNumber: params.roomNumber || 'All Suites',
+      icalImportUrl: cleanImportUrl,
+      roomNumber: normalizedRoom,
+      defaultCurrency,
+      defaultNightlyRate,
       icalExportUrl,
-      lastSyncedIso: new Date().toISOString(),
+      ...(urlChanged ? { lastSyncedIso: '' } : {}),
       updatedAt: serverTimestamp(),
     });
     await writeAuditLog({
@@ -2552,7 +2756,7 @@ export async function updateOtaChannelIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Updated iCal Link on ${params.channel.channelName}`,
-      details: `${params.roomNumber || 'All Suites'} · ${params.icalImportUrl.trim()}`,
+      details: `${normalizedRoom} · ${defaultCurrency} ${defaultNightlyRate}/nt · ${cleanImportUrl}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {

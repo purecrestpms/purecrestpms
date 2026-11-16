@@ -237,7 +237,8 @@ service cloud.firestore {
       data.keys().hasOnly([
         'propertyId', 'bookingRef', 'roomId', 'roomNumber', 'requestedRoomType', 'guestId', 'guestName', 'guestPhone',
         'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'channel', 'nightlyRateNgn',
-        'roomChargesNgn', 'posChargesNgn', 'paidNgn', 'status', 'paymentMethod',
+        'roomChargesNgn', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn',
+        'status', 'paymentMethod',
         'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'externalUid',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
@@ -260,6 +261,10 @@ service cloud.firestore {
       data.roomChargesNgn is number && data.roomChargesNgn >= 0 &&
       data.posChargesNgn is number && data.posChargesNgn >= 0 &&
       data.paidNgn is number && data.paidNgn >= 0 &&
+      (!('sourceCurrency' in data) || (data.sourceCurrency is string && data.sourceCurrency in ['NGN', 'USD', 'GBP', 'EUR'])) &&
+      (!('sourceNightlyRate' in data) || (data.sourceNightlyRate is number && data.sourceNightlyRate >= 0)) &&
+      (!('sourceTotalAmount' in data) || (data.sourceTotalAmount is number && data.sourceTotalAmount >= 0)) &&
+      (!('fxRateToNgn' in data) || (data.fxRateToNgn is number && data.fxRateToNgn >= 0)) &&
       data.status in ['confirmed', 'pending', 'checked_in', 'checked_out', 'cancelled', 'no_show'] &&
       data.paymentMethod in ['Bank Transfer', 'Card POS', 'Cash NGN', 'Corporate Invoice', 'Online Gateway'] &&
       (!('paymentConfirmed' in data) || data.paymentConfirmed is bool) &&
@@ -495,11 +500,13 @@ service cloud.firestore {
 
     function isValidOtaChannel(data, propertyId) {
       return data.keys().hasAll(['propertyId', 'channelName', 'propertyListingId', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
-      data.keys().hasOnly(['propertyId', 'channelName', 'propertyListingId', 'roomNumber', 'icalImportUrl', 'icalExportUrl', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['propertyId', 'channelName', 'propertyListingId', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'icalImportUrl', 'icalExportUrl', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.propertyId == propertyId &&
       data.channelName in ['Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Direct Website Engine', 'Custom iCal'] &&
       data.propertyListingId is string && data.propertyListingId.size() <= 64 &&
       (!('roomNumber' in data) || (data.roomNumber is string && data.roomNumber.size() <= 24)) &&
+      (!('defaultCurrency' in data) || (data.defaultCurrency is string && data.defaultCurrency in ['NGN', 'USD', 'GBP', 'EUR'])) &&
+      (!('defaultNightlyRate' in data) || (data.defaultNightlyRate is number && data.defaultNightlyRate >= 0)) &&
       (!('icalImportUrl' in data) || (data.icalImportUrl is string && data.icalImportUrl.size() <= 500)) &&
       (!('icalExportUrl' in data) || (data.icalExportUrl is string && data.icalExportUrl.size() <= 500)) &&
       data.commissionPct is number && data.commissionPct >= 0 && data.commissionPct <= 50 &&
@@ -679,7 +686,7 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
               !(existing().status in ['checked_out', 'cancelled', 'no_show']) &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'externalUid', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'externalUid', 'updatedAt'])
             )
           );
         allow delete: if isValidId(propertyId) && isValidId(reservationId) && isBootstrappedAdmin();
@@ -879,7 +886,7 @@ service cloud.firestore {
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'icalImportUrl', 'icalExportUrl', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'icalImportUrl', 'icalExportUrl', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
       }

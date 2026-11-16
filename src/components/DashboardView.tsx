@@ -28,6 +28,7 @@ import { transitionReservationStatus } from '../services/pmsService';
 import {
   convertNgnToUsd,
   formatBookingSourceLabel,
+  formatChannelCurrency,
   formatNgn,
   formatUsd,
   getReservationBookedDate,
@@ -858,7 +859,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   type="text"
                   value={resSearch}
                   onChange={(e) => setResSearch(e.target.value)}
-                  placeholder="Search ref, guest, suite..."
+                  aria-label="Search reservations"
                   className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg bg-white text-xs w-48 focus:outline-none focus:border-emerald-600"
                 />
               </div>
@@ -1016,7 +1017,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </td>
 
                     <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                      {formatNgn(totalAmount)}
+                      <span className="block">{formatNgn(totalAmount)}</span>
+                      {res.sourceCurrency &&
+                        res.sourceCurrency !== 'NGN' &&
+                        typeof res.sourceTotalAmount === 'number' &&
+                        res.sourceTotalAmount > 0 && (
+                          <span className="block text-[10px] font-medium text-blue-700">
+                            {formatChannelCurrency(res.sourceTotalAmount, res.sourceCurrency)} (
+                            {res.sourceCurrency})
+                          </span>
+                        )}
                     </td>
 
                     <td className="py-3 px-3.5 text-right font-mono-tabular font-medium text-emerald-700 whitespace-nowrap">

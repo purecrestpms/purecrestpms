@@ -414,6 +414,10 @@ export interface ReservationRecord {
   roomChargesNgn: number;
   posChargesNgn: number;
   paidNgn: number;
+  sourceCurrency?: ChannelCurrency;
+  sourceNightlyRate?: number;
+  sourceTotalAmount?: number;
+  fxRateToNgn?: number;
   status: ReservationStatus;
   paymentMethod: 'Bank Transfer' | 'Card POS' | 'Cash NGN' | 'Corporate Invoice' | 'Online Gateway';
   paymentConfirmed?: boolean;
@@ -675,12 +679,18 @@ export interface MaintenanceTicketRecord {
   ownerUid: string;
 }
 
+export type ChannelCurrency = 'NGN' | 'USD' | 'GBP' | 'EUR';
+
+export const SUPPORTED_CHANNEL_CURRENCIES: ChannelCurrency[] = ['NGN', 'USD', 'GBP', 'EUR'];
+
 export interface OtaIntegrationRecord {
   id: string;
   propertyId: string;
   channelName: 'Booking.com' | 'Airbnb' | 'Expedia' | 'Hotels.ng' | 'VRBO' | 'Direct Website Engine' | 'Custom iCal';
   propertyListingId: string;
   roomNumber?: string;
+  defaultCurrency?: ChannelCurrency;
+  defaultNightlyRate?: number;
   icalImportUrl?: string;
   icalExportUrl?: string;
   commissionPct: number;
@@ -817,14 +827,12 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'messages',
     'training_help',
     'licensing',
-    'rbac_audit',
-    'deployment',
     'profile',
   ],
   front_desk: ['dashboard', 'rooms', 'calendar', 'reservations', 'arrivals', 'in_house', 'walk_in', 'front_desk', 'guests', 'housekeeping', 'pos_kitchen', 'ota_channels', 'messages', 'training_help', 'profile'],
   housekeeping: ['dashboard', 'rooms', 'calendar', 'housekeeping', 'maintenance', 'inventory', 'shifts_attendance', 'messages', 'training_help', 'profile'],
   fnb_kitchen: ['dashboard', 'pos_kitchen', 'inventory', 'procurement', 'shifts_attendance', 'messages', 'training_help', 'profile'],
-  accountant: ['dashboard', 'accounting', 'inventory', 'procurement', 'payroll', 'rbac_audit', 'messages', 'training_help', 'profile'],
+  accountant: ['dashboard', 'accounting', 'inventory', 'procurement', 'payroll', 'messages', 'training_help', 'profile'],
   maintenance: ['dashboard', 'rooms', 'calendar', 'maintenance', 'inventory', 'shifts_attendance', 'messages', 'training_help', 'profile'],
 };
 
@@ -875,6 +883,104 @@ export function convertNgnToUsd(amountNgn: number, rateNgnPerUsd?: number): numb
   return (Number.isFinite(amountNgn) ? amountNgn : 0) / rate;
 }
 
+export function getFxRateToNgn(currency: ChannelCurrency, rateNgnPerUsd?: number): number {
+  if (currency === 'NGN') return 1;
+  const usdRate = rateNgnPerUsd && rateNgnPerUsd > 0 ? rateNgnPerUsd : DEFAULT_USD_RATE_NGN;
+  if (currency === 'USD') return Math.round(usdRate);
+  if (currency === 'EUR') return Math.round(usdRate * 1.08);
+  if (currency === 'GBP') return Math.round(usdRate * 1.27);
+  return 1;
+}
+
+export function convertCurrencyToNgn(
+  amount: number,
+  currency: ChannelCurrency,
+  rateNgnPerUsd?: number
+): number {
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  if (currency === 'NGN') return Math.round(safeAmount);
+  return Math.round(safeAmount * getFxRateToNgn(currency, rateNgnPerUsd));
+}
+
+export function formatChannelCurrency(
+  amount: number,
+  currency: ChannelCurrency = 'NGN',
+  decimals?: number
+): string {
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  if (currency === 'NGN') return formatNgn(safeAmount);
+  const dec = typeof decimals === 'number' ? decimals : 2;
+  const locale = currency === 'GBP' ? 'en-GB' : 'en-US';
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: dec,
+    maximumFractionDigits: dec,
+  }).format(safeAmount);
+}
+
+const ROOT_DOMAIN_STORAGE_KEY = 'pch_connected_root_domain';
+
+export function isPlatformPreviewHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().trim();
+  return (
+    !host ||
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host.endsWith('.run.app') ||
+    host.endsWith('.pages.dev') ||
+    host.endsWith('.web.app') ||
+    host.endsWith('.firebaseapp.com') ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+export function extractApexDomain(hostname: string): string | null {
+  const host = hostname.toLowerCase().trim().replace(/:\d+$/, '');
+  if (isPlatformPreviewHost(host)) return null;
+  const parts = host.split('.').filter(Boolean);
+  if (parts.length < 2) return null;
+  if (parts.length === 2) return host;
+  // Handle common second-level TLDs like .com.ng / .co.uk
+  const sldCandidates = new Set(['com', 'co', 'org', 'net', 'gov', 'edu']);
+  if (parts.length >= 3 && parts[parts.length - 1].length === 2 && sldCandidates.has(parts[parts.length - 2])) {
+    return parts.slice(-3).join('.');
+  }
+  return parts.slice(-2).join('.');
+}
+
+export function getConnectedRootDomain(): string {
+  if (typeof window !== 'undefined') {
+    const detected = extractApexDomain(window.location.hostname);
+    if (detected) return detected;
+    try {
+      const saved = window.localStorage.getItem(ROOT_DOMAIN_STORAGE_KEY);
+      if (saved && saved.includes('.')) return saved.toLowerCase().trim();
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return 'pchpms.com';
+}
+
+export function saveConnectedRootDomain(domain: string): string {
+  const cleaned = domain
+    .toLowerCase()
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '');
+  const valid = cleaned.includes('.') ? cleaned : 'pchpms.com';
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(ROOT_DOMAIN_STORAGE_KEY, valid);
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return valid;
+}
+
 export function getPropertySubdomainSlug(
   property?: Pick<PropertyRecord, 'id' | 'code' | 'name'> | null
 ): string {
@@ -894,18 +1000,72 @@ export function getPropertySubdomainSlug(
 }
 
 export function extractPropertySubdomainSlug(hostname: string): string | null {
-  const host = hostname.toLowerCase().trim();
-  if (!host) return null;
+  const host = hostname.toLowerCase().trim().replace(/:\d+$/, '');
+  if (!host || isPlatformPreviewHost(host)) return null;
   if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
     return null;
   }
-  if (host.endsWith('.pchpms.com')) {
-    const sub = host.slice(0, -'.pchpms.com'.length).split('.')[0];
-    if (!sub || sub === 'www' || sub === 'app' || sub === 'admin' || sub === 'pch') return null;
-    return sub;
+  const apex = extractApexDomain(host);
+  if (!apex || host === apex) return null;
+  const sub = host.slice(0, -(apex.length + 1)).split('.')[0];
+  if (!sub || sub === 'www' || sub === 'app' || sub === 'admin' || sub === 'pch') return null;
+  return sub;
+}
+
+export interface SubdomainLinkItem {
+  id: string;
+  label: string;
+  description: string;
+  url: string;
+  portal: PortalMode;
+  propertyId?: string;
+}
+
+export function buildAllSubdomainLinks(
+  rootDomain: string,
+  properties: Array<Pick<PropertyRecord, 'id' | 'code' | 'name'>>
+): SubdomainLinkItem[] {
+  const domain = rootDomain.toLowerCase().trim() || 'pchpms.com';
+  const items: SubdomainLinkItem[] = [
+    {
+      id: 'sub-home',
+      label: 'Software Homepage & Pricing',
+      description: 'Public marketing site, USD pricing plans & contact desk',
+      url: `https://app.${domain}`,
+      portal: 'home',
+    },
+    {
+      id: 'sub-pch-admin',
+      label: 'PCH Super Admin Console',
+      description: 'Multi-property management, licensing, CMS & inquiries',
+      url: `https://admin.${domain}`,
+      portal: 'pch-admin',
+    },
+  ];
+
+  for (const prop of properties) {
+    const slug = getPropertySubdomainSlug(prop);
+    items.push(
+      {
+        id: `sub-prop-admin-${prop.id}`,
+        label: `${prop.name} · Admin Portal`,
+        description: 'Property manager dashboard, rooms, folios & reports',
+        url: `https://${slug}.${domain}`,
+        portal: 'richgates-admin',
+        propertyId: prop.id,
+      },
+      {
+        id: `sub-prop-staff-${prop.id}`,
+        label: `${prop.name} · Staff Portal`,
+        description: 'Front Desk, Housekeeping, POS & Kitchen, Maintenance',
+        url: `https://${slug}.${domain}/staff`,
+        portal: 'staff',
+        propertyId: prop.id,
+      }
+    );
   }
-  if (host.startsWith('richgates.')) return 'richgates';
-  return null;
+
+  return items;
 }
 
 export function getPortalUrl(
@@ -918,19 +1078,20 @@ export function getPortalUrl(
   }
   const host = window.location.hostname.toLowerCase();
   const slug = getPropertySubdomainSlug(property);
+  const apex = extractApexDomain(host);
 
-  if (host === 'pchpms.com' || host.endsWith('.pchpms.com')) {
+  if (apex) {
     const proto = window.location.protocol || 'https:';
     if (portal === 'home') {
-      return `${proto}//app.pchpms.com`;
+      return `${proto}//app.${apex}`;
     }
     if (portal === 'pch-admin' || portal === 'admin') {
-      return `${proto}//admin.pchpms.com`;
+      return `${proto}//admin.${apex}`;
     }
     if (portal === 'staff') {
-      return `${proto}//${slug}.pchpms.com/staff`;
+      return `${proto}//${slug}.${apex}/staff`;
     }
-    return `${proto}//${slug}.pchpms.com`;
+    return `${proto}//${slug}.${apex}`;
   }
 
   if (portal === 'home') {

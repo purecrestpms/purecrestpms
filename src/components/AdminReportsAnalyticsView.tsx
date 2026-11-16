@@ -1036,7 +1036,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           Administrator Authorization Required
         </h2>
         <p className="text-xs text-slate-600 leading-relaxed">
-          Management Reports &amp; Analytics (P&amp;L, ADR, RevPAR, Inventory Valuation, and Staff Performance) is restricted exclusively to authorized Property Administrators and PCH Super Admins.
+          Management Reports &amp; Analytics (P&amp;L, ADR, RevPAR, Inventory Valuation, and Staff Performance) is restricted exclusively to authorized Property Administrators.
         </p>
       </div>
     );
@@ -1093,6 +1093,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       Adults: res.adults,
       Children: res.children || 0,
       Booking_Source: sourceLabel,
+      Channel_Currency: res.sourceCurrency || 'NGN',
+      Channel_Total_Amount: res.sourceTotalAmount ?? payment.totalAmount,
       Total_Amount_NGN: payment.totalAmount,
       Amount_Paid_NGN: payment.amountPaid,
       Balance_NGN: payment.balance,

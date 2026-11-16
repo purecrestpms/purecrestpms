@@ -33,6 +33,8 @@ import {
 import {
   AuditLogRecord,
   BlockedDateRecord,
+  ChannelCurrency,
+  formatChannelCurrency,
   formatNgn,
   formatUsd,
   getPortalUrl,
@@ -51,6 +53,7 @@ import {
   RoomRecord,
   sortRoomsByNumber,
   StaffRole,
+  SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
@@ -136,12 +139,16 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [newChannelName, setNewChannelName] =
     useState<OtaIntegrationRecord['channelName']>('Airbnb');
   const [newChannelSuite, setNewChannelSuite] = useState('All Suites');
+  const [newChannelCurrency, setNewChannelCurrency] = useState<ChannelCurrency>('USD');
+  const [newChannelNightlyRate, setNewChannelNightlyRate] = useState('');
   const [newListingId, setNewListingId] = useState('');
   const [newIcalUrl, setNewIcalUrl] = useState('');
   const [newCommissionPct, setNewCommissionPct] = useState(15);
   const [newAutoSync, setNewAutoSync] = useState(true);
   const [exportSuiteFilter, setExportSuiteFilter] = useState('ALL');
-  const [icalDrafts, setIcalDrafts] = useState<Record<string, { url: string; room: string }>>({});
+  const [icalDrafts, setIcalDrafts] = useState<
+    Record<string, { url: string; room: string; currency: ChannelCurrency; rate: string }>
+  >({});
 
   const [busy, setBusy] = useState(false);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
@@ -370,22 +377,64 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
   const [syncingAllChannels, setSyncingAllChannels] = useState(false);
 
+  const persistDraftIfDirty = async (
+    channel: OtaIntegrationRecord
+  ): Promise<OtaIntegrationRecord> => {
+    const draft = icalDrafts[channel.id];
+    if (!draft) return channel;
+    const nextUrl = draft.url.trim();
+    const nextRoom = draft.room || 'All Suites';
+    const nextCurrency = draft.currency || channel.defaultCurrency || 'NGN';
+    const nextRate = Math.max(0, Number(draft.rate) || 0);
+
+    const isDirty =
+      nextUrl !== (channel.icalImportUrl || '').trim() ||
+      nextRoom !== (channel.roomNumber || 'All Suites') ||
+      nextCurrency !== (channel.defaultCurrency || 'NGN') ||
+      nextRate !== (channel.defaultNightlyRate ?? 0);
+
+    if (!isDirty) return channel;
+
+    await updateOtaChannelIcal({
+      property,
+      channel,
+      icalImportUrl: nextUrl,
+      roomNumber: nextRoom,
+      defaultCurrency: nextCurrency,
+      defaultNightlyRate: nextRate,
+      actorRole: ROLE_LABELS[activeRole],
+    });
+    setIcalDrafts((prev) => {
+      const next = { ...prev };
+      delete next[channel.id];
+      return next;
+    });
+    return {
+      ...channel,
+      icalImportUrl: nextUrl,
+      roomNumber: nextRoom,
+      defaultCurrency: nextCurrency,
+      defaultNightlyRate: nextRate,
+    };
+  };
+
   const handleSyncSingleChannel = async (
     channel: OtaIntegrationRecord,
     icsRawText?: string
   ) => {
     setSyncingChannelId(channel.id);
     try {
+      const effectiveChannel = await persistDraftIfDirty(channel);
       const result = await syncOtaChannelWorkflow({
         property,
-        channel,
+        channel: effectiveChannel,
         rooms: sortedRooms,
         reservations,
         icsRawText,
         actorRole: ROLE_LABELS[activeRole],
       });
       onNotify(
-        `${channel.channelName}: ${result.created} new, ${result.updated} updated, ${result.cancelled} cancelled, ${result.skipped} unchanged`
+        `${effectiveChannel.channelName}: ${result.created} new, ${result.updated} updated, ${result.cancelled} cancelled, ${result.skipped} unchanged`
       );
     } catch (err) {
       onNotify(
@@ -397,7 +446,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   };
 
   const handleSyncAllChannels = async () => {
-    const syncable = otaChannels.filter((c) => c.connected && Boolean(c.icalImportUrl?.trim()));
+    const syncable = otaChannels.filter((c) => {
+      const url = (icalDrafts[c.id]?.url ?? c.icalImportUrl ?? '').trim();
+      return c.connected && Boolean(url);
+    });
     if (syncable.length === 0) {
       onNotify('Add an inbound .ics URL to at least one connected channel first.');
       return;
@@ -409,9 +461,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     try {
       for (const ch of syncable) {
         try {
+          const effectiveChannel = await persistDraftIfDirty(ch);
           const res = await syncOtaChannelWorkflow({
             property,
-            channel: ch,
+            channel: effectiveChannel,
             rooms: sortedRooms,
             reservations,
             actorRole: ROLE_LABELS[activeRole],
@@ -456,11 +509,14 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     e.preventDefault();
     setBusy(true);
     try {
+      const rateNum = Math.max(0, Number(newChannelNightlyRate) || 0);
       await createOtaChannelWithIcal({
         property,
         channelName: newChannelName,
         propertyListingId: newListingId,
         roomNumber: newChannelSuite,
+        defaultCurrency: newChannelCurrency,
+        defaultNightlyRate: rateNum,
         icalImportUrl: newIcalUrl,
         commissionPct: newCommissionPct,
         autoSync: newAutoSync,
@@ -470,10 +526,28 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       setShowChannelForm(false);
       setNewListingId('');
       setNewIcalUrl('');
+      setNewChannelNightlyRate('');
     } finally {
       setBusy(false);
     }
   };
+
+  if (
+    (section === 'properties_admin' || section === 'rbac_audit' || section === 'deployment') &&
+    activeRole !== 'pch_admin'
+  ) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-xl mx-auto text-center space-y-2">
+        <Shield className="w-7 h-7 text-slate-400 mx-auto" />
+        <h2 className="font-display text-base font-bold text-slate-900">
+          Section Restricted to Platform Administration
+        </h2>
+        <p className="text-xs text-slate-500">
+          This configuration module is managed centrally and is not part of the property workspace.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -482,7 +556,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           <h1 className="font-display text-xl font-bold text-slate-900">
             {section === 'properties_admin'
               ? `${cms.pages.properties_admin.title} (${properties.length} Properties)`
-              : cms.pages[section].title}
+              : section === 'licensing' && activeRole !== 'pch_admin'
+                ? 'Property Software Licensing & Activation'
+                : cms.pages[section].title}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
             {cms.pages[section].subtitle}
@@ -545,7 +621,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
                 <div>
                   <label className="block font-medium text-slate-700 mb-1">Channel Platform</label>
                   <select
@@ -595,12 +671,42 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     type="text"
                     value={newListingId}
                     onChange={(e) => setNewListingId(e.target.value)}
-                    placeholder="e.g. ABNB-RM1-904"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
                 </div>
 
-                <div className="lg:col-span-2">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Customer Currency
+                  </label>
+                  <select
+                    value={newChannelCurrency}
+                    onChange={(e) => setNewChannelCurrency(e.target.value as ChannelCurrency)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
+                  >
+                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                      <option key={cur} value={cur}>
+                        {cur}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Channel Rate / Night ({newChannelCurrency})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={newChannelNightlyRate}
+                    onChange={(e) => setNewChannelNightlyRate(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+
+                <div>
                   <label className="block font-medium text-slate-700 mb-1">
                     Inbound iCal URL (.ics)
                   </label>
@@ -609,7 +715,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     required
                     value={newIcalUrl}
                     onChange={(e) => setNewIcalUrl(e.target.value)}
-                    placeholder="https://www.airbnb.com/calendar/ical/12345.ics?s=..."
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
                 </div>
@@ -712,13 +817,26 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               const draft = icalDrafts[ch.id] ?? {
                 url: ch.icalImportUrl || '',
                 room: ch.roomNumber || 'All Suites',
+                currency: ch.defaultCurrency || 'NGN',
+                rate: ch.defaultNightlyRate && ch.defaultNightlyRate > 0 ? String(ch.defaultNightlyRate) : '',
               };
-              const suiteParam = encodeURIComponent(draft.room === 'All Suites' ? 'ALL' : draft.room);
+              const suiteParam = encodeURIComponent(
+                !draft.room || draft.room === 'All Suites' ? 'ALL' : draft.room
+              );
               const channelExportUrl =
                 ch.icalExportUrl ||
                 (typeof window !== 'undefined'
                   ? `${window.location.origin}/?ical=${encodeURIComponent(property.id)}&room=${suiteParam}`
                   : `/?ical=${property.id}&room=${suiteParam}`);
+              const mappedRoomObj =
+                draft.room && draft.room !== 'All Suites'
+                  ? sortedRooms.find(
+                      (r) => r.roomNumber.toLowerCase() === draft.room.toLowerCase()
+                    )
+                  : undefined;
+              const mappedLabel = mappedRoomObj
+                ? `${mappedRoomObj.roomNumber} · ${mappedRoomObj.roomType}`
+                : draft.room || 'All Suites';
 
               return (
                 <div
@@ -742,10 +860,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs text-slate-500 font-mono-tabular">
-                      <span>Listing: {ch.propertyListingId}</span>
-                      <span className="font-semibold text-slate-800">
-                        {ch.roomNumber || 'All Suites'}
+                    <div className="flex items-center justify-between gap-2 text-xs text-slate-500 font-mono-tabular">
+                      <span className="truncate">Listing: {ch.propertyListingId}</span>
+                      <span className="font-semibold text-slate-800 truncate text-right">
+                        {mappedLabel}
                       </span>
                     </div>
 
@@ -764,12 +882,12 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Inbound iCal Link & Suite Assignment */}
+                    {/* Inbound iCal Link, Suite Assignment & Customer Billing Currency */}
                     <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
-                      <div className="flex items-center justify-between">
-                        <label className="font-semibold text-slate-700 inline-flex items-center gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="font-semibold text-slate-700 inline-flex items-center gap-1 shrink-0">
                           <Link2 className="w-3 h-3 text-slate-400" />
-                          <span>Inbound iCal Link (.ics)</span>
+                          <span>Suite &amp; iCal (.ics)</span>
                         </label>
                         <select
                           value={draft.room}
@@ -779,20 +897,66 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                               [ch.id]: { ...draft, room: e.target.value },
                             }))
                           }
-                          className="border border-slate-200 rounded px-2 py-0.5 text-[11px] bg-white"
+                          className="border border-slate-200 rounded px-2 py-1 text-[11px] bg-white max-w-[190px] truncate"
                         >
                           <option value="All Suites">All Suites</option>
                           {sortedRooms.map((r) => (
                             <option key={r.id} value={r.roomNumber}>
-                              {r.roomNumber}
+                              {r.roomNumber} · {r.roomType}
                             </option>
                           ))}
                         </select>
                       </div>
 
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div>
+                          <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                            Channel Currency
+                          </label>
+                          <select
+                            value={draft.currency}
+                            onChange={(e) =>
+                              setIcalDrafts((prev) => ({
+                                ...prev,
+                                [ch.id]: {
+                                  ...draft,
+                                  currency: e.target.value as ChannelCurrency,
+                                },
+                              }))
+                            }
+                            className="w-full border border-slate-200 rounded-lg px-2 py-1 text-[11px] bg-white font-mono-tabular"
+                          >
+                            {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                              <option key={cur} value={cur}>
+                                {cur}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                            Guest Rate / Night ({draft.currency})
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={draft.rate}
+                            onChange={(e) =>
+                              setIcalDrafts((prev) => ({
+                                ...prev,
+                                [ch.id]: { ...draft, rate: e.target.value },
+                              }))
+                            }
+                            className="w-full border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
+                          />
+                        </div>
+                      </div>
+
                       <div className="flex items-center gap-1.5">
                         <input
                           type="url"
+                          aria-label="Inbound iCal link"
                           value={draft.url}
                           onChange={(e) =>
                             setIcalDrafts((prev) => ({
@@ -800,11 +964,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                               [ch.id]: { ...draft, url: e.target.value },
                             }))
                           }
-                          placeholder="Paste external .ics calendar link..."
                           className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
                         />
                         <button
                           type="button"
+                          disabled={busy}
                           onClick={async () => {
                             setBusy(true);
                             try {
@@ -813,9 +977,16 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 channel: ch,
                                 icalImportUrl: draft.url,
                                 roomNumber: draft.room,
+                                defaultCurrency: draft.currency,
+                                defaultNightlyRate: Math.max(0, Number(draft.rate) || 0),
                                 actorRole: ROLE_LABELS[activeRole],
                               });
-                              onNotify(`Saved iCal link for ${ch.channelName}`);
+                              setIcalDrafts((prev) => {
+                                const next = { ...prev };
+                                delete next[ch.id];
+                                return next;
+                              });
+                              onNotify(`Saved iCal settings for ${ch.channelName}`);
                             } finally {
                               setBusy(false);
                             }
@@ -828,7 +999,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
                       <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
                         <span className="truncate font-mono-tabular pr-2">
-                          Last Sync: {ch.lastSyncedIso.slice(0, 16).replace('T', ' ')}
+                          Last Sync:{' '}
+                          {ch.lastSyncedIso
+                            ? ch.lastSyncedIso.slice(0, 16).replace('T', ' ')
+                            : 'Never synced'}
                         </span>
                         <button
                           type="button"
@@ -848,6 +1022,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                           )}
                         </button>
                       </div>
+                      {Number(draft.rate) > 0 && draft.currency !== 'NGN' && (
+                        <p className="text-[10px] text-slate-500 font-mono-tabular">
+                          Channel Rate: {formatChannelCurrency(Number(draft.rate), draft.currency)}/nt
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -938,71 +1117,87 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 Provision New Property in PCH Network
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <input
-                  required
-                  type="text"
-                  placeholder="Property Name (e.g. PureCrest Suites Abuja)"
-                  value={propName}
-                  onChange={(e) => setPropName(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  required
-                  type="text"
-                  placeholder="Code (e.g. PC-ABJ-02)"
-                  value={propCode}
-                  onChange={(e) => setPropCode(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                />
-                <input
-                  required
-                  type="text"
-                  placeholder="City"
-                  value={propCity}
-                  onChange={(e) => setPropCity(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  required
-                  type="text"
-                  placeholder="State"
-                  value={propState}
-                  onChange={(e) => setPropState(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  type="text"
-                  placeholder="Street Address"
-                  value={propAddress}
-                  onChange={(e) => setPropAddress(e.target.value)}
-                  className="lg:col-span-2 border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  type="email"
-                  placeholder="Property Admin Email"
-                  value={propAdminEmail}
-                  onChange={(e) => setPropAdminEmail(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Property Name</label>
+                  <input
+                    required
+                    type="text"
+                    value={propName}
+                    onChange={(e) => setPropName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Property Code</label>
+                  <input
+                    required
+                    type="text"
+                    value={propCode}
+                    onChange={(e) => setPropCode(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">City</label>
+                  <input
+                    required
+                    type="text"
+                    value={propCity}
+                    onChange={(e) => setPropCity(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">State</label>
+                  <input
+                    required
+                    type="text"
+                    value={propState}
+                    onChange={(e) => setPropState(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div className="lg:col-span-2">
+                  <label className="block font-medium text-slate-700 mb-1">Street Address</label>
+                  <input
+                    type="text"
+                    value={propAddress}
+                    onChange={(e) => setPropAddress(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Property Admin Email</label>
+                  <input
+                    type="email"
+                    value={propAdminEmail}
+                    onChange={(e) => setPropAdminEmail(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={propRooms}
-                    onChange={(e) => setPropRooms(Number(e.target.value))}
-                    placeholder="Rooms"
-                    className="border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                  <input
-                    type="number"
-                    min={10000}
-                    step={5000}
-                    value={propBaseRate}
-                    onChange={(e) => setPropBaseRate(Number(e.target.value))}
-                    placeholder="Base ₦"
-                    className="border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Rooms</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={propRooms}
+                      onChange={(e) => setPropRooms(Number(e.target.value))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Base Rate (₦)</label>
+                    <input
+                      type="number"
+                      min={10000}
+                      step={5000}
+                      value={propBaseRate}
+                      onChange={(e) => setPropBaseRate(Number(e.target.value))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    />
+                  </div>
                 </div>
               </div>
               <div className="flex justify-end gap-2">
@@ -1102,123 +1297,113 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         </div>
       )}
 
-      {/* SECTION: CENTRALIZED PURECREST SOFTWARE LICENSING & ACTIVATION */}
+      {/* SECTION: SOFTWARE LICENSING & ACTIVATION */}
       {section === 'licensing' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* License Key Generator */}
-            <form
-              onSubmit={handleGenerateLicense}
-              className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 text-xs"
-            >
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                <KeyRound className="w-4 h-4 text-emerald-700" />
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  PureCrest License Key Generator
-                </h2>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Target Property
-                  </label>
-                  <select
-                    value={licPropId}
-                    onChange={(e) => setLicPropId(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    {properties.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.code})
-                      </option>
-                    ))}
-                  </select>
+          <div className={`grid grid-cols-1 ${activeRole === 'pch_admin' ? 'lg:grid-cols-2' : ''} gap-6`}>
+            {/* License Key Generator (PCH Super Admin Only) */}
+            {activeRole === 'pch_admin' && (
+              <form
+                onSubmit={handleGenerateLicense}
+                className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 text-xs"
+              >
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                  <KeyRound className="w-4 h-4 text-emerald-700" />
+                  <h2 className="font-display text-sm font-bold text-slate-900">
+                    PureCrest License Key Generator
+                  </h2>
                 </div>
 
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Subscription Tier
-                  </label>
-                  <select
-                    value={licPlan}
-                    onChange={(e) => {
-                      const next = e.target.value as LicenseRecord['plan'];
-                      setLicPlan(next);
-                      if (next === 'Lifetime Sovereign') setLicCycle('lifetime');
-                    }}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="Starter">Starter (Up to 12 rooms)</option>
-                    <option value="Professional">Professional (Up to 30 rooms)</option>
-                    <option value="Enterprise">Enterprise (Up to 80 rooms)</option>
-                    <option value="Lifetime Sovereign">Lifetime Sovereign (Up to 250 rooms)</option>
-                  </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Target Property
+                    </label>
+                    <select
+                      value={licPropId}
+                      onChange={(e) => setLicPropId(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                    >
+                      {properties.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Subscription Tier
+                    </label>
+                    <select
+                      value={licPlan}
+                      onChange={(e) => {
+                        const next = e.target.value as LicenseRecord['plan'];
+                        setLicPlan(next);
+                        if (next === 'Lifetime Sovereign') setLicCycle('lifetime');
+                      }}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                    >
+                      <option value="Starter">Starter (Up to 12 rooms)</option>
+                      <option value="Professional">Professional (Up to 30 rooms)</option>
+                      <option value="Enterprise">Enterprise (Up to 80 rooms)</option>
+                      <option value="Lifetime Sovereign">Lifetime Sovereign (Up to 250 rooms)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Billing &amp; Expiry Model
+                    </label>
+                    <select
+                      value={licPlan === 'Lifetime Sovereign' ? 'lifetime' : licCycle}
+                      onChange={(e) =>
+                        setLicCycle(e.target.value as LicenseRecord['billingCycle'])
+                      }
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                    >
+                      <option value="monthly">Monthly Subscription (30 days)</option>
+                      <option value="annual">Annual Subscription (365 days)</option>
+                      <option value="lifetime">Lifetime Activation (Never Expires)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Validity Days (Non-Lifetime)
+                    </label>
+                    <input
+                      type="number"
+                      min={7}
+                      disabled={licCycle === 'lifetime' || licPlan === 'Lifetime Sovereign'}
+                      value={licCycle === 'monthly' ? 30 : licDurationDays}
+                      onChange={(e) => setLicDurationDays(Number(e.target.value))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular disabled:bg-slate-100"
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Billing &amp; Expiry Model
+                <div className="flex items-center justify-between pt-2">
+                  <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={licAutoActivate}
+                      onChange={(e) => setLicAutoActivate(e.target.checked)}
+                    />
+                    <span>Activate &amp; bind to property immediately</span>
                   </label>
-                  <select
-                    value={licPlan === 'Lifetime Sovereign' ? 'lifetime' : licCycle}
-                    onChange={(e) =>
-                      setLicCycle(e.target.value as LicenseRecord['billingCycle'])
-                    }
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="monthly">Monthly Subscription (30 days)</option>
-                    <option value="annual">Annual Subscription (365 days)</option>
-                    <option value="lifetime">Lifetime Activation (Never Expires)</option>
-                  </select>
-                </div>
 
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Validity Days (Non-Lifetime)
-                  </label>
-                  <input
-                    type="number"
-                    min={7}
-                    disabled={licCycle === 'lifetime' || licPlan === 'Lifetime Sovereign'}
-                    value={licCycle === 'monthly' ? 30 : licDurationDays}
-                    onChange={(e) => setLicDurationDays(Number(e.target.value))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular disabled:bg-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-2">
-                <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={licAutoActivate}
-                    onChange={(e) => setLicAutoActivate(e.target.checked)}
-                  />
-                  <span>Activate &amp; bind to property immediately</span>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={busy || activeRole !== 'pch_admin'}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg"
-                >
-                  {cms.pages.licensing.ctaLabel || 'Generate License Key'}
-                </button>
-              </div>
-              {activeRole !== 'pch_admin' && (
-                <p className="text-[11px] text-amber-700">
-                  Only PCH Super Admin can issue new PureCrest keys.{' '}
                   <button
-                    type="button"
-                    onClick={() => onSwitchPortal('pch-admin')}
-                    className="font-semibold underline hover:text-amber-900 cursor-pointer"
+                    type="submit"
+                    disabled={busy}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg"
                   >
-                    Switch to PCH Super Admin Portal
+                    {cms.pages.licensing.ctaLabel || 'Generate License Key'}
                   </button>
-                </p>
-              )}
-            </form>
+                </div>
+              </form>
+            )}
 
             {/* License Activation Terminal */}
             <form
@@ -1235,12 +1420,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
                 <div>
                   <label className="block font-medium text-slate-700 mb-1">
-                    Enter PureCrest License Key
+                    Enter Property License Key
                   </label>
                   <input
                     required
                     type="text"
-                    placeholder="e.g. PCH-ABJ2-ENTP-5190-NGN1"
                     value={activationKeyInput}
                     onChange={(e) => setActivationKeyInput(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular uppercase"
@@ -1277,11 +1461,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
             </form>
           </div>
 
-          {/* Centralized License Registry Table */}
+          {/* License Registry Table */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
               <h2 className="font-display text-sm font-bold text-slate-900">
-                Centralized PureCrest License Registry
+                {activeRole === 'pch_admin' ? 'Centralized PureCrest License Registry' : 'Property License Registry'}
               </h2>
               <span className="font-mono-tabular text-xs text-slate-500">
                 {licenses.length} issued keys
@@ -1500,34 +1684,41 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 </h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input
-                  required
-                  type="text"
-                  placeholder="Staff Name"
-                  value={grantName}
-                  onChange={(e) => setGrantName(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <input
-                  required
-                  type="email"
-                  placeholder="Google Email"
-                  value={grantEmail}
-                  onChange={(e) => setGrantEmail(e.target.value)}
-                  className="border border-slate-200 rounded-lg px-3 py-2"
-                />
-                <select
-                  value={grantRole}
-                  onChange={(e) => setGrantRole(e.target.value as StaffRole)}
-                  className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="property_admin">Property Admin (GM)</option>
-                  <option value="front_desk">Front Desk</option>
-                  <option value="housekeeping">Housekeeping</option>
-                  <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
-                  <option value="accountant">Accountant</option>
-                  <option value="maintenance">Maintenance</option>
-                </select>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Staff Name</label>
+                  <input
+                    required
+                    type="text"
+                    value={grantName}
+                    onChange={(e) => setGrantName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Google Email</label>
+                  <input
+                    required
+                    type="email"
+                    value={grantEmail}
+                    onChange={(e) => setGrantEmail(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Role</label>
+                  <select
+                    value={grantRole}
+                    onChange={(e) => setGrantRole(e.target.value as StaffRole)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="property_admin">Property Admin (GM)</option>
+                    <option value="front_desk">Front Desk</option>
+                    <option value="housekeeping">Housekeeping</option>
+                    <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
+                    <option value="accountant">Accountant</option>
+                    <option value="maintenance">Maintenance</option>
+                  </select>
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <p className="text-[11px] text-slate-500">

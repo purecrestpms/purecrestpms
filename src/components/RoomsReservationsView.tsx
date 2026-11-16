@@ -48,6 +48,7 @@ import {
   BlockedDateRecord,
   convertNgnToUsd,
   formatBookingSourceLabel,
+  formatChannelCurrency,
   formatNgn,
   formatUsd,
   getReservationBookedDate,
@@ -2782,7 +2783,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </td>
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                          {formatNgn(totalAmount)}
+                          <span className="block">{formatNgn(totalAmount)}</span>
+                          {res.sourceCurrency &&
+                            res.sourceCurrency !== 'NGN' &&
+                            typeof res.sourceTotalAmount === 'number' &&
+                            res.sourceTotalAmount > 0 && (
+                              <span className="block text-[10px] font-medium text-blue-700">
+                                {formatChannelCurrency(res.sourceTotalAmount, res.sourceCurrency)} (
+                                {res.sourceCurrency})
+                              </span>
+                            )}
                         </td>
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular text-emerald-700 whitespace-nowrap">
@@ -3210,6 +3220,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         <p className="font-mono-tabular font-semibold text-slate-900">
                           {formatNgn(r.roomChargesNgn + r.posChargesNgn)}
                         </p>
+                        {r.sourceCurrency &&
+                          r.sourceCurrency !== 'NGN' &&
+                          typeof r.sourceTotalAmount === 'number' &&
+                          r.sourceTotalAmount > 0 && (
+                            <p className="font-mono-tabular text-[10px] font-medium text-blue-700">
+                              {formatChannelCurrency(r.sourceTotalAmount, r.sourceCurrency)} (
+                              {r.sourceCurrency})
+                            </p>
+                          )}
                         <p className="text-[11px] text-emerald-700 capitalize">
                           {r.status.replace('_', ' ')} · Open Folio →
                         </p>
@@ -3781,7 +3800,22 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     Stay: <strong>{activeFolioReservation.checkInDate}</strong> →{' '}
                     <strong>{activeFolioReservation.checkOutDate}</strong> (
                     {activeFolioReservation.nights} nights @{' '}
-                    {formatNgn(activeFolioReservation.nightlyRateNgn)}/nt)
+                    {formatNgn(activeFolioReservation.nightlyRateNgn)}/nt
+                    {activeFolioReservation.sourceCurrency &&
+                      activeFolioReservation.sourceCurrency !== 'NGN' &&
+                      typeof activeFolioReservation.sourceNightlyRate === 'number' &&
+                      activeFolioReservation.sourceNightlyRate > 0 && (
+                        <span className="text-blue-700 font-semibold">
+                          {' '}
+                          ·{' '}
+                          {formatChannelCurrency(
+                            activeFolioReservation.sourceNightlyRate,
+                            activeFolioReservation.sourceCurrency
+                          )}
+                          /nt ({activeFolioReservation.sourceCurrency})
+                        </span>
+                      )}
+                    )
                   </span>
                   <span className="text-[11px] text-slate-500 block">
                     Guests:{' '}
@@ -4028,6 +4062,23 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   {formatNgn(activeFolioReservation.roomChargesNgn)}
                 </span>
               </div>
+              {activeFolioReservation.sourceCurrency &&
+                activeFolioReservation.sourceCurrency !== 'NGN' &&
+                typeof activeFolioReservation.sourceTotalAmount === 'number' &&
+                activeFolioReservation.sourceTotalAmount > 0 && (
+                  <div className="flex justify-between text-[11px] text-blue-700">
+                    <span>
+                      Channel Customer Rate ({activeFolioReservation.sourceCurrency} @ ₦
+                      {(activeFolioReservation.fxRateToNgn || 1).toLocaleString()})
+                    </span>
+                    <span className="font-mono-tabular font-semibold">
+                      {formatChannelCurrency(
+                        activeFolioReservation.sourceTotalAmount,
+                        activeFolioReservation.sourceCurrency
+                      )}
+                    </span>
+                  </div>
+                )}
               <div className="flex justify-between">
                 <span className="text-slate-600">Restaurant POS / Misc Folio Charges</span>
                 <span className="font-mono-tabular font-semibold text-slate-900">
@@ -4302,6 +4353,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 </span>
                 <span className="font-mono-tabular">{formatNgn(checkoutTarget.roomChargesNgn)}</span>
               </div>
+              {checkoutTarget.sourceCurrency &&
+                checkoutTarget.sourceCurrency !== 'NGN' &&
+                typeof checkoutTarget.sourceTotalAmount === 'number' &&
+                checkoutTarget.sourceTotalAmount > 0 && (
+                  <div className="flex justify-between text-[11px] text-blue-700">
+                    <span>Channel Customer Rate ({checkoutTarget.sourceCurrency})</span>
+                    <span className="font-mono-tabular font-semibold">
+                      {formatChannelCurrency(
+                        checkoutTarget.sourceTotalAmount,
+                        checkoutTarget.sourceCurrency
+                      )}
+                    </span>
+                  </div>
+                )}
               <div className="flex justify-between">
                 <span className="text-slate-600">Restaurant / Bar POS Charges</span>
                 <span className="font-mono-tabular">{formatNgn(checkoutTarget.posChargesNgn)}</span>

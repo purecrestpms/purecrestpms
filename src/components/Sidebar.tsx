@@ -56,6 +56,7 @@ interface SidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   onOpenPortalLinksModal: () => void;
+  onSwitchPropertyPortal: (portal: 'richgates-admin' | 'staff') => void;
   onSignOut: () => void;
   unreadMessageCount?: number;
 }
@@ -136,6 +137,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onCloseMobile,
   onOpenPortalLinksModal,
+  onSwitchPropertyPortal,
   onSignOut,
   unreadMessageCount = 0,
 }) => {
@@ -207,14 +209,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={onOpenPortalLinksModal}
-            title="Portal Login Links & Switcher"
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            <Link2 className="w-4 h-4" />
-          </button>
+          {portalMode === 'pch-admin' && (
+            <button
+              type="button"
+              onClick={onOpenPortalLinksModal}
+              title="Portal Login Links & Switcher"
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <Link2 className="w-4 h-4" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onCloseMobile}
@@ -300,17 +304,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Bottom Portal Switcher & Clickable User Profile Card */}
       <div className="p-3.5 border-t border-slate-800 space-y-2.5 bg-slate-950/40">
-        <button
-          type="button"
-          onClick={() => {
-            onOpenPortalLinksModal();
-            onCloseMobile();
-          }}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
-        >
-          <ClipboardList className="w-3.5 h-3.5" />
-          <span>Portal Links &amp; Switch</span>
-        </button>
+        {portalMode === 'pch-admin' ? (
+          <button
+            type="button"
+            onClick={() => {
+              onOpenPortalLinksModal();
+              onCloseMobile();
+            }}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+          >
+            <ClipboardList className="w-3.5 h-3.5" />
+            <span>Portal Links &amp; Switch</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              onSwitchPropertyPortal(portalMode === 'staff' ? 'richgates-admin' : 'staff');
+              onCloseMobile();
+            }}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+          >
+            <ClipboardList className="w-3.5 h-3.5" />
+            <span>
+              {portalMode === 'staff' ? 'Switch to Property Admin' : 'Switch to Staff View'}
+            </span>
+          </button>
+        )}
 
         <div className="flex items-center justify-between gap-2 pt-1">
           <button

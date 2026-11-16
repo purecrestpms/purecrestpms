@@ -103,7 +103,7 @@ const TRAINING_MODULES: TrainingModule[] = [
   {
     id: 'vid-rooms',
     title: '2. Rooms, Nightly Rates & 20-Room License Control',
-    roleAudience: 'Property Admin · PCH Super Admin',
+    roleAudience: 'Property Admin',
     durationSec: 36,
     summary:
       'Add new suites up to Richgates Apartments’ 20-room license ceiling, edit NGN nightly rates, and upload suite photos.',
@@ -239,7 +239,7 @@ const TRAINING_MODULES: TrainingModule[] = [
   {
     id: 'vid-reports',
     title: '6. Management Analytics, P&L & PDF/Excel Export',
-    roleAudience: 'Property Admin · Accountant · PCH Super Admin',
+    roleAudience: 'Property Admin · Accountant',
     durationSec: 38,
     summary:
       'Analyze real-time occupancy, ADR, RevPAR, profit & loss, booking source performance, inventory costs, and export boardroom PDF/Excel packs.',
@@ -292,7 +292,7 @@ const DOC_TOPICS = [
     summary:
       'Richgates Apartments operates under an active Lifetime Sovereign license capped at 20 rooms maximum across Serviced Apartments and Hotel Rooms.',
     bullets: [
-      'Property Admins and PCH Super Admins can click + Add New Room inside Rooms & Rates to register new suites (e.g. RM-9 through RM-20).',
+      'Property Administrators can click + Add New Room inside Rooms & Rates to register new suites (e.g. RM-9 through RM-20).',
       'Room creation automatically checks current room count against the 20-room Richgates ceiling and blocks creation once 20 rooms exist.',
       'Nightly Naira rates and suite photos can be edited anytime via Manage Suite or the inline Rate button.',
     ],
@@ -317,7 +317,7 @@ const DOC_TOPICS = [
       'Keep Front Desk, Housekeeping, Kitchen, Accounts, Maintenance, and Management synchronized with live read-tracked alerts.',
     bullets: [
       'All staff roles can send Department or Direct Staff messages.',
-      'Property Admins & PCH Super Admins can send Bulk Staff messages (multi-select employees) or All Staff Broadcasts.',
+      'Property Administrators can send Bulk Staff messages (multi-select employees) or All Staff Broadcasts.',
       'New incoming messages trigger toast alerts, increment the Sidebar badge, and appear in the top Notification Bell.',
     ],
   },
@@ -328,19 +328,19 @@ const DOC_TOPICS = [
     summary:
       'Prevent double bookings by linking inbound and outbound iCal feeds per suite or property-wide.',
     bullets: [
-      'Click Add Channel / iCal Link inside Channel Manager & iCal to paste an OTA .ics feed URL.',
+      'Click Add Channel / iCal Link inside Channel Manager & iCal to paste an OTA .ics feed URL and set the guest booking currency (NGN, USD, GBP, EUR).',
       'Copy the Outbound Property iCal Export Feed URL or download the .ics file to paste back into Airbnb or Booking.com.',
     ],
   },
   {
     id: 'doc-branding',
-    category: 'Branding & CMS',
-    title: 'Property Logo Isolation & PCH Super Admin CMS',
+    category: 'Branding & Property Profile',
+    title: 'Property Logo & Official Contact Setup',
     summary:
-      'Updating Richgates Apartments’ logo updates only the Richgates workspace and receipts—never PCH Super Admin branding.',
+      'Updating your property logo updates your Property Portal workspace, guest receipts, and executive reports.',
     bullets: [
-      'Upload or change the Richgates logo inside Admin & Property Profile.',
-      'PCH Super Admin retains its independent PCH PMS identity and can edit all page headings and copy in App CMS & Text Editor.',
+      'Upload or change the property logo inside Admin & Property Profile.',
+      'Your official address, phone number, email, and WhatsApp contacts sync automatically to guest receipts and dashboards.',
     ],
   },
 ];
@@ -348,11 +348,11 @@ const DOC_TOPICS = [
 const FAQ_ITEMS = [
   {
     q: 'Why can I not add a 21st room on Richgates Apartments?',
-    a: 'Richgates Apartments is bound to a 20-room maximum software license. Reach out to PCH Super Admin if the property expands beyond 20 units.',
+    a: 'Richgates Apartments is bound to a 20-room maximum software license ceiling. Contact Licensing Support if your property expands beyond 20 units.',
   },
   {
-    q: 'Does changing the Richgates logo change the PCH PMS super-admin logo?',
-    a: 'No. Property logos apply strictly to the Richgates Property Admin Portal, Staff Portal, Dashboard, and receipts. PCH PMS keeps its own logo.',
+    q: 'Where does uploading the property logo apply?',
+    a: 'Property logos apply directly to the Property Admin Portal, Staff Portal, Dashboard, Guest Receipts, and Exported Reports.',
   },
   {
     q: 'How do I receive new message alerts immediately?',
@@ -768,7 +768,6 @@ export const HelpDocsTrainingView: React.FC<HelpDocsTrainingViewProps> = ({
                   type="url"
                   value={customVideoUrl}
                   onChange={(e) => setCustomVideoUrl(e.target.value)}
-                  placeholder="https://example.com/richgates-training.mp4"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
                 />
                 {customVideoUrl.trim() ? (
@@ -892,7 +891,7 @@ export const HelpDocsTrainingView: React.FC<HelpDocsTrainingViewProps> = ({
                 type="text"
                 value={docSearch}
                 onChange={(e) => setDocSearch(e.target.value)}
-                placeholder="Search documentation..."
+                aria-label="Search documentation"
                 className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -929,13 +928,33 @@ export const HelpDocsTrainingView: React.FC<HelpDocsTrainingViewProps> = ({
                 Department Role Access Reference
               </h2>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div
+              className={`grid grid-cols-1 sm:grid-cols-2 ${
+                activeRole === 'pch_admin' ? 'lg:grid-cols-4' : 'lg:grid-cols-3'
+              } gap-3 text-xs`}
+            >
               {(
                 [
-                  ['PCH Super Admin', 'Multi-property management, Licensing, CMS text editor, Full Analytics'],
-                  ['Property Admin (GM)', 'All Richgates operations, Rooms (up to 20), Bulk Staff Messaging, Reports'],
-                  ['Front Desk', 'Reservations, Calendar, Arrivals, In-House, Walk-in Check-in, Guest Folios, Messages'],
-                  ['Housekeeping / Kitchen / Maint', 'Department tasks, Store inventory, Shifts, Messaging & Training'],
+                  ...(activeRole === 'pch_admin'
+                    ? ([
+                        [
+                          'PCH Super Admin',
+                          'Multi-property management, Licensing, RBAC & Audit Logs, Cloudflare Deploy, CMS',
+                        ],
+                      ] as const)
+                    : []),
+                  [
+                    'Property Admin (GM)',
+                    'All Richgates operations, Rooms (up to 20), Bulk Staff Messaging, Channel Manager, Reports',
+                  ],
+                  [
+                    'Front Desk',
+                    'Reservations, Calendar, Arrivals, In-House, Walk-in Check-in, Guest Folios, Messages',
+                  ],
+                  [
+                    'Housekeeping / Kitchen / Maint',
+                    'Department tasks, Store inventory, Shifts, Messaging & Training',
+                  ],
                 ] as const
               ).map(([title, scope]) => (
                 <div key={title} className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
@@ -1025,7 +1044,6 @@ export const HelpDocsTrainingView: React.FC<HelpDocsTrainingViewProps> = ({
                 type="text"
                 value={helpSubject}
                 onChange={(e) => setHelpSubject(e.target.value)}
-                placeholder="e.g. Need guest key override or rate check"
                 className="w-full border border-slate-200 rounded-lg px-3 py-2"
               />
             </div>
@@ -1037,7 +1055,6 @@ export const HelpDocsTrainingView: React.FC<HelpDocsTrainingViewProps> = ({
                 rows={4}
                 value={helpBody}
                 onChange={(e) => setHelpBody(e.target.value)}
-                placeholder="Describe the suite, reservation reference, or issue..."
                 className="w-full border border-slate-200 rounded-lg px-3 py-2"
               />
             </div>

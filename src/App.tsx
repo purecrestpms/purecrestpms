@@ -688,51 +688,91 @@ export default function App() {
     void syncDefaultMessagesIfNeeded(activeProp);
   }, [properties, activePropertyId, messages.length]);
 
+  const otaAutoSyncStateRef = useRef({
+    properties,
+    activePropertyId,
+    otaChannels,
+    rooms,
+    reservations,
+    activeRole,
+  });
+  otaAutoSyncStateRef.current = {
+    properties,
+    activePropertyId,
+    otaChannels,
+    rooms,
+    reservations,
+    activeRole,
+  };
+  const otaAutoSyncBusyRef = useRef(false);
+
   // Automatic background OTA iCal reservation sync every 10 minutes for connected autoSync channels
   useEffect(() => {
-    const activeProp = properties.find((p) => p.id === activePropertyId);
-    if (!activeProp || rooms.length === 0) return;
     if (activeRole !== 'pch_admin' && activeRole !== 'property_admin' && activeRole !== 'front_desk') {
       return;
     }
 
     const syncDueChannels = async () => {
+      if (otaAutoSyncBusyRef.current) return;
+      const {
+        properties: curProps,
+        activePropertyId: curPropId,
+        otaChannels: curChannels,
+        rooms: curRooms,
+        reservations: curReservations,
+        activeRole: curRole,
+      } = otaAutoSyncStateRef.current;
+
+      const activeProp = curProps.find((p) => p.id === curPropId);
+      if (!activeProp || curRooms.length === 0) return;
+
       const nowMs = Date.now();
       const TEN_MIN_MS = 10 * 60 * 1000;
-      const due = otaChannels.filter((ch) => {
+      const due = curChannels.filter((ch) => {
         if (!ch.connected || !ch.autoSync || !ch.icalImportUrl?.trim()) return false;
         const lastMs = Date.parse(ch.lastSyncedIso || '');
         return !Number.isFinite(lastMs) || nowMs - lastMs >= TEN_MIN_MS;
       });
       if (due.length === 0) return;
 
-      let totalNew = 0;
-      for (const ch of due) {
-        try {
-          const res = await syncOtaChannelWorkflow({
-            property: activeProp,
-            channel: ch,
-            rooms,
-            reservations,
-            actorRole: `${ROLE_LABELS[activeRole]} (Auto-Sync)`,
-          });
-          totalNew += res.created;
-        } catch {
-          // Quiet background retry on next cycle
+      otaAutoSyncBusyRef.current = true;
+      try {
+        let totalNew = 0;
+        let workingReservations = [...curReservations];
+        for (const ch of due) {
+          try {
+            const res = await syncOtaChannelWorkflow({
+              property: activeProp,
+              channel: ch,
+              rooms: curRooms,
+              reservations: workingReservations,
+              actorRole: `${ROLE_LABELS[curRole]} (Auto-Sync)`,
+            });
+            totalNew += res.created;
+          } catch {
+            // Quiet background retry on next cycle
+          }
         }
-      }
-      if (totalNew > 0) {
-        notify(`OTA Auto-Sync imported ${totalNew} new booking(s)`);
+        if (totalNew > 0) {
+          notify(`OTA Auto-Sync imported ${totalNew} new booking(s)`);
+        }
+      } finally {
+        otaAutoSyncBusyRef.current = false;
       }
     };
 
-    void syncDueChannels();
+    const initialTimer = window.setTimeout(() => {
+      void syncDueChannels();
+    }, 1500);
     const timer = window.setInterval(() => {
       void syncDueChannels();
     }, 10 * 60 * 1000);
 
-    return () => window.clearInterval(timer);
-  }, [properties, activePropertyId, otaChannels, rooms, reservations, activeRole]);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [activePropertyId, activeRole]);
 
   // Real-time alert toast when a new incoming message arrives after initial snapshot load
   useEffect(() => {
@@ -926,6 +966,14 @@ export default function App() {
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
         onOpenPortalLinksModal={() => setShowPortalModal(true)}
+        onSwitchPropertyPortal={(nextPortal) => {
+          handlePortalSelection(nextPortal);
+          notify(
+            nextPortal === 'staff'
+              ? 'Switched to Staff workspace'
+              : 'Switched to Property Admin workspace'
+          );
+        }}
         onSignOut={handleSignOut}
         unreadMessageCount={unreadMessages.length}
       />
@@ -1059,13 +1107,15 @@ export default function App() {
                 </span>
               </span>
             </button>
-            <button
-              type="button"
-              onClick={() => setShowPortalModal(true)}
-              className="px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              {cms.brand.portalLinksButton || 'Portal Links'}
-            </button>
+            {portalMode === 'pch-admin' && (
+              <button
+                type="button"
+                onClick={() => setShowPortalModal(true)}
+                className="px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {cms.brand.portalLinksButton || 'Portal Links'}
+              </button>
+            )}
           </div>
         </header>
 
@@ -1428,8 +1478,8 @@ export default function App() {
         </main>
       </div>
 
-      {/* Direct Portal Login Links & Switcher Modal */}
-      {showPortalModal && (
+      {/* Direct Portal Login Links & Switcher Modal (PCH Super Admin Only) */}
+      {showPortalModal && portalMode === 'pch-admin' && (
         <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -1530,25 +1580,6 @@ export default function App() {
                   </div>
                 );
               })}
-
-              {portalMode === 'staff' && (
-                <div className="pt-2">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Active Staff Department Role
-                  </label>
-                  <select
-                    value={staffRole}
-                    onChange={(e) => setStaffRole(e.target.value as StaffRole)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs bg-white"
-                  >
-                    <option value="front_desk">Front Desk &amp; Reservations</option>
-                    <option value="housekeeping">Housekeeping Lead</option>
-                    <option value="fnb_kitchen">Restaurant POS &amp; Kitchen</option>
-                    <option value="accountant">Finance &amp; Payroll Officer</option>
-                    <option value="maintenance">Engineering &amp; Maintenance</option>
-                  </select>
-                </div>
-              )}
             </div>
           </div>
         </div>

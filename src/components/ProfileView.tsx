@@ -327,7 +327,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 rows={3}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Optional manager contact note or operational shift reminder..."
                 className="w-full border border-slate-200 rounded-lg px-3 py-2"
               />
             </div>
@@ -370,7 +369,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold text-slate-800">Property Brand Logo</span>
               <span className="text-[11px] text-slate-500 text-right">
-                Shown on Property Portal, Sidebar &amp; Reports (never changes PCH PMS logo)
+                Shown on Property Portal, Sidebar, Receipts &amp; Reports
               </span>
             </div>
 
@@ -433,6 +432,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     </button>
                   )}
                 </div>
+                <label className="block text-[11px] font-medium text-slate-600">
+                  Logo Image URL
+                </label>
                 <input
                   type="text"
                   disabled={!canManageProperty}
@@ -441,7 +443,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     setPropLogoUrl(e.target.value);
                     setLogoError(null);
                   }}
-                  placeholder="Or paste logo image URL (https://...)"
                   className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-[11px] font-mono-tabular disabled:bg-slate-100"
                 />
               </div>
