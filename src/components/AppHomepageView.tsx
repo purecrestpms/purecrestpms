@@ -262,11 +262,11 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
     setBuyerRooms(String(Math.min(plan.maxRooms, 12)));
   };
 
-  const handleOpenClientPortal = () => {
+  const handleOpenPlatformPortal = () => {
     if (isSignedIn && onReturnToWorkspace) {
       onReturnToWorkspace();
     } else {
-      onSelectPortal('richgates-admin');
+      onSelectPortal('pch-admin');
     }
   };
 
@@ -448,10 +448,10 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
           <div className="flex items-center gap-3 shrink-0">
             <button
               type="button"
-              onClick={handleOpenClientPortal}
+              onClick={handleOpenPlatformPortal}
               className="px-4 py-2 text-xs font-semibold text-white bg-[#0B245B] hover:bg-[#13347D] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {isSignedIn ? 'Open Workspace' : 'Client Sign In'}
+              {isSignedIn ? 'Open Workspace' : 'Group Admin Sign In'}
             </button>
             <button
               type="button"
@@ -1053,20 +1053,6 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-5 text-xs font-medium text-slate-600">
-            <button
-              type="button"
-              onClick={() => onSelectPortal('richgates-admin')}
-              className="hover:text-[#0B245B] hover:underline cursor-pointer"
-            >
-              Property Admin Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => onSelectPortal('staff')}
-              className="hover:text-[#0B245B] hover:underline cursor-pointer"
-            >
-              Staff Sign In
-            </button>
             <button
               type="button"
               onClick={() => onSelectPortal('pch-admin')}

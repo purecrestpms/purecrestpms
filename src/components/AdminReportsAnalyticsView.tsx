@@ -80,14 +80,19 @@ type DatePreset =
   | 'today'
   | 'yesterday'
   | 'single_day'
+  | 'this_week'
   | 'last_7'
   | 'this_month'
+  | 'last_month'
   | 'last_30'
+  | 'this_year'
   | 'all_time'
   | 'custom';
 type ReportTab =
   | 'overview'
+  | 'period_reports'
   | 'daily_bookings'
+  | 'pending_payments'
   | 'pnl'
   | 'rooms'
   | 'sources'
@@ -160,6 +165,90 @@ function formatCompactNgn(amount: number): string {
   return `₦${Math.round(amount)}`;
 }
 
+function getMondayIso(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const dt = new Date(Date.UTC(y || 2026, (m || 1) - 1, d || 1));
+  const day = dt.getUTCDay(); // 0=Sun..6=Sat
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  dt.setUTCDate(dt.getUTCDate() + diffToMonday);
+  return dt.toISOString().slice(0, 10);
+}
+
+function formatShortDate(isoDate: string): string {
+  const dt = new Date(`${isoDate}T00:00:00Z`);
+  if (!Number.isFinite(dt.getTime())) return isoDate;
+  return dt.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
+}
+
+function formatMonthLabel(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  const dt = new Date(Date.UTC(y || 2026, (m || 1) - 1, 1));
+  return dt.toLocaleDateString('en-GB', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+function getLastDayOfMonthIso(year: number, monthIndex0: number): string {
+  return new Date(Date.UTC(year, monthIndex0 + 1, 0)).toISOString().slice(0, 10);
+}
+
+function buildMonthlyBuckets(
+  startIso: string,
+  endIso: string
+): Array<{ key: string; label: string; startDate: string; endDate: string }> {
+  const buckets: Array<{ key: string; label: string; startDate: string; endDate: string }> = [];
+  let [curY, curM] = startIso.slice(0, 7).split('-').map(Number);
+  const [endY, endM] = endIso.slice(0, 7).split('-').map(Number);
+  let guard = 0;
+  while ((curY < endY || (curY === endY && curM <= endM)) && guard < 120) {
+    guard += 1;
+    const ym = `${String(curY).padStart(4, '0')}-${String(curM).padStart(2, '0')}`;
+    const mStart = `${ym}-01`;
+    const mEnd = getLastDayOfMonthIso(curY, curM - 1);
+    buckets.push({
+      key: ym,
+      label: formatMonthLabel(ym),
+      startDate: mStart < startIso ? startIso : mStart,
+      endDate: mEnd > endIso ? endIso : mEnd,
+    });
+    curM += 1;
+    if (curM > 12) {
+      curM = 1;
+      curY += 1;
+    }
+  }
+  return buckets;
+}
+
+function buildWeeklyBuckets(
+  startIso: string,
+  endIso: string
+): Array<{ key: string; label: string; startDate: string; endDate: string }> {
+  const buckets: Array<{ key: string; label: string; startDate: string; endDate: string }> = [];
+  let weekMonday = getMondayIso(startIso);
+  let guard = 0;
+  while (weekMonday <= endIso && guard < 260) {
+    guard += 1;
+    const weekSunday = addDaysIso(weekMonday, 6);
+    const clampedStart = weekMonday < startIso ? startIso : weekMonday;
+    const clampedEnd = weekSunday > endIso ? endIso : weekSunday;
+    buckets.push({
+      key: weekMonday,
+      label: `${formatShortDate(clampedStart)} – ${formatShortDate(clampedEnd)}`,
+      startDate: clampedStart,
+      endDate: clampedEnd,
+    });
+    weekMonday = addDaysIso(weekMonday, 7);
+  }
+  return buckets;
+}
+
 function computeDelta(current: number, previous: number | null): {
   label: string;
   positive: boolean | null;
@@ -215,7 +304,9 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
   const [bookingRoomFilter, setBookingRoomFilter] = useState<string>('ALL');
 
   // Interactive chart toggles & hover states
-  const [lineMode, setLineMode] = useState<'financial' | 'hospitality'>('financial');
+  const [lineMode, setLineMode] = useState<'financial' | 'settlement' | 'hospitality'>('financial');
+  const [trendGranularity, setTrendGranularity] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [periodReportMode, setPeriodReportMode] = useState<'monthly' | 'weekly'>('monthly');
   const [hoveredDayIndex, setHoveredDayIndex] = useState<number | null>(null);
   const [barMode, setBarMode] = useState<'category' | 'rooms'>('category');
   const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
@@ -253,6 +344,17 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         label: `Single Day (${target})`,
       };
     }
+    if (preset === 'this_week') {
+      const start = getMondayIso(todayIso);
+      const days = diffDaysInclusive(start, todayIso);
+      return {
+        start,
+        end: todayIso,
+        prevStart: addDaysIso(start, -days),
+        prevEnd: addDaysIso(start, -1),
+        label: `This Week (${start} to ${todayIso})`,
+      };
+    }
     if (preset === 'last_7') {
       const start = addDaysIso(todayIso, -6);
       return {
@@ -281,7 +383,34 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         end: todayIso,
         prevStart: addDaysIso(start, -days),
         prevEnd: addDaysIso(start, -1),
-        label: `Month-to-Date (${start} to ${todayIso})`,
+        label: `This Month (${start} to ${todayIso})`,
+      };
+    }
+    if (preset === 'last_month') {
+      const [y, m] = todayIso.slice(0, 7).split('-').map(Number);
+      const prevY = m === 1 ? y - 1 : y;
+      const prevM = m === 1 ? 12 : m - 1;
+      const ym = `${String(prevY).padStart(4, '0')}-${String(prevM).padStart(2, '0')}`;
+      const start = `${ym}-01`;
+      const end = getLastDayOfMonthIso(prevY, prevM - 1);
+      const days = diffDaysInclusive(start, end);
+      return {
+        start,
+        end,
+        prevStart: addDaysIso(start, -days),
+        prevEnd: addDaysIso(start, -1),
+        label: `Last Month (${formatMonthLabel(ym)})`,
+      };
+    }
+    if (preset === 'this_year') {
+      const start = `${todayIso.slice(0, 4)}-01-01`;
+      const days = diffDaysInclusive(start, todayIso);
+      return {
+        start,
+        end: todayIso,
+        prevStart: addDaysIso(start, -days),
+        prevEnd: addDaysIso(start, -1),
+        label: `Year to Date (${todayIso.slice(0, 4)})`,
       };
     }
     if (preset === 'custom') {
@@ -425,16 +554,119 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         return inRange(booked) || inRange(r.checkInDate) || stayOverlap;
       });
 
-      const reservationTotalValueNgn = periodReservations
-        .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
-        .reduce((s, r) => s + getReservationPaymentSummary(r).totalAmount, 0);
+      const activePeriodReservations = periodReservations.filter(
+        (r) => r.status !== 'cancelled' && r.status !== 'no_show'
+      );
+
+      const reservationTotalValueNgn = activePeriodReservations.reduce(
+        (s, r) => s + getReservationPaymentSummary(r).totalAmount,
+        0
+      );
       const reservationCollectedNgn = periodReservations.reduce(
         (s, r) => s + getReservationPaymentSummary(r).amountPaid,
         0
       );
       const reservationBalanceNgn = periodReservations
-        .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
+        .filter((r) => {
+          if (r.status === 'no_show') return false;
+          if (r.status === 'cancelled') return r.cancellationType === 'paid';
+          return true;
+        })
         .reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0);
+
+      let fullyPaidCount = 0;
+      let fullyPaidNgn = 0;
+      let partialCount = 0;
+      let partialPaidNgn = 0;
+      let partialPendingNgn = 0;
+      let unpaidCount = 0;
+      let unpaidPendingNgn = 0;
+      let lateCheckoutFeesNgn = 0;
+      let cancelledCount = 0;
+      let cancelledFreeCount = 0;
+      let cancelledPaidCount = 0;
+      let cancelledFeesBilledNgn = 0;
+      let cancelledFeesPaidNgn = 0;
+
+      const pendingPaymentRows: Array<{
+        res: ReservationRecord;
+        totalAmount: number;
+        amountPaid: number;
+        balance: number;
+        paymentStatus: 'Unpaid' | 'Partial' | 'Paid';
+        bookedDate: string;
+        roomDisplay: ReturnType<typeof getReservationRoomDisplay>;
+        sourceLabel: string;
+      }> = [];
+
+      periodReservations.forEach((r) => {
+        const pay = getReservationPaymentSummary(r);
+        if (r.status === 'cancelled') {
+          cancelledCount += 1;
+          if (r.cancellationType === 'paid') {
+            cancelledPaidCount += 1;
+            cancelledFeesBilledNgn += pay.totalAmount;
+            cancelledFeesPaidNgn += pay.amountPaid;
+            if (pay.balance > 0) {
+              if (pay.paymentStatus === 'Partial') {
+                partialCount += 1;
+                partialPaidNgn += pay.amountPaid;
+                partialPendingNgn += pay.balance;
+              } else {
+                unpaidCount += 1;
+                unpaidPendingNgn += pay.balance;
+              }
+              pendingPaymentRows.push({
+                res: r,
+                ...pay,
+                bookedDate: getReservationBookedDate(r),
+                roomDisplay: getReservationRoomDisplay(r, rooms),
+                sourceLabel: formatBookingSourceLabel(r.channel),
+              });
+            }
+          } else {
+            cancelledFreeCount += 1;
+          }
+          return;
+        }
+        if (r.status === 'no_show') return;
+
+        lateCheckoutFeesNgn += Math.max(0, r.lateCheckoutFeeNgn || 0);
+        if (pay.paymentStatus === 'Paid') {
+          fullyPaidCount += 1;
+          fullyPaidNgn += pay.amountPaid;
+        } else if (pay.paymentStatus === 'Partial') {
+          partialCount += 1;
+          partialPaidNgn += pay.amountPaid;
+          partialPendingNgn += pay.balance;
+          pendingPaymentRows.push({
+            res: r,
+            ...pay,
+            bookedDate: getReservationBookedDate(r),
+            roomDisplay: getReservationRoomDisplay(r, rooms),
+            sourceLabel: formatBookingSourceLabel(r.channel),
+          });
+        } else {
+          unpaidCount += 1;
+          unpaidPendingNgn += pay.balance;
+          pendingPaymentRows.push({
+            res: r,
+            ...pay,
+            bookedDate: getReservationBookedDate(r),
+            roomDisplay: getReservationRoomDisplay(r, rooms),
+            sourceLabel: formatBookingSourceLabel(r.channel),
+          });
+        }
+      });
+
+      pendingPaymentRows.sort((a, b) => b.balance - a.balance || a.res.checkInDate.localeCompare(b.res.checkInDate));
+      const collectionDenom = reservationTotalValueNgn + cancelledFeesBilledNgn;
+      const collectionRatePct =
+        collectionDenom > 0
+          ? Math.min(100, (reservationCollectedNgn / collectionDenom) * 100)
+          : reservationCollectedNgn > 0
+            ? 100
+            : 0;
 
       // 3. Booking Sources Analysis
       const sourceAgg = new Map<
@@ -445,37 +677,38 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           nights: number;
           totalValueNgn: number;
           collectedNgn: number;
+          pendingNgn: number;
           commissionPct: number;
           estCommissionNgn: number;
         }
       >();
 
-      periodReservations
-        .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
-        .forEach((r) => {
-          const source = formatBookingSourceLabel(r.channel);
-          const pay = getReservationPaymentSummary(r);
-          const pct = commissionMap.get(source) ?? 0;
-          const prev = sourceAgg.get(source) || {
-            source,
-            bookings: 0,
-            nights: 0,
-            totalValueNgn: 0,
-            collectedNgn: 0,
-            commissionPct: pct,
-            estCommissionNgn: 0,
-          };
-          const commNgn = Math.round((pay.totalAmount * pct) / 100);
-          sourceAgg.set(source, {
-            source,
-            bookings: prev.bookings + 1,
-            nights: prev.nights + (r.nights || 1),
-            totalValueNgn: prev.totalValueNgn + pay.totalAmount,
-            collectedNgn: prev.collectedNgn + pay.amountPaid,
-            commissionPct: pct,
-            estCommissionNgn: prev.estCommissionNgn + commNgn,
-          });
+      activePeriodReservations.forEach((r) => {
+        const source = formatBookingSourceLabel(r.channel);
+        const pay = getReservationPaymentSummary(r);
+        const pct = commissionMap.get(source) ?? 0;
+        const prev = sourceAgg.get(source) || {
+          source,
+          bookings: 0,
+          nights: 0,
+          totalValueNgn: 0,
+          collectedNgn: 0,
+          pendingNgn: 0,
+          commissionPct: pct,
+          estCommissionNgn: 0,
+        };
+        const commNgn = Math.round((pay.totalAmount * pct) / 100);
+        sourceAgg.set(source, {
+          source,
+          bookings: prev.bookings + 1,
+          nights: prev.nights + (r.nights || 1),
+          totalValueNgn: prev.totalValueNgn + pay.totalAmount,
+          collectedNgn: prev.collectedNgn + pay.amountPaid,
+          pendingNgn: prev.pendingNgn + pay.balance,
+          commissionPct: pct,
+          estCommissionNgn: prev.estCommissionNgn + commNgn,
         });
+      });
 
       const bookingSources = Array.from(sourceAgg.values()).sort(
         (a, b) => b.totalValueNgn - a.totalValueNgn
@@ -559,11 +792,16 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
 
       // 9. Daily Time-Series (up to 31 points cleanly bucketed if range > 31 days)
       const dailyPoints: Array<{
+        key: string;
         date: string;
+        startDate: string;
+        endDate: string;
         label: string;
         revenueNgn: number;
         expenseNgn: number;
         netNgn: number;
+        paidCollectedNgn: number;
+        pendingUnpaidNgn: number;
         occupancyPct: number;
         revparNgn: number;
       }> = [];
@@ -579,6 +817,14 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           .filter((e) => e.entryDate === dIso)
           .reduce((s, e) => s + (e.amountNgn || 0), 0);
 
+        const dayCheckIns = reservations.filter((r) => {
+          if (r.status === 'no_show') return false;
+          if (r.status === 'cancelled' && r.cancellationType !== 'paid') return false;
+          return r.checkInDate === dIso;
+        });
+        const paidDay = dayCheckIns.reduce((s, r) => s + getReservationPaymentSummary(r).amountPaid, 0);
+        const pendingDay = dayCheckIns.reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0);
+
         let occDay = 0;
         let roomRevDay = 0;
         activeStayRes.forEach((r) => {
@@ -593,15 +839,84 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         const revparDay = totalRooms > 0 ? roomRevDay / totalRooms : 0;
 
         dailyPoints.push({
+          key: dIso,
           date: dIso,
+          startDate: dIso,
+          endDate: dIso,
           label: dIso.slice(5),
           revenueNgn: revDay,
           expenseNgn: expDay,
           netNgn: revDay - expDay,
+          paidCollectedNgn: paidDay,
+          pendingUnpaidNgn: pendingDay,
           occupancyPct: occPctDay,
           revparNgn: revparDay,
         });
       }
+
+      // 10. Weekly & Monthly Period Revenue & Settlement Aggregations
+      const computeBucketStats = (
+        buckets: Array<{ key: string; label: string; startDate: string; endDate: string }>
+      ) =>
+        buckets.map((b) => {
+          const bDays = diffDaysInclusive(b.startDate, b.endDate);
+          const inB = (d: string) => d >= b.startDate && d <= b.endDate;
+          const bRev = revenueEntries.filter((e) => inB(e.entryDate)).reduce((s, e) => s + (e.amountNgn || 0), 0);
+          const bExp = expenseEntries.filter((e) => inB(e.entryDate)).reduce((s, e) => s + (e.amountNgn || 0), 0);
+          const bPos = posOrders
+            .filter((o) => inB(o.orderDate || extractCreatedIso(o.createdAt, todayIso)))
+            .reduce((s, o) => s + (o.totalNgn || 0), 0);
+
+          let bOccNights = 0;
+          let bEarnedRoom = 0;
+          activeStayRes.forEach((r) => {
+            const ov = countOverlapNights(r.checkInDate, r.checkOutDate, b.startDate, b.endDate);
+            if (ov > 0) {
+              const rt = r.nightlyRateNgn > 0 ? r.nightlyRateNgn : r.nights > 0 ? r.roomChargesNgn / r.nights : 0;
+              bOccNights += ov;
+              bEarnedRoom += rt * ov;
+            }
+          });
+          const bAvailNights = totalRooms * bDays;
+          const bOccPct = bAvailNights > 0 ? Math.min(100, (bOccNights / bAvailNights) * 100) : 0;
+
+          const bBookings = reservations.filter((r) => {
+            if (r.status === 'no_show') return false;
+            if (r.status === 'cancelled' && r.cancellationType !== 'paid') return false;
+            return inB(r.checkInDate);
+          });
+          const bGrossBilled = bBookings.reduce((s, r) => s + getReservationPaymentSummary(r).totalAmount, 0);
+          const bPaid = bBookings.reduce((s, r) => s + getReservationPaymentSummary(r).amountPaid, 0);
+          const bPending = bBookings.reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0);
+          const bUnpaidCount = bBookings.filter((r) => getReservationPaymentSummary(r).balance > 0).length;
+
+          return {
+            key: b.key,
+            date: b.startDate,
+            startDate: b.startDate,
+            endDate: b.endDate,
+            label: b.label,
+            daysCount: bDays,
+            bookingsCount: bBookings.length,
+            occupiedNights: bOccNights,
+            availableNights: bAvailNights,
+            occupancyPct: bOccPct,
+            earnedRoomRevenueNgn: bEarnedRoom,
+            posSalesNgn: bPos,
+            revenueNgn: bRev,
+            expenseNgn: bExp,
+            netNgn: bRev - bExp,
+            grossBilledNgn: bGrossBilled,
+            paidCollectedNgn: bPaid,
+            pendingUnpaidNgn: bPending,
+            unpaidCount: bUnpaidCount,
+            adrNgn: bOccNights > 0 ? bEarnedRoom / bOccNights : 0,
+            revparNgn: bAvailNights > 0 ? bEarnedRoom / bAvailNights : 0,
+          };
+        });
+
+      const weeklyBreakdown = computeBucketStats(buildWeeklyBuckets(startIso, endIso));
+      const monthlyBreakdown = computeBucketStats(buildMonthlyBuckets(startIso, endIso));
 
       return {
         days,
@@ -621,6 +936,21 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         reservationTotalValueNgn,
         reservationCollectedNgn,
         reservationBalanceNgn,
+        fullyPaidCount,
+        fullyPaidNgn,
+        partialCount,
+        partialPaidNgn,
+        partialPendingNgn,
+        unpaidCount,
+        unpaidPendingNgn,
+        lateCheckoutFeesNgn,
+        cancelledCount,
+        cancelledFreeCount,
+        cancelledPaidCount,
+        cancelledFeesBilledNgn,
+        cancelledFeesPaidNgn,
+        collectionRatePct,
+        pendingPaymentRows,
         bookingSources,
         periodPosOrders,
         posSubtotalNgn,
@@ -635,6 +965,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         payrollCostNgn,
         periodPOs,
         dailyPoints,
+        weeklyBreakdown,
+        monthlyBreakdown,
       };
     };
   }, [
@@ -1049,10 +1381,16 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
     const execRows = [
       { Metric: 'Property', Value: property.name },
       { Metric: 'Report Period', Value: dateWindow.label },
-      { Metric: 'Total Revenue (NGN)', Value: current.totalRevenueNgn },
-      { Metric: 'Total Expenses (NGN)', Value: current.totalExpensesNgn },
+      { Metric: 'Total Ledger Revenue (NGN)', Value: current.totalRevenueNgn },
+      { Metric: 'Total Ledger Expenses (NGN)', Value: current.totalExpensesNgn },
       { Metric: 'Net Profit / Loss (NGN)', Value: current.netProfitNgn },
       { Metric: 'Operating Margin (%)', Value: Number(current.profitMarginPct.toFixed(2)) },
+      { Metric: 'Booking Gross Value (NGN)', Value: current.reservationTotalValueNgn },
+      { Metric: 'Collected Booking Payments (NGN)', Value: current.reservationCollectedNgn },
+      { Metric: 'Not Paid / Pending Balance (NGN)', Value: current.reservationBalanceNgn },
+      { Metric: 'Not Paid Reservations Count', Value: current.unpaidCount },
+      { Metric: 'Partial Paid Reservations Count', Value: current.partialCount },
+      { Metric: 'Collection Rate (%)', Value: Number(current.collectionRatePct.toFixed(1)) },
       { Metric: 'VAT Collected / Recorded (NGN)', Value: current.totalVatNgn },
       { Metric: 'Room Occupancy (%)', Value: Number(current.occupancyPct.toFixed(2)) },
       { Metric: 'Occupied Room Nights', Value: current.occupiedRoomNights },
@@ -1067,16 +1405,66 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(execRows), 'Executive Summary');
 
+    const monthlyRows = current.monthlyBreakdown.map((m) => ({
+      Month: m.label,
+      Start_Date: m.startDate,
+      End_Date: m.endDate,
+      Bookings: m.bookingsCount,
+      Occupied_Nights: m.occupiedNights,
+      Occupancy_Pct: Number(m.occupancyPct.toFixed(1)),
+      Earned_Room_Rev_NGN: m.earnedRoomRevenueNgn,
+      POS_Sales_NGN: m.posSalesNgn,
+      Ledger_Revenue_NGN: m.revenueNgn,
+      Expenses_NGN: m.expenseNgn,
+      Net_Profit_NGN: m.netNgn,
+      Paid_Collected_NGN: m.paidCollectedNgn,
+      Not_Paid_Pending_NGN: m.pendingUnpaidNgn,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(monthlyRows), 'Monthly Revenue');
+
+    const weeklyRows = current.weeklyBreakdown.map((w) => ({
+      Week_Window: w.label,
+      Start_Date: w.startDate,
+      End_Date: w.endDate,
+      Bookings: w.bookingsCount,
+      Occupied_Nights: w.occupiedNights,
+      Occupancy_Pct: Number(w.occupancyPct.toFixed(1)),
+      Earned_Room_Rev_NGN: w.earnedRoomRevenueNgn,
+      POS_Sales_NGN: w.posSalesNgn,
+      Ledger_Revenue_NGN: w.revenueNgn,
+      Expenses_NGN: w.expenseNgn,
+      Net_Profit_NGN: w.netNgn,
+      Paid_Collected_NGN: w.paidCollectedNgn,
+      Not_Paid_Pending_NGN: w.pendingUnpaidNgn,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(weeklyRows), 'Weekly Revenue');
+
+    const pendingRows = current.pendingPaymentRows.map((p) => ({
+      Booking_Ref: p.res.bookingRef,
+      Guest_Name: p.res.guestName,
+      Guest_Phone: p.res.guestPhone || '',
+      Room: p.roomDisplay.roomNumberLabel,
+      Check_In: p.res.checkInDate,
+      Check_Out: p.res.checkOutDate,
+      Source: p.sourceLabel,
+      Payment_State: p.paymentStatus === 'Unpaid' ? 'Not Paid' : 'Partial (Pending)',
+      Total_Billed_NGN: p.totalAmount,
+      Amount_Paid_NGN: p.amountPaid,
+      Pending_Balance_NGN: p.balance,
+      Reservation_Status: RESERVATION_STATUS_LABELS[p.res.status] || p.res.status,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pendingRows), 'Pending & Unpaid');
+
     const dailySummaryRows = dailyBookingsDataset.rollup.map((d) => ({
       Date: d.dateIso,
       Bookings_Created: d.bookingsCreated,
       Arrivals: d.arrivalsCount,
       Departures: d.departuresCount,
-      Occupied_Suites: d.occupiedSuites,
+      Occupied_Rooms: d.occupiedSuites,
       Occupancy_Pct: Number(d.occupancyPct.toFixed(1)),
       Booked_Value_NGN: d.bookingValueNgn,
-      Collected_NGN: d.collectedNgn,
-      Balance_NGN: d.balanceNgn,
+      Paid_Collected_NGN: d.collectedNgn,
+      Not_Paid_Pending_NGN: d.balanceNgn,
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dailySummaryRows), 'Daily Booking Summary');
 
@@ -1097,8 +1485,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       Channel_Total_Amount: res.sourceTotalAmount ?? payment.totalAmount,
       Total_Amount_NGN: payment.totalAmount,
       Amount_Paid_NGN: payment.amountPaid,
-      Balance_NGN: payment.balance,
-      Payment_Status: payment.paymentStatus,
+      Pending_Balance_NGN: payment.balance,
+      Payment_Status: payment.paymentStatus === 'Unpaid' ? 'Not Paid' : payment.paymentStatus,
       Reservation_Status: RESERVATION_STATUS_LABELS[res.status] || res.status,
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dailyDetailRows), 'Daily Room Bookings');
@@ -1225,11 +1613,13 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       head: [['Executive Metric', 'Current Period', 'Operational Benchmark / Detail']],
       body: [
         ['Total Ledger Revenue', formatPdfNgn(current.totalRevenueNgn), `VAT Recorded: ${formatPdfNgn(current.totalVatNgn)}`],
+        ['Booking Collected (Paid)', formatPdfNgn(current.reservationCollectedNgn), `Collection Rate: ${current.collectionRatePct.toFixed(1)}% (${current.fullyPaidCount} Paid)`],
+        ['Not Paid / Pending Balance', formatPdfNgn(current.reservationBalanceNgn), `${current.unpaidCount} Not Paid · ${current.partialCount} Partial`],
         ['Total Ledger Expenses', formatPdfNgn(current.totalExpensesNgn), `${current.pnlByCategory.filter((c) => c.expenseNgn > 0).length} active cost categories`],
         ['Net Profit / Loss', formatPdfNgn(current.netProfitNgn), `Operating Margin: ${current.profitMarginPct.toFixed(1)}%`],
         ['Room Occupancy', `${current.occupancyPct.toFixed(1)}%`, `${current.occupiedRoomNights} / ${current.availableRoomNights} available room-nights`],
         ['ADR (Average Daily Rate)', formatPdfNgn(current.adrNgn), `Earned Room Rev: ${formatPdfNgn(current.earnedRoomRevenueNgn)}`],
-        ['RevPAR', formatPdfNgn(current.revparNgn), `${rooms.length} suites x ${periodDays} day(s)`],
+        ['RevPAR', formatPdfNgn(current.revparNgn), `${rooms.length} rooms x ${periodDays} day(s)`],
         ['POS Sales', formatPdfNgn(current.posTotalSalesNgn), `${current.periodPosOrders.length} orders · ${current.posItemsSold} items`],
         ['Store Inventory Value', formatPdfNgn(inventoryMetrics.totalValuationNgn), `${inventoryItems.length} SKUs (${inventoryMetrics.lowStockItems.length} low-stock alerts)`],
       ],
@@ -1334,6 +1724,13 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
     onNotify('Exported Management Analytics PDF report');
   };
 
+  // Active Trend Series based on selected granularity (Daily / Weekly / Monthly)
+  const activeTrendSeries = useMemo(() => {
+    if (trendGranularity === 'monthly') return current.monthlyBreakdown;
+    if (trendGranularity === 'weekly') return current.weeklyBreakdown;
+    return current.dailyPoints;
+  }, [trendGranularity, current.monthlyBreakdown, current.weeklyBreakdown, current.dailyPoints]);
+
   // Interactive Line Chart Geometry
   const lineWidth = 640;
   const lineHeight = 220;
@@ -1346,12 +1743,20 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
 
   const lineMaxVal = useMemo(() => {
     if (lineMode === 'hospitality') return 100;
-    const maxFound = current.dailyPoints.reduce(
-      (m, pt) => Math.max(m, pt.revenueNgn, pt.expenseNgn, Math.abs(pt.netNgn)),
+    const maxFound = activeTrendSeries.reduce(
+      (m, pt) =>
+        Math.max(
+          m,
+          pt.revenueNgn,
+          pt.expenseNgn,
+          Math.abs(pt.netNgn),
+          pt.paidCollectedNgn,
+          pt.pendingUnpaidNgn
+        ),
       10000
     );
     return maxFound * 1.15;
-  }, [lineMode, current.dailyPoints]);
+  }, [lineMode, activeTrendSeries]);
 
   const toLineX = (idx: number, count: number) =>
     count <= 1 ? padL + plotW / 2 : padL + (idx / (count - 1)) * plotW;
@@ -1382,12 +1787,15 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         nights: list.reduce((s, r) => s + (r.nights || 1), 0),
         valueNgn: list.reduce((s, r) => s + getReservationPaymentSummary(r).totalAmount, 0),
         paidNgn: list.reduce((s, r) => s + getReservationPaymentSummary(r).amountPaid, 0),
+        pendingNgn: list.reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0),
       };
     });
   }, [current.periodReservations]);
 
   const activeDayPoint =
-    hoveredDayIndex !== null ? current.dailyPoints[hoveredDayIndex] : current.dailyPoints[current.dailyPoints.length - 1];
+    hoveredDayIndex !== null && activeTrendSeries[hoveredDayIndex]
+      ? activeTrendSeries[hoveredDayIndex]
+      : activeTrendSeries[activeTrendSeries.length - 1];
 
   const activePieSlice =
     selectedPieIndex !== null ? pieSlices[selectedPieIndex] : pieSlices[0];
@@ -1397,6 +1805,14 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
   }, [barData, barMode]);
 
   const revDelta = computeDelta(current.totalRevenueNgn, previous ? previous.totalRevenueNgn : null);
+  const collectedDelta = computeDelta(
+    current.reservationCollectedNgn,
+    previous ? previous.reservationCollectedNgn : null
+  );
+  const pendingDelta = computeDelta(
+    current.reservationBalanceNgn,
+    previous ? previous.reservationBalanceNgn : null
+  );
   const expDelta = computeDelta(current.totalExpensesNgn, previous ? previous.totalExpensesNgn : null);
   const netDelta = computeDelta(current.netProfitNgn, previous ? previous.netProfitNgn : null);
   const occDelta = computeDelta(current.occupancyPct, previous ? previous.occupancyPct : null);
@@ -1469,9 +1885,12 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                   { id: 'today', label: 'Today' },
                   { id: 'yesterday', label: 'Yesterday' },
                   { id: 'single_day', label: 'Pick Date' },
+                  { id: 'this_week', label: 'This Week' },
                   { id: 'last_7', label: 'Last 7 Days' },
                   { id: 'this_month', label: 'This Month' },
+                  { id: 'last_month', label: 'Last Month' },
                   { id: 'last_30', label: 'Last 30 Days' },
+                  { id: 'this_year', label: 'This Year' },
                   { id: 'all_time', label: 'All Time' },
                   { id: 'custom', label: 'Date Range' },
                 ] as Array<{ id: DatePreset; label: string }>
@@ -1479,7 +1898,24 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                 <button
                   key={btn.id}
                   type="button"
-                  onClick={() => setPreset(btn.id)}
+                  onClick={() => {
+                    setPreset(btn.id);
+                    if (btn.id === 'this_week' || btn.id === 'last_7') {
+                      setTrendGranularity('weekly');
+                      setPeriodReportMode('weekly');
+                    } else if (
+                      btn.id === 'this_month' ||
+                      btn.id === 'last_month' ||
+                      btn.id === 'this_year' ||
+                      btn.id === 'all_time'
+                    ) {
+                      setTrendGranularity('monthly');
+                      setPeriodReportMode('monthly');
+                    } else {
+                      setTrendGranularity('daily');
+                    }
+                    setHoveredDayIndex(null);
+                  }}
                   className={`px-3 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap cursor-pointer ${
                     preset === btn.id
                       ? 'bg-slate-900 text-white'
@@ -1648,6 +2084,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           {(
             [
               { id: 'overview', label: 'Executive Overview & Charts' },
+              { id: 'period_reports', label: `Monthly & Weekly Revenue (${current.monthlyBreakdown.length}M / ${current.weeklyBreakdown.length}W)` },
+              { id: 'pending_payments', label: `Not Paid & Pending (${current.pendingPaymentRows.length})` },
               { id: 'daily_bookings', label: `Daily Room Bookings (${dailyBookingsDataset.rows.length})` },
               { id: 'pnl', label: 'Profit & Loss & Expenses' },
               { id: 'rooms', label: 'Occupancy, ADR & RevPAR' },
@@ -1663,7 +2101,9 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === t.id
                   ? 'bg-[#1c46be] text-white'
-                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  : t.id === 'pending_payments' && current.reservationBalanceNgn > 0
+                    ? 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
               }`}
             >
               {t.label}
@@ -1672,16 +2112,35 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         </div>
       </div>
 
-      {/* 8 Executive KPI Cards (All Real Data + Real Prior Period Comparison) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 10 Executive KPI Cards (Ledger Revenue, Collected vs Not Paid/Pending, Expenses, Profit & Ops) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {[
           {
-            label: 'Total Revenue',
+            label: 'Total Ledger Revenue',
             value: formatNgn(current.totalRevenueNgn),
             delta: revDelta.label,
             positive: revDelta.positive,
-            sub: `VAT Recorded: ${formatNgn(current.totalVatNgn)}`,
+            sub: `VAT: ${formatNgn(current.totalVatNgn)}`,
+            highlight: false,
             icon: Wallet,
+          },
+          {
+            label: 'Booking Collected (Paid)',
+            value: formatNgn(current.reservationCollectedNgn),
+            delta: collectedDelta.label,
+            positive: collectedDelta.positive,
+            sub: `${current.collectionRatePct.toFixed(0)}% collected (${current.fullyPaidCount} paid)`,
+            highlight: false,
+            icon: TrendingUp,
+          },
+          {
+            label: 'Not Paid / Pending Balance',
+            value: formatNgn(current.reservationBalanceNgn),
+            delta: current.reservationBalanceNgn > 0 ? `${current.unpaidCount} Not Paid · ${current.partialCount} Partial` : 'All bookings settled',
+            positive: current.reservationBalanceNgn === 0 ? true : false,
+            sub: `Billed: ${formatNgn(current.reservationTotalValueNgn)}`,
+            highlight: current.reservationBalanceNgn > 0,
+            icon: ShieldAlert,
           },
           {
             label: 'Total Expenses',
@@ -1689,6 +2148,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             delta: expDelta.label,
             positive: expDelta.positive === null ? null : !expDelta.positive,
             sub: `${current.pnlByCategory.filter((c) => c.expenseNgn > 0).length} active cost categories`,
+            highlight: false,
             icon: TrendingDown,
           },
           {
@@ -1697,7 +2157,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             delta: netDelta.label,
             positive: netDelta.positive,
             sub: `Operating Margin: ${current.profitMarginPct.toFixed(1)}%`,
-            icon: TrendingUp,
+            highlight: false,
+            icon: BarChart3,
           },
           {
             label: 'Room Occupancy',
@@ -1705,6 +2166,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             delta: occDelta.label,
             positive: occDelta.positive,
             sub: `${current.occupiedRoomNights} / ${current.availableRoomNights} room-nights`,
+            highlight: false,
             icon: BedDouble,
           },
           {
@@ -1712,7 +2174,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             value: formatNgn(current.adrNgn),
             delta: adrDelta.label,
             positive: adrDelta.positive,
-            sub: `Room Rev Earned: ${formatNgn(current.earnedRoomRevenueNgn)}`,
+            sub: `Earned: ${formatNgn(current.earnedRoomRevenueNgn)}`,
+            highlight: false,
             icon: Building2,
           },
           {
@@ -1720,7 +2183,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             value: formatNgn(current.revparNgn),
             delta: revparDelta.label,
             positive: revparDelta.positive,
-            sub: `${rooms.length} suites · ${periodDays} day(s)`,
+            sub: `${rooms.length} rooms · ${periodDays} day(s)`,
+            highlight: false,
             icon: Layers,
           },
           {
@@ -1729,6 +2193,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             delta: posDelta.label,
             positive: posDelta.positive,
             sub: `${current.periodPosOrders.length} orders · ${current.posItemsSold} items`,
+            highlight: false,
             icon: UtensilsCrossed,
           },
           {
@@ -1736,7 +2201,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             value: formatNgn(inventoryMetrics.totalValuationNgn),
             delta: `${inventoryMetrics.lowStockItems.length} low-stock SKUs`,
             positive: inventoryMetrics.lowStockItems.length === 0,
-            sub: `Monthly Staff Payroll: ${formatNgn(opsMetrics.totalMonthlySalaryBillNgn)}`,
+            sub: `Payroll: ${formatNgn(opsMetrics.totalMonthlySalaryBillNgn)}`,
+            highlight: false,
             icon: Package,
           },
         ].map((kpi) => {
@@ -1744,19 +2210,37 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           return (
             <div
               key={kpi.label}
-              className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between gap-2.5"
+              className={`rounded-xl p-4 flex flex-col justify-between gap-2.5 border ${
+                kpi.highlight
+                  ? 'bg-amber-50/70 border-amber-300'
+                  : 'bg-white border-slate-200'
+              }`}
             >
               <div className="flex items-start justify-between gap-2">
-                <p className="text-xs font-medium text-slate-500">{kpi.label}</p>
-                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                <p className={`text-xs font-medium ${kpi.highlight ? 'text-amber-900 font-semibold' : 'text-slate-500'}`}>
+                  {kpi.label}
+                </p>
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    kpi.highlight
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
                   <Icon className="w-4 h-4" />
                 </div>
               </div>
               <div>
-                <p className="font-mono-tabular text-xl font-bold text-slate-900">{kpi.value}</p>
+                <p
+                  className={`font-mono-tabular text-lg font-bold ${
+                    kpi.highlight ? 'text-rose-700' : 'text-slate-900'
+                  }`}
+                >
+                  {kpi.value}
+                </p>
                 <div className="flex items-center justify-between gap-2 mt-1 text-[11px]">
                   <span
-                    className={`font-semibold ${
+                    className={`font-semibold truncate ${
                       kpi.positive === true
                         ? 'text-emerald-700'
                         : kpi.positive === false
@@ -1774,6 +2258,238 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         })}
       </div>
 
+      {/* Weekly & Monthly Revenue Summary + Not Paid / Pending Payments Section */}
+      {(activeTab === 'overview' || activeTab === 'period_reports') && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-sm font-bold text-slate-900">
+                {periodReportMode === 'monthly'
+                  ? 'Monthly Revenue & Settlement Report'
+                  : 'Weekly Revenue & Settlement Report'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                Separates collected paid revenue from unpaid &amp; pending booking balances ({dateWindow.label})
+              </p>
+            </div>
+            <div className="no-print flex items-center gap-1.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setPeriodReportMode('monthly')}
+                className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
+                  periodReportMode === 'monthly'
+                    ? 'bg-[#061539] text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Monthly ({current.monthlyBreakdown.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setPeriodReportMode('weekly')}
+                className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
+                  periodReportMode === 'weekly'
+                    ? 'bg-[#061539] text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Weekly ({current.weeklyBreakdown.length})
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">
+                    {periodReportMode === 'monthly' ? 'Month' : 'Week Window'}
+                  </th>
+                  <th className="px-4 py-3 font-semibold text-right">Check-ins</th>
+                  <th className="px-4 py-3 font-semibold text-right">Occ. Nights</th>
+                  <th className="px-4 py-3 font-semibold text-right">Occ %</th>
+                  <th className="px-4 py-3 font-semibold text-right">Room Earned</th>
+                  <th className="px-4 py-3 font-semibold text-right">POS Sales</th>
+                  <th className="px-4 py-3 font-semibold text-right">Paid Collected</th>
+                  <th className="px-4 py-3 font-semibold text-right">Not Paid / Pending</th>
+                  <th className="px-4 py-3 font-semibold text-right">Ledger Rev</th>
+                  <th className="px-4 py-3 font-semibold text-right">Expenses</th>
+                  <th className="px-4 py-3 font-semibold text-right">Net P&amp;L</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(periodReportMode === 'monthly'
+                  ? current.monthlyBreakdown
+                  : current.weeklyBreakdown
+                ).map((bucket) => (
+                  <tr
+                    key={bucket.key}
+                    onClick={() => {
+                      setCustomStart(bucket.startDate);
+                      setCustomEnd(bucket.endDate);
+                      setPreset('custom');
+                    }}
+                    title="Click to filter entire report to this period"
+                    className="hover:bg-blue-50/50 cursor-pointer"
+                  >
+                    <td className="px-4 py-3 font-semibold text-[#1c46be] whitespace-nowrap">
+                      <span>{bucket.label}</span>
+                      <span className="block text-[10px] font-mono-tabular text-slate-500">
+                        {bucket.startDate} → {bucket.endDate}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right">{bucket.bookingsCount}</td>
+                    <td className="px-4 py-3 font-mono-tabular text-right">
+                      {bucket.occupiedNights}/{bucket.availableNights}
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold">
+                      {bucket.occupancyPct.toFixed(1)}%
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold text-slate-900">
+                      {formatNgn(bucket.earnedRoomRevenueNgn)}
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right text-slate-700">
+                      {formatNgn(bucket.posSalesNgn)}
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold text-emerald-700">
+                      {formatNgn(bucket.paidCollectedNgn)}
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right font-bold">
+                      {bucket.pendingUnpaidNgn > 0 ? (
+                        <span className="text-rose-700">
+                          {formatNgn(bucket.pendingUnpaidNgn)}
+                          <span className="block text-[10px] font-medium">
+                            ({bucket.unpaidCount} pending)
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">₦0</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right text-emerald-700">
+                      {formatNgn(bucket.revenueNgn)}
+                    </td>
+                    <td className="px-4 py-3 font-mono-tabular text-right text-rose-700">
+                      {formatNgn(bucket.expenseNgn)}
+                    </td>
+                    <td
+                      className={`px-4 py-3 font-mono-tabular text-right font-bold ${
+                        bucket.netNgn >= 0 ? 'text-slate-900' : 'text-rose-700'
+                      }`}
+                    >
+                      {formatNgn(bucket.netNgn)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Not Paid & Pending Payments Register (Explicit visibility so unpaid bookings are clearly shown) */}
+      {(activeTab === 'overview' || activeTab === 'pending_payments' || activeTab === 'period_reports') && (
+        <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-amber-100 bg-amber-50/40 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-sm font-bold text-slate-900">
+                Not Paid &amp; Pending Payments ({current.pendingPaymentRows.length})
+              </h2>
+              <p className="text-xs text-slate-600">
+                Reservations with unpaid or partial balances are tracked separately from collected cash revenue
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular">
+              <span className="px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 font-bold">
+                Not Paid ({current.unpaidCount}): {formatNgn(current.unpaidPendingNgn)}
+              </span>
+              <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 font-bold">
+                Partial Pending ({current.partialCount}): {formatNgn(current.partialPendingNgn)}
+              </span>
+              <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white font-bold">
+                Total Due: {formatNgn(current.reservationBalanceNgn)}
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Ref</th>
+                  <th className="px-4 py-3 font-semibold">Guest</th>
+                  <th className="px-4 py-3 font-semibold">Room</th>
+                  <th className="px-4 py-3 font-semibold">Stay Dates</th>
+                  <th className="px-4 py-3 font-semibold">Source</th>
+                  <th className="px-4 py-3 font-semibold text-right">Billed Total</th>
+                  <th className="px-4 py-3 font-semibold text-right">Paid</th>
+                  <th className="px-4 py-3 font-semibold text-right">Not Paid / Pending</th>
+                  <th className="px-4 py-3 font-semibold">Payment State</th>
+                  <th className="px-4 py-3 font-semibold">Stay Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {current.pendingPaymentRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-8 text-center text-emerald-700 font-medium">
+                      All reservations in this period are 100% paid — zero pending balances.
+                    </td>
+                  </tr>
+                ) : (
+                  current.pendingPaymentRows.map((row) => (
+                    <tr key={row.res.id} className="hover:bg-amber-50/30">
+                      <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
+                        {row.res.bookingRef}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <p className="font-semibold text-slate-900">{row.res.guestName}</p>
+                        {row.res.guestPhone && (
+                          <p className="text-[11px] font-mono-tabular text-slate-500">
+                            {row.res.guestPhone}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
+                        {row.roomDisplay.roomNumberLabel}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono-tabular text-slate-700 whitespace-nowrap">
+                        {row.res.checkInDate} → {row.res.checkOutDate}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-700 font-medium whitespace-nowrap">
+                        {row.sourceLabel}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-slate-900">
+                        {formatNgn(row.totalAmount)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono-tabular text-right text-emerald-700">
+                        {formatNgn(row.amountPaid)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono-tabular text-right font-bold text-rose-700">
+                        {formatNgn(row.balance)}
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                            row.paymentStatus === 'Unpaid'
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {row.paymentStatus === 'Unpaid' ? 'Not Paid' : 'Partial (Pending)'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap capitalize text-slate-700">
+                        {RESERVATION_STATUS_LABELS[row.res.status] || row.res.status}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Interactive Charts Row: Line Chart + Bar Chart + Pie Chart (Shown in Overview) */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
@@ -1783,14 +2499,41 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
               <div>
                 <h2 className="font-display text-sm font-bold text-slate-900">
                   {lineMode === 'financial'
-                    ? 'Daily Revenue, Expenses & Net P&L Trend'
-                    : 'Daily Occupancy % & RevPAR Trend'}
+                    ? `${trendGranularity === 'monthly' ? 'Monthly' : trendGranularity === 'weekly' ? 'Weekly' : 'Daily'} Revenue, Expenses & Net P&L Trend`
+                    : lineMode === 'settlement'
+                      ? `${trendGranularity === 'monthly' ? 'Monthly' : trendGranularity === 'weekly' ? 'Weekly' : 'Daily'} Paid Collected vs Not Paid / Pending`
+                      : `${trendGranularity === 'monthly' ? 'Monthly' : trendGranularity === 'weekly' ? 'Weekly' : 'Daily'} Occupancy % & RevPAR Trend`}
                 </h2>
                 <p className="text-[11px] text-slate-500">
-                  Hover or tap any day point to inspect exact PMS figures ({current.dailyPoints.length} days plotted)
+                  Hover or tap any point to inspect exact PMS figures ({activeTrendSeries.length} periods plotted)
                 </p>
               </div>
-              <div className="no-print flex items-center gap-1.5 text-xs">
+              <div className="no-print flex flex-wrap items-center gap-2 text-xs">
+                <div className="inline-flex items-center bg-slate-100 p-0.5 rounded-lg">
+                  {(
+                    [
+                      { id: 'daily', label: 'Daily' },
+                      { id: 'weekly', label: 'Weekly' },
+                      { id: 'monthly', label: 'Monthly' },
+                    ] as const
+                  ).map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => {
+                        setTrendGranularity(g.id);
+                        setHoveredDayIndex(null);
+                      }}
+                      className={`px-2.5 py-1 rounded-md font-medium cursor-pointer ${
+                        trendGranularity === g.id
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
                 <button
                   type="button"
                   onClick={() => setLineMode('financial')}
@@ -1801,6 +2544,17 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                   }`}
                 >
                   Revenue &amp; P&amp;L
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLineMode('settlement')}
+                  className={`px-3 py-1.5 rounded-lg font-medium cursor-pointer ${
+                    lineMode === 'settlement'
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  Paid vs Pending
                 </button>
                 <button
                   type="button"
@@ -1821,7 +2575,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
               <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2 text-xs">
                 <span className="font-mono-tabular font-semibold text-slate-900 inline-flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-[#1c46be]" />
-                  <span>{activeDayPoint.date}</span>
+                  <span>{activeDayPoint.label}</span>
                 </span>
                 {lineMode === 'financial' ? (
                   <div className="flex flex-wrap items-center gap-4 font-mono-tabular">
@@ -1833,6 +2587,15 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                     </span>
                     <span className="text-[#1c46be] font-bold">
                       Net: {formatNgn(activeDayPoint.netNgn)}
+                    </span>
+                  </div>
+                ) : lineMode === 'settlement' ? (
+                  <div className="flex flex-wrap items-center gap-4 font-mono-tabular">
+                    <span className="text-emerald-700 font-semibold">
+                      Paid Collected: {formatNgn(activeDayPoint.paidCollectedNgn)}
+                    </span>
+                    <span className="text-rose-700 font-bold">
+                      Not Paid / Pending: {formatNgn(activeDayPoint.pendingUnpaidNgn)}
                     </span>
                   </div>
                 ) : (
@@ -1882,7 +2645,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                   <>
                     <path
                       d={buildPath(
-                        current.dailyPoints.map((d) => d.revenueNgn),
+                        activeTrendSeries.map((d) => d.revenueNgn),
                         lineMaxVal
                       )}
                       fill="none"
@@ -1891,7 +2654,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                     />
                     <path
                       d={buildPath(
-                        current.dailyPoints.map((d) => d.expenseNgn),
+                        activeTrendSeries.map((d) => d.expenseNgn),
                         lineMaxVal
                       )}
                       fill="none"
@@ -1900,10 +2663,32 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                       strokeDasharray="4 3"
                     />
                   </>
+                ) : lineMode === 'settlement' ? (
+                  <>
+                    <path
+                      d={buildPath(
+                        activeTrendSeries.map((d) => d.paidCollectedNgn),
+                        lineMaxVal
+                      )}
+                      fill="none"
+                      stroke="#059669"
+                      strokeWidth="2.5"
+                    />
+                    <path
+                      d={buildPath(
+                        activeTrendSeries.map((d) => d.pendingUnpaidNgn),
+                        lineMaxVal
+                      )}
+                      fill="none"
+                      stroke="#d97706"
+                      strokeWidth="2.2"
+                      strokeDasharray="4 3"
+                    />
+                  </>
                 ) : (
                   <path
                     d={buildPath(
-                      current.dailyPoints.map((d) => d.occupancyPct),
+                      activeTrendSeries.map((d) => d.occupancyPct),
                       100
                     )}
                     fill="none"
@@ -1912,19 +2697,21 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                   />
                 )}
 
-                {current.dailyPoints.map((pt, idx) => {
-                  const x = toLineX(idx, current.dailyPoints.length);
+                {activeTrendSeries.map((pt, idx) => {
+                  const x = toLineX(idx, activeTrendSeries.length);
                   const yMain =
                     lineMode === 'financial'
                       ? toLineY(pt.revenueNgn, lineMaxVal)
-                      : toLineY(pt.occupancyPct, 100);
+                      : lineMode === 'settlement'
+                        ? toLineY(pt.paidCollectedNgn, lineMaxVal)
+                        : toLineY(pt.occupancyPct, 100);
                   const showLabel =
-                    current.dailyPoints.length <= 10 ||
-                    idx % Math.ceil(current.dailyPoints.length / 8) === 0 ||
-                    idx === current.dailyPoints.length - 1;
+                    activeTrendSeries.length <= 10 ||
+                    idx % Math.ceil(activeTrendSeries.length / 8) === 0 ||
+                    idx === activeTrendSeries.length - 1;
                   return (
                     <g
-                      key={pt.date}
+                      key={pt.key}
                       onMouseEnter={() => setHoveredDayIndex(idx)}
                       onClick={() => setHoveredDayIndex(idx)}
                       className="cursor-pointer"
@@ -1943,24 +2730,27 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                         cx={x}
                         cy={yMain}
                         r={hoveredDayIndex === idx ? 5 : 3}
-                        fill={lineMode === 'financial' ? '#059669' : '#1c46be'}
+                        fill={lineMode === 'hospitality' ? '#1c46be' : '#059669'}
                         stroke="#ffffff"
                         strokeWidth="1.5"
                       />
-                      {lineMode === 'financial' && (
+                      {lineMode !== 'hospitality' && (
                         <circle
                           cx={x}
-                          cy={toLineY(pt.expenseNgn, lineMaxVal)}
+                          cy={toLineY(
+                            lineMode === 'financial' ? pt.expenseNgn : pt.pendingUnpaidNgn,
+                            lineMaxVal
+                          )}
                           r={hoveredDayIndex === idx ? 4.5 : 2.5}
-                          fill="#e11d48"
+                          fill={lineMode === 'financial' ? '#e11d48' : '#d97706'}
                           stroke="#ffffff"
                           strokeWidth="1.2"
                         />
                       )}
                       <rect
-                        x={x - plotW / Math.max(2, current.dailyPoints.length * 2)}
+                        x={x - plotW / Math.max(2, activeTrendSeries.length * 2)}
                         y={padT}
-                        width={plotW / Math.max(1, current.dailyPoints.length)}
+                        width={plotW / Math.max(1, activeTrendSeries.length)}
                         height={plotH}
                         fill="transparent"
                       />
@@ -1971,7 +2761,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                           textAnchor="middle"
                           className="fill-slate-500 text-[10px] font-mono"
                         >
-                          {pt.label}
+                          {pt.label.slice(0, 11)}
                         </text>
                       )}
                     </g>
@@ -2609,7 +3399,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                           <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-emerald-700">
                             {formatNgn(payment.amountPaid)}
                           </td>
-                          <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-amber-700">
+                          <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-rose-700">
                             {formatNgn(payment.balance)}
                           </td>
                           <td className="px-4 py-2.5 whitespace-nowrap">
@@ -2622,7 +3412,11 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                                     : 'bg-rose-50 text-rose-700'
                               }`}
                             >
-                              {payment.paymentStatus}
+                              {payment.paymentStatus === 'Unpaid'
+                                ? 'Not Paid'
+                                : payment.paymentStatus === 'Partial'
+                                  ? 'Partial (Pending)'
+                                  : 'Paid'}
                             </span>
                           </td>
                           <td className="px-4 py-2.5 whitespace-nowrap capitalize font-medium text-slate-700">
@@ -2649,8 +3443,8 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                 Reservations Summary ({current.periodReservations.length})
               </h2>
               <p className="text-xs text-slate-500">
-                Collected: {formatNgn(current.reservationCollectedNgn)} · Outstanding:{' '}
-                <span className="font-semibold text-amber-700">
+                Paid: <span className="font-semibold text-emerald-700">{formatNgn(current.reservationCollectedNgn)}</span> · Not Paid / Pending:{' '}
+                <span className="font-semibold text-rose-700">
                   {formatNgn(current.reservationBalanceNgn)}
                 </span>{' '}
                 · Total Guests: {guests.length}
@@ -2663,7 +3457,9 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                     <th className="px-4 py-2.5 font-semibold">Status</th>
                     <th className="px-4 py-2.5 font-semibold text-right">Count</th>
                     <th className="px-4 py-2.5 font-semibold text-right">Nights</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Value (₦)</th>
+                    <th className="px-4 py-2.5 font-semibold text-right">Billed (₦)</th>
+                    <th className="px-4 py-2.5 font-semibold text-right">Paid (₦)</th>
+                    <th className="px-4 py-2.5 font-semibold text-right">Pending (₦)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2676,6 +3472,12 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                       <td className="px-4 py-2.5 font-mono-tabular text-right">{row.nights}</td>
                       <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold">
                         {formatNgn(row.valueNgn)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono-tabular text-right text-emerald-700 font-semibold">
+                        {formatNgn(row.paidNgn)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono-tabular text-right text-rose-700 font-semibold">
+                        {formatNgn(row.pendingNgn)}
                       </td>
                     </tr>
                   ))}

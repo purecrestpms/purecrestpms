@@ -1024,7 +1024,7 @@ export default function App() {
           setAuthNotice(null);
           handlePortalSelection(nextPortal);
         }}
-        onReturnToWorkspace={() => handlePortalSelection('richgates-admin')}
+        onReturnToWorkspace={() => handlePortalSelection('pch-admin')}
       />
     );
   }
@@ -1075,7 +1075,7 @@ export default function App() {
               Your account (<span className="font-mono-tabular font-semibold">{user.email}</span>) does
               not currently have an active role or module privileges assigned for{' '}
               <span className="font-semibold text-slate-900">
-                {activeProperty?.name || 'Richgates Apartments, Enugu'}
+                {activeProperty?.name || 'your assigned property'}
               </span>
               . Ask your Property Administrator to invite or authorize this email under User Management.
             </p>
@@ -1362,7 +1362,7 @@ export default function App() {
                     className="inline-flex items-center gap-2 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Load Richgates Workspace</span>
+                    <span>Initialize Property Workspace</span>
                   </button>
                 </div>
               )}
@@ -1686,7 +1686,7 @@ export default function App() {
                   Direct Portal Login Links &amp; Workspace Switcher
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Share or launch dedicated portals for PCH Admin, Richgates Admin, and Staff
+                  Launch the main platform website or PCH Super Admin portal
                 </p>
               </div>
               <button
@@ -1705,16 +1705,6 @@ export default function App() {
                     id: 'home',
                     title: 'Software Homepage & Pricing (app.pchpms.com)',
                     desc: 'Public hotel management showcase, pricing plans, purchase orders & contact desk',
-                  },
-                  {
-                    id: 'richgates-admin',
-                    title: 'Richgates Property Admin Login',
-                    desc: 'Scoped to Richgates Apartments, Enugu (8 Suites, Folios, Channel Manager & P&L)',
-                  },
-                  {
-                    id: 'staff',
-                    title: 'Richgates Staff Login',
-                    desc: 'Front Desk, Housekeeping, Restaurant POS & Kitchen, Maintenance',
                   },
                   {
                     id: 'pch-admin',

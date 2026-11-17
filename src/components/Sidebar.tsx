@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BedDouble,
   BookOpenCheck,
@@ -6,6 +6,8 @@ import {
   Calendar,
   CalendarCheck2,
   ChefHat,
+  ChevronDown,
+  ChevronRight,
   ClipboardList,
   Clock,
   CloudUpload,
@@ -145,6 +147,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { cms } = useCms();
   const [collapsed, setCollapsed] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const activeGroup = NAV_GROUPS.find((g) =>
+      g.items.some((item) => item.id === activeSection)
+    );
+    if (activeGroup) {
+      setCollapsedGroups((prev) =>
+        prev[activeGroup.group] ? { ...prev, [activeGroup.group]: false } : prev
+      );
+    }
+  }, [activeSection]);
+
+  const toggleGroup = (groupName: string) => {
+    setCollapsedGroups((prev) => ({
+      ...prev,
+      [groupName]: !prev[groupName],
+    }));
+  };
 
   const allowed =
     allowedSections && allowedSections.length > 0
@@ -171,25 +192,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }`}
       >
         {!isCollapsed && (
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-lg bg-[#061539] text-white flex items-center justify-center shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-md bg-[#061539] text-white flex items-center justify-center shrink-0">
               {portalMode === 'pch-admin' ? (
-                <ShieldCheck className="w-4 h-4 text-amber-300" />
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
               ) : (
-                <Building2 className="w-4 h-4 text-amber-300" />
+                <Building2 className="w-3.5 h-3.5 text-amber-300" />
               )}
             </div>
             <div className="min-w-0">
               <span className="font-display text-sm font-extrabold tracking-tight text-[#061539] block truncate">
                 {portalMode === 'pch-admin' ? cms.brand.pchPortalName : propertyName}
               </span>
-              <p className="text-[11px] font-bold text-[#0c2b70] truncate">
-                {portalMode === 'pch-admin'
-                  ? cms.brand.pchRoleSubtitle
-                  : portalMode === 'richgates-admin'
-                    ? cms.brand.richgatesAdminSubtitle
-                    : cms.brand.richgatesStaffSubtitle}
-              </p>
+              {portalMode === 'pch-admin' && (
+                <p className="text-[11px] font-semibold text-slate-600 truncate">
+                  {cms.brand.pchRoleSubtitle}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -234,62 +253,79 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Navigation Links */}
-      <nav className="flex-1 overflow-y-auto px-2.5 py-3 space-y-4">
+      <nav className="flex-1 overflow-y-auto px-2.5 py-3 space-y-3">
         {NAV_GROUPS.map((group) => {
           const visibleItems = group.items.filter((item) => allowed.includes(item.id));
           if (visibleItems.length === 0) return null;
+          const isGroupCollapsed = Boolean(collapsedGroups[group.group]);
+
           return (
             <div key={group.group} className="space-y-1">
               {!isCollapsed ? (
-                <p className="px-2.5 text-[10px] font-extrabold uppercase tracking-wider text-[#061539]">
-                  {group.group}
-                </p>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.group)}
+                  aria-expanded={!isGroupCollapsed}
+                  className="w-full flex items-center justify-between px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-wider text-[#061539] hover:bg-slate-100/80 transition-colors cursor-pointer"
+                >
+                  <span>{group.group}</span>
+                  {isGroupCollapsed ? (
+                    <ChevronRight className="w-3.5 h-3.5 text-[#061539]/75 shrink-0" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5 text-[#061539]/75 shrink-0" />
+                  )}
+                </button>
               ) : (
                 <div className="mx-2 border-t border-slate-200 my-1.5" />
               )}
 
-              {visibleItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeSection === item.id;
-                const navLabel = cms.pages[item.id]?.navLabel || item.label;
-                const showUnread = item.id === 'messages' && unreadMessageCount > 0;
+              {(isCollapsed || !isGroupCollapsed) &&
+                visibleItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeSection === item.id;
+                  const navLabel = cms.pages[item.id]?.navLabel || item.label;
+                  const showUnread = item.id === 'messages' && unreadMessageCount > 0;
 
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleNavClick(item.id)}
-                    title={isCollapsed ? navLabel : undefined}
-                    aria-label={navLabel}
-                    className={`relative w-full flex items-center ${
-                      isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2 px-2.5 py-2'
-                    } rounded-lg text-xs transition-colors whitespace-nowrap cursor-pointer ${
-                      isActive
-                        ? 'bg-[#061539] text-white font-bold shadow-xs'
-                        : 'text-[#061539] hover:bg-blue-50 hover:text-[#041438] font-bold'
-                    }`}
-                  >
-                    <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-                      <Icon className="w-4 h-4 shrink-0" />
-                      {!isCollapsed && <span className="truncate">{navLabel}</span>}
-                    </span>
-
-                    {showUnread && !isCollapsed && (
-                      <span
-                        className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
-                          isActive ? 'bg-white text-[#061539]' : 'bg-[#061539] text-white'
-                        }`}
-                      >
-                        {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleNavClick(item.id)}
+                      title={isCollapsed ? navLabel : undefined}
+                      aria-label={navLabel}
+                      className={`relative w-full flex items-center ${
+                        isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2 px-2.5 py-2'
+                      } rounded-lg text-xs transition-colors whitespace-nowrap cursor-pointer ${
+                        isActive
+                          ? 'bg-[#061539] text-white font-semibold shadow-xs'
+                          : 'text-[#28488a] hover:bg-blue-50/75 hover:text-[#061539] font-medium'
+                      }`}
+                    >
+                      <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                        <Icon
+                          className={`w-4 h-4 shrink-0 ${
+                            isActive ? 'text-white' : 'text-[#3a5ea8]'
+                          }`}
+                        />
+                        {!isCollapsed && <span className="truncate">{navLabel}</span>}
                       </span>
-                    )}
 
-                    {showUnread && isCollapsed && (
-                      <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-rose-600" />
-                    )}
-                  </button>
-                );
-              })}
+                      {showUnread && !isCollapsed && (
+                        <span
+                          className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                            isActive ? 'bg-white text-[#061539]' : 'bg-[#061539] text-white'
+                          }`}
+                        >
+                          {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                        </span>
+                      )}
+
+                      {showUnread && isCollapsed && (
+                        <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-rose-600" />
+                      )}
+                    </button>
+                  );
+                })}
             </div>
           );
         })}

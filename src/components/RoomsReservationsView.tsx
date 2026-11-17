@@ -224,6 +224,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [filterStayTo, setFilterStayTo] = useState('');
 
   const [resStatusFilter, setResStatusFilter] = useState<'all' | ReservationStatus>('all');
+  const [arrivalsTab, setArrivalsTab] = useState<
+    'today' | 'future' | 'overdue' | 'checked_in_today'
+  >('today');
   const [showBookingForm, setShowBookingForm] = useState(false);
   const [showGuestForm, setShowGuestForm] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -1303,7 +1306,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (filterStayTo && r.checkInDate >= filterStayTo) return false;
 
     if (section === 'arrivals') {
-      return r.status === 'confirmed' || r.status === 'pending';
+      return (
+        r.status === 'confirmed' ||
+        r.status === 'pending' ||
+        (r.status === 'checked_in' && r.checkInDate === todayIso)
+      );
     }
     if (section === 'in_house') {
       return r.status === 'checked_in';
@@ -1316,6 +1323,35 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
     return true;
   });
+
+  const arrivalsTodayList = filteredReservations
+    .filter((r) => (r.status === 'confirmed' || r.status === 'pending') && r.checkInDate === todayIso)
+    .sort((a, b) => a.guestName.localeCompare(b.guestName));
+
+  const arrivalsFutureList = filteredReservations
+    .filter((r) => (r.status === 'confirmed' || r.status === 'pending') && r.checkInDate > todayIso)
+    .sort((a, b) => a.checkInDate.localeCompare(b.checkInDate) || a.guestName.localeCompare(b.guestName));
+
+  const arrivalsOverdueList = filteredReservations
+    .filter((r) => (r.status === 'confirmed' || r.status === 'pending') && r.checkInDate < todayIso)
+    .sort((a, b) => b.checkInDate.localeCompare(a.checkInDate) || a.guestName.localeCompare(b.guestName));
+
+  const arrivalsCheckedInTodayList = filteredReservations
+    .filter((r) => r.status === 'checked_in' && r.checkInDate === todayIso)
+    .sort((a, b) => a.guestName.localeCompare(b.guestName));
+
+  const futureArrivalsByDate = arrivalsFutureList.reduce<Array<{ dateIso: string; items: ReservationRecord[] }>>(
+    (groups, res) => {
+      const last = groups[groups.length - 1];
+      if (last && last.dateIso === res.checkInDate) {
+        last.items.push(res);
+      } else {
+        groups.push({ dateIso: res.checkInDate, items: [res] });
+      }
+      return groups;
+    },
+    []
+  );
 
   const activeAdvancedFilterCount =
     (filterRoomId !== 'ALL' ? 1 : 0) +
@@ -1376,7 +1412,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   const isStayTableSection =
     section === 'reservations' ||
-    section === 'arrivals' ||
     section === 'in_house' ||
     section === 'front_desk';
 
@@ -1406,7 +1441,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   className="pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
                 />
               </div>
-              {isStayTableSection && (
+              {(section === 'arrivals' || isStayTableSection) && (
                 <button
                   type="button"
                   onClick={() => setShowAdvancedSearch((v) => !v)}
@@ -1543,7 +1578,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       )}
 
       {/* Expandable Advanced Search Filter Panel */}
-      {isStayTableSection && showAdvancedSearch && (
+      {(section === 'arrivals' || isStayTableSection) && showAdvancedSearch && (
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
           <div className="flex items-center justify-between">
             <span className="font-display font-bold text-slate-900">
@@ -2744,7 +2779,562 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         </div>
       )}
 
-      {/* SECTION: RESERVATION, ARRIVALS, IN-HOUSE, FRONT DESK */}
+      {/* SECTION: DEDICATED ARRIVALS & CHECK-IN BOARD (TODAY vs FUTURE vs OVERDUE) */}
+      {section === 'arrivals' && (
+        <div className="space-y-4">
+          {/* Today's Date Anchor & Clear Separation Banner */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-[#1c46be] flex items-center justify-center shrink-0">
+                <PlaneLanding className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#1c46be]">
+                  Today is{' '}
+                  {new Date(`${todayIso}T00:00:00Z`).toLocaleDateString('en-GB', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                    timeZone: 'UTC',
+                  })}
+                </p>
+                <h2 className="font-display text-base font-bold text-slate-900">
+                  Arrivals &amp; Check-In Schedule
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Today&apos;s expected check-ins are strictly separated from future scheduled dates and overdue arrivals.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <select
+                aria-label="Filter arrivals by source"
+                value={filterChannel}
+                onChange={(e) => setFilterChannel(e.target.value)}
+                className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 font-medium"
+              >
+                <option value="ALL">All Booking Sources</option>
+                {PRIMARY_BOOKING_SOURCES.map((src) => (
+                  <option key={src.value} value={src.value}>
+                    {src.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => onNavigateSection?.('reservations')}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700 cursor-pointer"
+              >
+                All Reservations
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigateSection?.('in_house')}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700 cursor-pointer"
+              >
+                In-House ({reservationMetrics.checked_in})
+              </button>
+            </div>
+          </div>
+
+          {/* 4 Distinct Arrival Bucket Tabs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <button
+              type="button"
+              onClick={() => setArrivalsTab('today')}
+              className={`text-left rounded-xl p-4 border transition-all cursor-pointer ${
+                arrivalsTab === 'today'
+                  ? 'bg-[#061539] border-[#061539] text-white shadow-sm'
+                  : 'bg-white border-slate-200 hover:border-blue-300 text-slate-900'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={`text-[11px] font-bold uppercase tracking-wider ${
+                    arrivalsTab === 'today' ? 'text-amber-300' : 'text-[#1c46be]'
+                  }`}
+                >
+                  Due Today ({todayIso})
+                </span>
+                <PlaneLanding className="w-4 h-4 opacity-80" />
+              </div>
+              <p className="font-mono-tabular text-2xl font-bold mt-1">
+                {arrivalsTodayList.length}
+              </p>
+              <p
+                className={`text-[11px] mt-1 ${
+                  arrivalsTab === 'today' ? 'text-blue-100' : 'text-slate-500'
+                }`}
+              >
+                Expected check-ins for today only
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setArrivalsTab('future')}
+              className={`text-left rounded-xl p-4 border transition-all cursor-pointer ${
+                arrivalsTab === 'future'
+                  ? 'bg-[#1c46be] border-[#1c46be] text-white shadow-sm'
+                  : 'bg-white border-slate-200 hover:border-blue-300 text-slate-900'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={`text-[11px] font-bold uppercase tracking-wider ${
+                    arrivalsTab === 'future' ? 'text-blue-100' : 'text-slate-600'
+                  }`}
+                >
+                  Future Arrivals
+                </span>
+                <CalendarPlus className="w-4 h-4 opacity-80" />
+              </div>
+              <p className="font-mono-tabular text-2xl font-bold mt-1">
+                {arrivalsFutureList.length}
+              </p>
+              <p
+                className={`text-[11px] mt-1 ${
+                  arrivalsTab === 'future' ? 'text-blue-100' : 'text-slate-500'
+                }`}
+              >
+                {arrivalsFutureList[0]
+                  ? `Next: ${arrivalsFutureList[0].checkInDate === tomorrowIso ? 'Tomorrow' : arrivalsFutureList[0].checkInDate}`
+                  : 'No upcoming scheduled dates'}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setArrivalsTab('overdue')}
+              className={`text-left rounded-xl p-4 border transition-all cursor-pointer ${
+                arrivalsTab === 'overdue'
+                  ? 'bg-rose-700 border-rose-700 text-white shadow-sm'
+                  : arrivalsOverdueList.length > 0
+                    ? 'bg-rose-50/70 border-rose-200 hover:border-rose-300 text-rose-950'
+                    : 'bg-white border-slate-200 hover:border-slate-300 text-slate-900'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={`text-[11px] font-bold uppercase tracking-wider ${
+                    arrivalsTab === 'overdue'
+                      ? 'text-rose-100'
+                      : arrivalsOverdueList.length > 0
+                        ? 'text-rose-700'
+                        : 'text-slate-600'
+                  }`}
+                >
+                  Overdue / Past Expected
+                </span>
+                <Clock className="w-4 h-4 opacity-80" />
+              </div>
+              <p className="font-mono-tabular text-2xl font-bold mt-1">
+                {arrivalsOverdueList.length}
+              </p>
+              <p
+                className={`text-[11px] mt-1 ${
+                  arrivalsTab === 'overdue'
+                    ? 'text-rose-100'
+                    : arrivalsOverdueList.length > 0
+                      ? 'text-rose-700'
+                      : 'text-slate-500'
+                }`}
+              >
+                Check-in date passed &amp; still pending
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setArrivalsTab('checked_in_today')}
+              className={`text-left rounded-xl p-4 border transition-all cursor-pointer ${
+                arrivalsTab === 'checked_in_today'
+                  ? 'bg-emerald-700 border-emerald-700 text-white shadow-sm'
+                  : 'bg-white border-slate-200 hover:border-emerald-300 text-slate-900'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={`text-[11px] font-bold uppercase tracking-wider ${
+                    arrivalsTab === 'checked_in_today' ? 'text-emerald-100' : 'text-emerald-700'
+                  }`}
+                >
+                  Checked-In Today
+                </span>
+                <CheckCircle2 className="w-4 h-4 opacity-80" />
+              </div>
+              <p className="font-mono-tabular text-2xl font-bold mt-1">
+                {arrivalsCheckedInTodayList.length}
+              </p>
+              <p
+                className={`text-[11px] mt-1 ${
+                  arrivalsTab === 'checked_in_today' ? 'text-emerald-100' : 'text-slate-500'
+                }`}
+              >
+                Arrived and checked in today
+              </p>
+            </button>
+          </div>
+
+          {/* Active Arrival Bucket Content */}
+          {(() => {
+            const renderArrivalCard = (res: ReservationRecord, mode: 'today' | 'future' | 'overdue' | 'checked_in_today') => {
+              const { totalAmount, amountPaid, balance, paymentStatus } =
+                getReservationPaymentSummary(res);
+              const roomDisplay = getReservationRoomDisplay(res, rooms);
+              const hkStatus = roomDisplay.room?.housekeepingStatus;
+              const isRoomReady = hkStatus === 'clean' || hkStatus === 'inspected';
+              const daysDelta =
+                mode === 'future'
+                  ? diffNights(todayIso, res.checkInDate)
+                  : mode === 'overdue'
+                    ? diffNights(res.checkInDate, todayIso)
+                    : 0;
+
+              const timingBadge =
+                mode === 'today'
+                  ? 'ARRIVING TODAY'
+                  : mode === 'checked_in_today'
+                    ? 'CHECKED IN TODAY'
+                    : mode === 'future'
+                      ? res.checkInDate === tomorrowIso
+                        ? 'FUTURE · TOMORROW'
+                        : `FUTURE · IN ${daysDelta} DAYS`
+                      : `OVERDUE · ${daysDelta}D PAST DUE`;
+
+              const timingClass =
+                mode === 'today'
+                  ? 'bg-blue-100 text-[#061539] border-blue-200'
+                  : mode === 'checked_in_today'
+                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                    : mode === 'future'
+                      ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                      : 'bg-rose-100 text-rose-800 border-rose-200';
+
+              const canCheckIn = res.status === 'confirmed' || res.status === 'pending';
+              const canCancel = res.status !== 'cancelled' && res.status !== 'checked_out' && res.status !== 'no_show';
+
+              return (
+                <div
+                  key={res.id}
+                  onClick={() => onSelectReservation?.(res.id)}
+                  className="bg-white border border-slate-200 hover:border-blue-300 rounded-xl p-4 transition-colors cursor-pointer space-y-3"
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    {/* Guest & Timing */}
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold tracking-wide ${timingClass}`}>
+                          {timingBadge}
+                        </span>
+                        <span className="font-mono-tabular text-[11px] font-bold text-slate-600">
+                          {res.bookingRef}
+                        </span>
+                        <span className="text-[11px] font-medium text-slate-600 px-2 py-0.5 rounded bg-slate-100">
+                          {formatBookingSourceLabel(res.channel)}
+                        </span>
+                        <span
+                          className={`text-[11px] font-semibold px-2 py-0.5 rounded ${
+                            res.status === 'confirmed'
+                              ? 'bg-blue-50 text-blue-700'
+                              : res.status === 'pending'
+                                ? 'bg-amber-50 text-amber-700'
+                                : 'bg-emerald-50 text-emerald-700'
+                          }`}
+                        >
+                          {RESERVATION_STATUS_LABELS[res.status] || res.status}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => openGuestByReservation(res)}
+                          className="font-display text-base font-bold text-slate-900 hover:text-[#1c46be] hover:underline text-left cursor-pointer"
+                        >
+                          {res.guestName}
+                        </button>
+                        {res.guestPhone && (
+                          <span className="inline-flex items-center gap-1 text-xs font-mono-tabular text-slate-600">
+                            <Phone className="w-3 h-3" />
+                            <span>{res.guestPhone}</span>
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-500">
+                          {res.adults || 1}A / {res.children || 0}C
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Room, Dates & Payment */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-5 text-xs shrink-0">
+                      {/* Room & Housekeeping Readiness */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-w-[165px]">
+                        <p className="text-[10px] font-semibold uppercase text-slate-500">
+                          Assigned Room
+                        </p>
+                        {roomDisplay.isAssigned ? (
+                          <div className="mt-0.5">
+                            <p className="font-mono-tabular font-bold text-slate-900">
+                              {roomDisplay.roomNumberLabel} ·{' '}
+                              <span className="font-sans font-medium text-slate-700">
+                                {roomDisplay.roomTypeLabel}
+                              </span>
+                            </p>
+                            <p
+                              className={`text-[11px] font-semibold mt-0.5 ${
+                                isRoomReady ? 'text-emerald-700' : 'text-amber-700'
+                              }`}
+                            >
+                              {isRoomReady
+                                ? `Ready (${hkStatus})`
+                                : `Housekeeping: ${hkStatus || 'check status'}`}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="mt-0.5" onClick={(e) => e.stopPropagation()}>
+                            <p className="font-semibold text-amber-700">Unassigned ({roomDisplay.roomTypeLabel})</p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectReservation?.(res.id);
+                                setEditingStayDetails(true);
+                              }}
+                              className="text-[11px] font-bold text-[#1c46be] hover:underline cursor-pointer"
+                            >
+                              Assign Room Now
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Stay Dates */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-w-[175px]">
+                        <p className="text-[10px] font-semibold uppercase text-slate-500">
+                          Check-in → Check-out
+                        </p>
+                        <p className="font-mono-tabular font-bold text-slate-900 mt-0.5">
+                          {res.checkInDate} → {res.checkOutDate}
+                        </p>
+                        <p className="text-[11px] text-slate-600 mt-0.5">
+                          {res.nights} night{res.nights !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+
+                      {/* Payment Status */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-w-[175px]">
+                        <p className="text-[10px] font-semibold uppercase text-slate-500">
+                          Payment &amp; Balance
+                        </p>
+                        <p className="font-mono-tabular font-bold text-slate-900 mt-0.5">
+                          Total: {formatNgn(totalAmount)}
+                        </p>
+                        <p
+                          className={`text-[11px] font-bold mt-0.5 ${
+                            paymentStatus === 'Paid'
+                              ? 'text-emerald-700'
+                              : paymentStatus === 'Partial'
+                                ? 'text-amber-700'
+                                : 'text-rose-700'
+                          }`}
+                        >
+                          {paymentStatus === 'Paid'
+                            ? `Paid (${formatNgn(amountPaid)})`
+                            : paymentStatus === 'Partial'
+                              ? `Partial · Pending ${formatNgn(balance)}`
+                              : `Not Paid · Due ${formatNgn(balance)}`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Direct Actions Row */}
+                  <div
+                    className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <p className="text-[11px] text-slate-500">
+                      Booked on <span className="font-mono-tabular">{getReservationBookedDate(res)}</span>
+                    </p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onSelectReservation?.(res.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>View Folio</span>
+                      </button>
+                      {canCancel && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSelectReservation?.(res.id);
+                            setEditingStayDetails(true);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold cursor-pointer"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          <span>Edit / Assign Room</span>
+                        </button>
+                      )}
+                      {canCheckIn && (
+                        <button
+                          type="button"
+                          disabled={busyId === res.id}
+                          onClick={() => setCheckInTarget(res)}
+                          className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-white font-semibold cursor-pointer ${
+                            mode === 'future'
+                              ? 'bg-[#1c46be] hover:bg-blue-800'
+                              : 'bg-emerald-600 hover:bg-emerald-700'
+                          }`}
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                          <span>{mode === 'future' ? 'Early Check-in' : 'Check-in Guest'}</span>
+                        </button>
+                      )}
+                      {res.status === 'checked_in' && (
+                        <button
+                          type="button"
+                          disabled={busyId === res.id}
+                          onClick={() => setCheckoutTarget(res)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold cursor-pointer"
+                        >
+                          Check-out
+                        </button>
+                      )}
+                      {canCancel && (
+                        <button
+                          type="button"
+                          disabled={busyId === res.id}
+                          onClick={() => openCancelDialog(res)}
+                          className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 font-semibold cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      {canManageRooms && confirmDeleteResId !== res.id && (
+                        <button
+                          type="button"
+                          disabled={busyId === res.id}
+                          onClick={() => setConfirmDeleteResId(res.id)}
+                          title="Delete reservation"
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {canManageRooms && confirmDeleteResId === res.id && (
+                        <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteResId(null)}
+                            className="px-1.5 py-0.5 text-[11px] text-slate-600 cursor-pointer"
+                          >
+                            No
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyId === res.id}
+                            onClick={() => void handleDeleteReservation(res)}
+                            className="px-2 py-0.5 text-[11px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                          >
+                            {busyId === res.id ? '...' : 'Confirm'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            };
+
+            if (arrivalsTab === 'today') {
+              return arrivalsTodayList.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-2">
+                  <p className="font-display text-sm font-bold text-slate-900">
+                    No pending arrivals scheduled for today ({todayIso})
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {arrivalsFutureList.length > 0
+                      ? `You have ${arrivalsFutureList.length} future arrival(s) scheduled on upcoming dates — switch to the Future Arrivals tab to inspect them.`
+                      : 'Use New Reservation or Walk-in Check-in above to register a guest for today.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {arrivalsTodayList.map((r) => renderArrivalCard(r, 'today'))}
+                </div>
+              );
+            }
+
+            if (arrivalsTab === 'future') {
+              return futureArrivalsByDate.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-xs text-slate-500">
+                  No future arrivals scheduled beyond {todayIso}.
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 font-medium">
+                    Future Arrivals Schedule — Guests below are scheduled for future dates after today ({todayIso}).
+                  </div>
+                  {futureArrivalsByDate.map((grp) => (
+                    <div key={grp.dateIso} className="space-y-2.5">
+                      <div className="flex items-center justify-between px-1">
+                        <h3 className="font-display text-xs font-extrabold uppercase tracking-wider text-[#061539]">
+                          {grp.dateIso === tomorrowIso ? `Tomorrow · ${grp.dateIso}` : grp.dateIso} ·{' '}
+                          {new Date(`${grp.dateIso}T00:00:00Z`).toLocaleDateString('en-GB', {
+                            weekday: 'long',
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            timeZone: 'UTC',
+                          })}
+                        </h3>
+                        <span className="font-mono-tabular text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
+                          {grp.items.length} arrival{grp.items.length !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <div className="space-y-3">
+                        {grp.items.map((r) => renderArrivalCard(r, 'future'))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+
+            if (arrivalsTab === 'overdue') {
+              return arrivalsOverdueList.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-xs text-emerald-700 font-medium">
+                  No overdue expected arrivals — all prior check-in dates have been processed.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="px-4 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 font-medium">
+                    Overdue Expected Arrivals — Check-in date has already passed without check-in or cancellation.
+                  </div>
+                  {arrivalsOverdueList.map((r) => renderArrivalCard(r, 'overdue'))}
+                </div>
+              );
+            }
+
+            return arrivalsCheckedInTodayList.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-xs text-slate-500">
+                No guests with a {todayIso} arrival date have checked in yet today.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {arrivalsCheckedInTodayList.map((r) => renderArrivalCard(r, 'checked_in_today'))}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* SECTION: RESERVATION, IN-HOUSE, FRONT DESK */}
       {isStayTableSection && (
         <div className="space-y-4">
           {/* Operational Summary Strip */}
@@ -2803,11 +3393,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigateSection?.('arrivals')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    section === 'arrivals'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer bg-slate-100 text-slate-700 hover:bg-slate-200"
                 >
                   <PlaneLanding className="w-3.5 h-3.5" />
                   <span>2. Arrivals</span>
@@ -3235,11 +3821,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   {filteredReservations.length === 0 && (
                     <tr>
                       <td colSpan={15} className="py-10 text-center text-xs text-slate-500">
-                        {section === 'arrivals'
-                          ? 'No pending arrivals waiting for check-in.'
-                          : section === 'in_house'
-                            ? 'No in-house guests checked in at the moment.'
-                            : 'No matching reservations found.'}
+                        {section === 'in_house'
+                          ? 'No in-house guests checked in at the moment.'
+                          : 'No matching reservations found.'}
                       </td>
                     </tr>
                   )}

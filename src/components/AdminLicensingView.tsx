@@ -1797,8 +1797,6 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
               {(
                 [
                   { id: 'home', label: 'Software Homepage & Pricing (app.pchpms.com)' },
-                  { id: 'richgates-admin', label: 'Richgates Property Admin Login' },
-                  { id: 'staff', label: 'Richgates Staff Login' },
                   { id: 'pch-admin', label: 'PCH Super Admin Login' },
                 ] as Array<{ id: PortalMode; label: string }>
               ).map((item) => {
