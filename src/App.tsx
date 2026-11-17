@@ -293,7 +293,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [portalMode, setPortalMode] = useState<PortalMode>(detectInitialPortal);
-  const [staffRole, setStaffRole] = useState<StaffRole>('front_desk');
+  const staffRole: StaffRole = 'front_desk';
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
@@ -447,7 +447,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    void testConnection();
+    const connTimer = window.setTimeout(() => {
+      void testConnection();
+    }, 2500);
     void getRedirectResult(auth).catch((err) => {
       setAuthError(formatAuthErrorMessage(err));
     });
@@ -463,7 +465,10 @@ export default function App() {
         setUserAccounts([]);
       }
     });
-    return () => unsub();
+    return () => {
+      window.clearTimeout(connTimer);
+      unsub();
+    };
   }, []);
 
   useEffect(() => {
@@ -868,7 +873,7 @@ export default function App() {
 
     const initialTimer = window.setTimeout(() => {
       void syncDueChannels();
-    }, 1500);
+    }, 8000);
     const timer = window.setInterval(() => {
       void syncDueChannels();
     }, 10 * 60 * 1000);
@@ -926,13 +931,12 @@ export default function App() {
     }
   };
 
-  const handleGoogleSignIn = async (portal: PortalMode, chosenStaffRole?: StaffRole) => {
+  const handleGoogleSignIn = async (portal: PortalMode) => {
     setAuthError(null);
     setAuthNotice(null);
     setIsSigningIn(true);
     try {
       handlePortalSelection(portal);
-      if (chosenStaffRole) setStaffRole(chosenStaffRole);
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
       const code = (err as { code?: string })?.code;
@@ -949,8 +953,7 @@ export default function App() {
   const handleEmailPasswordSignIn = async (
     portal: PortalMode,
     email: string,
-    password: string,
-    chosenStaffRole?: StaffRole
+    password: string
   ) => {
     setAuthError(null);
     setAuthNotice(null);
@@ -962,7 +965,6 @@ export default function App() {
     setIsSigningIn(true);
     try {
       handlePortalSelection(portal);
-      if (chosenStaffRole) setStaffRole(chosenStaffRole);
       const cred = await signInWithEmailAndPassword(auth, trimmedEmail, password);
       await cred.user.reload().catch(() => undefined);
       await cred.user.getIdToken(true).catch(() => undefined);
@@ -1007,8 +1009,8 @@ export default function App() {
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-xs text-slate-500">
-        Initializing PCH PMS workspace...
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-xs font-semibold text-[#061539]">
+        Loading...
       </div>
     );
   }
@@ -1031,13 +1033,6 @@ export default function App() {
     return (
       <PortalGateway
         selectedPortal={portalMode}
-        onSelectPortal={(nextPortal) => {
-          setAuthError(null);
-          setAuthNotice(null);
-          handlePortalSelection(nextPortal);
-        }}
-        selectedStaffRole={staffRole}
-        onSelectStaffRole={setStaffRole}
         onGoogleSignIn={handleGoogleSignIn}
         onEmailPasswordSignIn={handleEmailPasswordSignIn}
         onPasswordReset={handlePasswordReset}
@@ -1156,20 +1151,20 @@ export default function App() {
             </button>
             {portalMode === 'pch-admin' && (
               <>
-                <span className="font-semibold text-[#0B245B] whitespace-nowrap">
+                <span className="font-extrabold text-[#061539] whitespace-nowrap">
                   {cms.brand.pchPortalName}
                 </span>
                 <span aria-hidden="true">/</span>
               </>
             )}
-            <span className="font-semibold text-[#0B245B] whitespace-nowrap">
+            <span className="font-extrabold text-[#061539] whitespace-nowrap">
               {cms.pages[activeSection]?.navLabel || activeSection.replace(/_/g, ' ')}
             </span>
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
             {/* Current Date moved from Dashboard to Header */}
-            <div className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50/70 border border-blue-200/80 text-xs font-semibold text-[#0B245B]">
+            <div className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50/70 border border-blue-200/80 text-xs font-bold text-[#061539]">
               <Calendar className="w-3.5 h-3.5 text-[#1c46be]" />
               <span className="font-mono-tabular whitespace-nowrap">{headerFormattedDate}</span>
             </div>
@@ -1348,38 +1343,29 @@ export default function App() {
         <main className="flex-1 p-4 sm:p-6 max-w-[1440px] w-full mx-auto print:p-0 print:max-w-none">
           {seeding || !activeProperty ? (
             <div className="space-y-4">
-              <div className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <p className="font-display text-base font-bold text-[#0B245B]">
-                    {seeding
-                      ? 'Provisioning Richgates Apartments, Enugu...'
-                      : !userAccountsLoaded && !propsLoaded
-                        ? 'Loading Richgates Apartments, Enugu workspace...'
-                        : 'Loading Richgates Apartments, Enugu workspace...'}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[1, 2, 3].map((item) => (
+                  <div
+                    key={item}
+                    className="bg-white border border-slate-200 rounded-xl p-5 h-32 animate-pulse"
+                  />
+                ))}
+              </div>
+              {!seeding && propsLoaded && properties.length === 0 && isBootstrappedAdmin && (
+                <div className="bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between gap-4">
+                  <p className="text-xs font-bold text-[#061539]">
+                    Ready to initialize property workspace.
                   </p>
-                  <p className="text-xs text-slate-500">
-                    Syncing suites RM-1 to RM-8, Nigerian Naira ledger, POS menu, staff payroll, and booking channels.
-                  </p>
-                </div>
-                {!seeding && propsLoaded && properties.length === 0 && isBootstrappedAdmin && (
                   <button
                     type="button"
                     onClick={() => runBootstrapSeed(RICHGATES_PROPERTY_ID)}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B245B] hover:bg-[#082c70] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Load Richgates Workspace</span>
                   </button>
-                )}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                {[1, 2, 3, 4].map((item) => (
-                  <div
-                    key={item}
-                    className="bg-white border border-slate-200 rounded-xl p-5 h-28 animate-pulse"
-                  />
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           ) : (
             <PageErrorBoundary onReset={() => handleSelectSection('dashboard')}>
@@ -1388,7 +1374,7 @@ export default function App() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="font-display text-sm font-bold text-slate-900">
-                        iCal Calendar Feed ({icalViewRoom === 'ALL' ? 'All Suites' : icalViewRoom})
+                        iCal Calendar Feed ({icalViewRoom === 'ALL' ? 'All Rooms' : icalViewRoom})
                       </h2>
                       <p className="text-xs text-slate-500">
                         RFC 5545 .ics calendar feed ready for Booking.com, Airbnb, or VRBO import

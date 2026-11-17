@@ -141,14 +141,14 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [showChannelForm, setShowChannelForm] = useState(false);
   const [newChannelName, setNewChannelName] =
     useState<OtaIntegrationRecord['channelName']>('Airbnb');
-  const [newChannelSuite, setNewChannelSuite] = useState('All Suites');
+  const [newChannelSuite, setNewChannelSuite] = useState('All Rooms');
   const [newListingId, setNewListingId] = useState('');
   const [newIcalUrl, setNewIcalUrl] = useState('');
   const [newCommissionPct, setNewCommissionPct] = useState(15);
   const [newAutoSync, setNewAutoSync] = useState(true);
   const [exportSuiteFilter, setExportSuiteFilter] = useState('ALL');
   const [icalDrafts, setIcalDrafts] = useState<
-    Record<string, { url: string; room: string }>
+    Record<string, { url: string; room: string; listingId: string }>
   >({});
 
   const [busy, setBusy] = useState(false);
@@ -211,7 +211,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         id: o.id,
         channelName: o.channelName,
         propertyListingId: o.propertyListingId,
-        roomNumber: o.roomNumber || 'All Suites',
+        roomNumber: !o.roomNumber || o.roomNumber === 'All Suites' ? 'All Rooms' : o.roomNumber,
         commissionPct: o.commissionPct,
         autoSync: o.autoSync,
         connected: o.connected,
@@ -380,17 +380,27 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
   const [syncingAllChannels, setSyncingAllChannels] = useState(false);
 
+  const normalizeChannelRoom = (room?: string) => {
+    const raw = (room || '').trim();
+    if (!raw || raw.toLowerCase() === 'all suites' || raw.toLowerCase() === 'all rooms') {
+      return 'All Rooms';
+    }
+    return raw;
+  };
+
   const persistDraftIfDirty = async (
     channel: OtaIntegrationRecord
   ): Promise<OtaIntegrationRecord> => {
     const draft = icalDrafts[channel.id];
     if (!draft) return channel;
     const nextUrl = draft.url.trim();
-    const nextRoom = draft.room || 'All Suites';
+    const nextRoom = normalizeChannelRoom(draft.room);
+    const nextListingId = draft.listingId.trim() || channel.propertyListingId;
 
     const isDirty =
       nextUrl !== (channel.icalImportUrl || '').trim() ||
-      nextRoom !== (channel.roomNumber || 'All Suites');
+      nextRoom !== normalizeChannelRoom(channel.roomNumber) ||
+      nextListingId !== (channel.propertyListingId || '').trim();
 
     if (!isDirty) return channel;
 
@@ -399,6 +409,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       channel,
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
+      propertyListingId: nextListingId,
       actorRole: ROLE_LABELS[activeRole],
     });
     setIcalDrafts((prev) => {
@@ -410,6 +421,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       ...channel,
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
+      propertyListingId: nextListingId,
     };
   };
 
@@ -452,27 +464,33 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     setSyncingAllChannels(true);
     let totalCreated = 0;
     let totalUpdated = 0;
+    let totalCancelled = 0;
     let totalErrors = 0;
+    let firstError = '';
     try {
       for (const ch of syncable) {
         try {
           const effectiveChannel = await persistDraftIfDirty(ch);
+          // Omit stale reservations prop so each sequential channel reads newly committed bookings from Firestore
           const res = await syncOtaChannelWorkflow({
             property,
             channel: effectiveChannel,
             rooms: sortedRooms,
-            reservations,
             actorRole: ROLE_LABELS[activeRole],
           });
           totalCreated += res.created;
           totalUpdated += res.updated;
-        } catch {
+          totalCancelled += res.cancelled;
+        } catch (err) {
           totalErrors += 1;
+          if (!firstError && err instanceof Error) {
+            firstError = `${ch.channelName}: ${err.message}`;
+          }
         }
       }
       onNotify(
-        `Synced ${syncable.length} OTA feed(s): ${totalCreated} new booking(s), ${totalUpdated} updated${
-          totalErrors > 0 ? `, ${totalErrors} error(s)` : ''
+        `Synced ${syncable.length} OTA feed(s): ${totalCreated} new, ${totalUpdated} updated, ${totalCancelled} cancelled${
+          totalErrors > 0 ? ` · ${totalErrors} error(s)${firstError ? ` (${firstError})` : ''}` : ''
         }`
       );
     } finally {
@@ -491,13 +509,13 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const suffix = roomFilter && roomFilter !== 'ALL' ? `-${roomFilter}` : '-all-suites';
+    const suffix = roomFilter && roomFilter !== 'ALL' ? `-${roomFilter}` : '-all-rooms';
     a.download = `${property.code.toLowerCase()}${suffix}.ics`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    onNotify(`Downloaded iCal calendar feed (${roomFilter && roomFilter !== 'ALL' ? roomFilter : 'All Suites'})`);
+    onNotify(`Downloaded iCal calendar feed (${roomFilter && roomFilter !== 'ALL' ? roomFilter : 'All Rooms'})`);
   };
 
   const handleCreateChannel = async (e: React.FormEvent) => {
@@ -518,6 +536,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       setShowChannelForm(false);
       setNewListingId('');
       setNewIcalUrl('');
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : `Unable to add ${newChannelName}`);
     } finally {
       setBusy(false);
     }
@@ -641,13 +661,13 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Suite Mapping</label>
+                  <label className="block font-medium text-slate-700 mb-1">Room Mapping</label>
                   <select
                     value={newChannelSuite}
                     onChange={(e) => setNewChannelSuite(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                   >
-                    <option value="All Suites">All Suites (Property-wide)</option>
+                    <option value="All Rooms">All Rooms (Property-wide)</option>
                     {sortedRooms.map((r) => (
                       <option key={r.id} value={r.roomNumber}>
                         {r.roomNumber} · {r.roomType}
@@ -657,9 +677,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Listing / Ext ID</label>
+                  <label className="block font-medium text-slate-700 mb-1">Property Listing ID</label>
                   <input
                     type="text"
+                    placeholder="e.g. BKG-ENUGU-88412"
                     value={newListingId}
                     onChange={(e) => setNewListingId(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -671,8 +692,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     Inbound iCal URL (.ics)
                   </label>
                   <input
-                    type="url"
-                    required
+                    type="text"
+                    placeholder="https://... or webcal://..."
                     value={newIcalUrl}
                     onChange={(e) => setNewIcalUrl(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
@@ -734,7 +755,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 onChange={(e) => setExportSuiteFilter(e.target.value)}
                 className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
               >
-                <option value="ALL">All Suites ({property.code})</option>
+                <option value="ALL">All Rooms ({property.code})</option>
                 {sortedRooms.map((r) => (
                   <option key={r.id} value={r.roomNumber}>
                     {r.roomNumber} · {r.roomType}
@@ -776,10 +797,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
             {otaChannels.map((ch) => {
               const draft = icalDrafts[ch.id] ?? {
                 url: ch.icalImportUrl || '',
-                room: ch.roomNumber || 'All Suites',
+                room: normalizeChannelRoom(ch.roomNumber),
+                listingId: ch.propertyListingId || '',
               };
               const suiteParam = encodeURIComponent(
-                !draft.room || draft.room === 'All Suites' ? 'ALL' : draft.room
+                !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
               );
               const channelExportUrl =
                 ch.icalExportUrl ||
@@ -787,14 +809,14 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   ? `${window.location.origin}/?ical=${encodeURIComponent(property.id)}&room=${suiteParam}`
                   : `/?ical=${property.id}&room=${suiteParam}`);
               const mappedRoomObj =
-                draft.room && draft.room !== 'All Suites'
+                draft.room && draft.room !== 'All Rooms'
                   ? sortedRooms.find(
                       (r) => r.roomNumber.toLowerCase() === draft.room.toLowerCase()
                     )
                   : undefined;
               const mappedLabel = mappedRoomObj
                 ? `${mappedRoomObj.roomNumber} · ${mappedRoomObj.roomType}`
-                : draft.room || 'All Suites';
+                : draft.room || 'All Rooms';
 
               return (
                 <div
@@ -818,11 +840,28 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 text-xs text-slate-500 font-mono-tabular">
-                      <span className="truncate">Listing: {ch.propertyListingId}</span>
-                      <span className="font-semibold text-slate-800 truncate text-right">
-                        {mappedLabel}
-                      </span>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-2 text-slate-500 font-mono-tabular">
+                        <label htmlFor={`listing-${ch.id}`} className="font-sans font-semibold text-slate-700 shrink-0">
+                          Property Listing ID
+                        </label>
+                        <span className="font-semibold text-slate-800 truncate text-right">
+                          {mappedLabel}
+                        </span>
+                      </div>
+                      <input
+                        id={`listing-${ch.id}`}
+                        type="text"
+                        placeholder="Enter OTA Listing / Hotel ID"
+                        value={draft.listingId}
+                        onChange={(e) =>
+                          setIcalDrafts((prev) => ({
+                            ...prev,
+                            [ch.id]: { ...draft, listingId: e.target.value },
+                          }))
+                        }
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
+                      />
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 pt-2 text-xs border-t border-slate-100">
@@ -840,12 +879,12 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Inbound iCal Link, Suite Assignment & Customer Billing Currency */}
+                    {/* Inbound iCal Link & Room Mapping */}
                     <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
                       <div className="flex items-center justify-between gap-2">
                         <label className="font-semibold text-slate-700 inline-flex items-center gap-1 shrink-0">
                           <Link2 className="w-3 h-3 text-slate-400" />
-                          <span>Suite &amp; iCal (.ics)</span>
+                          <span>Room &amp; iCal (.ics)</span>
                         </label>
                         <select
                           value={draft.room}
@@ -857,7 +896,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                           }
                           className="border border-slate-200 rounded px-2 py-1 text-[11px] bg-white max-w-[190px] truncate"
                         >
-                          <option value="All Suites">All Suites</option>
+                          <option value="All Rooms">All Rooms</option>
                           {sortedRooms.map((r) => (
                             <option key={r.id} value={r.roomNumber}>
                               {r.roomNumber} · {r.roomType}
@@ -868,8 +907,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
                       <div className="flex items-center gap-1.5">
                         <input
-                          type="url"
+                          type="text"
                           aria-label="Inbound iCal link"
+                          placeholder="https://... or webcal://... (.ics)"
                           value={draft.url}
                           onChange={(e) =>
                             setIcalDrafts((prev) => ({
@@ -890,6 +930,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 channel: ch,
                                 icalImportUrl: draft.url,
                                 roomNumber: draft.room,
+                                propertyListingId: draft.listingId,
                                 actorRole: ROLE_LABELS[activeRole],
                               });
                               setIcalDrafts((prev) => {
@@ -897,7 +938,13 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 delete next[ch.id];
                                 return next;
                               });
-                              onNotify(`Saved iCal settings for ${ch.channelName}`);
+                              onNotify(`Saved listing & iCal settings for ${ch.channelName}`);
+                            } catch (err) {
+                              onNotify(
+                                err instanceof Error
+                                  ? err.message
+                                  : `Unable to save ${ch.channelName} settings`
+                              );
                             } finally {
                               setBusy(false);
                             }

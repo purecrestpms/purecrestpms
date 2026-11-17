@@ -1566,13 +1566,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <div>
-              <label className="block font-medium text-slate-600 mb-1">Suite / Room</label>
+              <label className="block font-medium text-slate-600 mb-1">Room</label>
               <select
                 value={filterRoomId}
                 onChange={(e) => setFilterRoomId(e.target.value)}
                 className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
               >
-                <option value="ALL">All Suites</option>
+                <option value="ALL">All Rooms</option>
                 <option value="UNASSIGNED">Unassigned (Edit to Assign)</option>
                 {sortedRooms.map((rm) => (
                   <option key={rm.id} value={rm.id}>

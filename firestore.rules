@@ -547,12 +547,12 @@ service cloud.firestore {
       data.keys().hasOnly(['propertyId', 'channelName', 'propertyListingId', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'icalImportUrl', 'icalExportUrl', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.propertyId == propertyId &&
       data.channelName in ['Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Direct Website Engine', 'Custom iCal'] &&
-      data.propertyListingId is string && data.propertyListingId.size() <= 64 &&
+      data.propertyListingId is string && data.propertyListingId.size() <= 120 &&
       (!('roomNumber' in data) || (data.roomNumber is string && data.roomNumber.size() <= 24)) &&
       (!('defaultCurrency' in data) || (data.defaultCurrency is string && data.defaultCurrency in ['NGN', 'USD', 'GBP', 'EUR'])) &&
       (!('defaultNightlyRate' in data) || (data.defaultNightlyRate is number && data.defaultNightlyRate >= 0)) &&
-      (!('icalImportUrl' in data) || (data.icalImportUrl is string && data.icalImportUrl.size() <= 500)) &&
-      (!('icalExportUrl' in data) || (data.icalExportUrl is string && data.icalExportUrl.size() <= 500)) &&
+      (!('icalImportUrl' in data) || (data.icalImportUrl is string && data.icalImportUrl.size() <= 2000)) &&
+      (!('icalExportUrl' in data) || (data.icalExportUrl is string && data.icalExportUrl.size() <= 1000)) &&
       data.commissionPct is number && data.commissionPct >= 0 && data.commissionPct <= 50 &&
       data.autoSync is bool &&
       data.connected is bool &&
@@ -729,7 +729,7 @@ service cloud.firestore {
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
       }
@@ -943,7 +943,7 @@ service cloud.firestore {
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['propertyListingId', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
       }

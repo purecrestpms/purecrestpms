@@ -14,50 +14,23 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { useCms } from '../context/CmsContext';
-import {
-  PortalMode,
-  RICHGATES_EXTERIOR_IMAGE,
-  ROLE_LABELS,
-  StaffRole,
-} from '../types/pms';
+import { PortalMode, RICHGATES_EXTERIOR_IMAGE } from '../types/pms';
 
 interface PortalGatewayProps {
   selectedPortal: PortalMode;
-  onSelectPortal: (portal: PortalMode) => void;
-  selectedStaffRole: StaffRole;
-  onSelectStaffRole: (role: StaffRole) => void;
-  onGoogleSignIn: (portal: PortalMode, staffRole?: StaffRole) => Promise<void>;
-  onEmailPasswordSignIn: (
-    portal: PortalMode,
-    email: string,
-    password: string,
-    staffRole?: StaffRole
-  ) => Promise<void>;
+  onGoogleSignIn: (portal: PortalMode) => Promise<void>;
+  onEmailPasswordSignIn: (portal: PortalMode, email: string, password: string) => Promise<void>;
   onPasswordReset: (email: string) => Promise<void>;
   authError: string | null;
   authNotice: string | null;
   isSigningIn: boolean;
 }
 
-const RICHGATES_CREST_IMAGE =
-  '/assets/aistudio/F4CFBE9B-2B7C-4025-95EE-42FC3CADC245_b5a4d143.png';
-
-const PCH_ATTACHED_ICON =
-  '/assets/aistudio/4A541DC4-8B5B-4592-9C9E-752D5AE470AD_3f72a29d.png';
-
-const STAFF_ROLES: StaffRole[] = [
-  'front_desk',
-  'housekeeping',
-  'fnb_kitchen',
-  'accountant',
-  'maintenance',
-];
+const RICHGATES_CREST_IMAGE = '/assets/richgates-crest-transparent.png';
+const PCH_ATTACHED_ICON = '/assets/pch-icon-transparent.png';
 
 export const PortalGateway: React.FC<PortalGatewayProps> = ({
   selectedPortal,
-  onSelectPortal,
-  selectedStaffRole,
-  onSelectStaffRole,
   onGoogleSignIn,
   onEmailPasswordSignIn,
   onPasswordReset,
@@ -79,21 +52,16 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (workEmailHint.trim() || passwordHint) {
-      void onEmailPasswordSignIn(
-        selectedPortal,
-        workEmailHint,
-        passwordHint,
-        isStaffPage ? selectedStaffRole : undefined
-      );
+      void onEmailPasswordSignIn(selectedPortal, workEmailHint, passwordHint);
       return;
     }
-    void onGoogleSignIn(selectedPortal, isStaffPage ? selectedStaffRole : undefined);
+    void onGoogleSignIn(selectedPortal);
   };
 
   const cardHeading = isPchPage
     ? cms.login.pchSignInTitle || 'Super Admin Login'
     : isStaffPage
-      ? 'Employee & Staff Login'
+      ? 'Staff Login'
       : 'Administrator Login';
 
   const cardSubtitle = isPchPage
@@ -133,43 +101,29 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
         aria-hidden="true"
         className="absolute bottom-0 left-0 right-0 w-full h-24 sm:h-32 pointer-events-none z-10"
       >
-        <path
-          d="M0 155 Q190 215 410 240 L0 240 Z"
-          fill="#f5b800"
-        />
-        <path
-          d="M0 185 Q180 225 380 240 L0 240 Z"
-          fill="#041945"
-        />
-        <path
-          d="M1440 155 Q1250 215 1030 240 L1440 240 Z"
-          fill="#f5b800"
-        />
-        <path
-          d="M1440 185 Q1260 225 1060 240 L1440 240 Z"
-          fill="#041945"
-        />
+        <path d="M0 155 Q190 215 410 240 L0 240 Z" fill="#f5b800" />
+        <path d="M0 185 Q180 225 380 240 L0 240 Z" fill="#041945" />
+        <path d="M1440 155 Q1250 215 1030 240 L1440 240 Z" fill="#f5b800" />
+        <path d="M1440 185 Q1260 225 1060 240 L1440 240 Z" fill="#041945" />
       </svg>
 
-      {/* Top Spacer */}
+      {/* Main Content */}
       <div className="relative z-20 flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-8 sm:py-10">
-        {/* Centered Emblem & Brand Lockup */}
+        {/* Centered Transparent Emblem & Brand Lockup */}
         <div className="text-center mb-6 sm:mb-7 select-none">
           {isPchPage ? (
             <div className="flex flex-col items-center">
               {!pchIconError ? (
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-white p-1.5 border-2 border-[#f5b800] shadow-2xl mb-3">
-                  <img
-                    src={PCH_ATTACHED_ICON}
-                    alt="PCH PMS Emblem"
-                    referrerPolicy="no-referrer"
-                    onError={() => setPchIconError(true)}
-                    className="w-full h-full object-contain"
-                  />
-                </div>
+                <img
+                  src={PCH_ATTACHED_ICON}
+                  alt="PCH PMS Emblem"
+                  referrerPolicy="no-referrer"
+                  onError={() => setPchIconError(true)}
+                  className="w-20 h-20 sm:w-24 sm:h-24 object-contain drop-shadow-2xl mb-3 bg-transparent"
+                />
               ) : (
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#071f52] border-2 border-[#f5b800] flex items-center justify-center shadow-2xl mb-3">
-                  <ShieldCheck className="w-8 h-8 text-[#f5b800]" />
+                <div className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center drop-shadow-2xl mb-3">
+                  <ShieldCheck className="w-10 h-10 text-[#f5b800]" />
                 </div>
               )}
               <h1 className="font-site-title text-3xl sm:text-4xl font-bold tracking-[0.14em] text-white uppercase drop-shadow">
@@ -182,18 +136,16 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
           ) : (
             <div className="flex flex-col items-center">
               {!crestError ? (
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-white p-1 border-2 border-[#f5b800] shadow-2xl mb-3">
-                  <img
-                    src={RICHGATES_CREST_IMAGE}
-                    alt="Richgates Apartments Crest"
-                    referrerPolicy="no-referrer"
-                    onError={() => setCrestError(true)}
-                    className="w-full h-full object-contain"
-                  />
-                </div>
+                <img
+                  src={RICHGATES_CREST_IMAGE}
+                  alt="Richgates Apartments Crest"
+                  referrerPolicy="no-referrer"
+                  onError={() => setCrestError(true)}
+                  className="w-20 h-20 sm:w-24 sm:h-24 object-contain drop-shadow-2xl mb-3 bg-transparent"
+                />
               ) : (
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#071f52] border-2 border-[#f5b800] flex items-center justify-center shadow-2xl mb-3">
-                  <Building2 className="w-8 h-8 text-[#f5b800]" />
+                <div className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center drop-shadow-2xl mb-3">
+                  <Building2 className="w-10 h-10 text-[#f5b800]" />
                 </div>
               )}
               <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-[0.12em] text-white uppercase drop-shadow-md leading-none">
@@ -262,33 +214,10 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
             )}
 
             <form onSubmit={handleFormSubmit} className="space-y-3.5">
-              {isStaffPage && (
-                <div>
-                  <label
-                    htmlFor="staff-role-select"
-                    className="block text-[11px] font-semibold text-[#062052] mb-1"
-                  >
-                    Department Workspace
-                  </label>
-                  <select
-                    id="staff-role-select"
-                    value={selectedStaffRole}
-                    onChange={(e) => onSelectStaffRole(e.target.value as StaffRole)}
-                    className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:border-[#062052] focus:ring-2 focus:ring-[#062052]/10"
-                  >
-                    {STAFF_ROLES.map((role) => (
-                      <option key={role} value={role}>
-                        {ROLE_LABELS[role]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
               <div>
                 <label
                   htmlFor="login-email-input"
-                  className="block text-[11px] font-semibold text-slate-700 mb-1"
+                  className="block text-[11px] font-bold text-slate-800 mb-1"
                 >
                   Email Address
                 </label>
@@ -309,7 +238,7 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
               <div className="space-y-1.5">
                 <label
                   htmlFor="login-password-input"
-                  className="block text-[11px] font-semibold text-slate-700 mb-1"
+                  className="block text-[11px] font-bold text-slate-800 mb-1"
                 >
                   Password
                 </label>
@@ -365,53 +294,13 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
               <button
                 type="button"
                 disabled={isSigningIn}
-                onClick={() =>
-                  void onGoogleSignIn(selectedPortal, isStaffPage ? selectedStaffRole : undefined)
-                }
+                onClick={() => void onGoogleSignIn(selectedPortal)}
                 className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-[#062052] text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
               >
                 <LogIn className="w-4 h-4 text-[#1c46be]" />
                 <span>Continue with Google</span>
               </button>
             </form>
-
-            {/* Clean Route Link Between Employee Login (/login) and Administrator Login (/admin) */}
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-              {isPchPage ? (
-                <>
-                  <span className="text-slate-500">Property workspace:</span>
-                  <button
-                    type="button"
-                    onClick={() => onSelectPortal('richgates-admin')}
-                    className="font-semibold text-[#1c46be] hover:underline cursor-pointer"
-                  >
-                    Administrator Login →
-                  </button>
-                </>
-              ) : isStaffPage ? (
-                <>
-                  <span className="text-slate-500">Property manager?</span>
-                  <button
-                    type="button"
-                    onClick={() => onSelectPortal('richgates-admin')}
-                    className="font-semibold text-[#1c46be] hover:underline cursor-pointer"
-                  >
-                    Administrator Login →
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="text-slate-500">Front desk or staff?</span>
-                  <button
-                    type="button"
-                    onClick={() => onSelectPortal('staff')}
-                    className="font-semibold text-[#1c46be] hover:underline cursor-pointer"
-                  >
-                    Employee Login →
-                  </button>
-                </>
-              )}
-            </div>
           </div>
         </div>
       </div>

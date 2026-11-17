@@ -34,15 +34,21 @@ export async function onRequestGet(context: CfContext): Promise<Response> {
     return Response.json({ error: 'Missing required url query parameter.' }, { status: 400 });
   }
 
+  const normalizedUrl = rawUrl.replace(/^webcals?:\/\//i, 'https://');
+
   let parsed: URL;
   try {
-    parsed = new URL(rawUrl);
+    parsed = new URL(
+      /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalizedUrl)
+        ? normalizedUrl
+        : `https://${normalizedUrl}`
+    );
   } catch {
     return Response.json({ error: 'Invalid iCal URL format.' }, { status: 400 });
   }
 
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return Response.json({ error: 'Only HTTP/HTTPS calendar URLs are supported.' }, { status: 400 });
+    return Response.json({ error: 'Only HTTP/HTTPS/WebCal calendar URLs are supported.' }, { status: 400 });
   }
 
   if (isBlockedHost(parsed.hostname)) {
@@ -57,6 +63,7 @@ export async function onRequestGet(context: CfContext): Promise<Response> {
       method: 'GET',
       headers: {
         Accept: 'text/calendar, text/plain;q=0.9, */*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
         'User-Agent': 'PCH-PMS-Channel-Manager/1.0 (+https://pchpms.com)',
       },
       redirect: 'follow',
@@ -64,13 +71,13 @@ export async function onRequestGet(context: CfContext): Promise<Response> {
 
     if (!upstream.ok) {
       return Response.json(
-        { error: `OTA calendar returned HTTP ${upstream.status}.` },
+        { error: `OTA calendar returned HTTP ${upstream.status}. Verify the .ics link inside your OTA account.` },
         { status: 502 }
       );
     }
 
-    const body = await upstream.text();
-    if (!body.includes('BEGIN:VCALENDAR')) {
+    const body = (await upstream.text()).replace(/^\uFEFF/, '');
+    if (!/begin:vcalendar/i.test(body)) {
       return Response.json(
         { error: 'The URL did not return a valid iCalendar (.ics) feed.' },
         { status: 422 }

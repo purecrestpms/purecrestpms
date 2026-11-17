@@ -43,16 +43,22 @@ async function startServer() {
       return;
     }
 
+    const normalizedUrl = rawUrl.replace(/^webcals?:\/\//i, 'https://');
+
     let parsed: URL;
     try {
-      parsed = new URL(rawUrl);
+      parsed = new URL(
+        /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalizedUrl)
+          ? normalizedUrl
+          : `https://${normalizedUrl}`
+      );
     } catch {
       res.status(400).json({ error: 'Invalid iCal URL format.' });
       return;
     }
 
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      res.status(400).json({ error: 'Only HTTP/HTTPS calendar URLs are supported.' });
+      res.status(400).json({ error: 'Only HTTP/HTTPS/WebCal calendar URLs are supported.' });
       return;
     }
 
@@ -62,13 +68,14 @@ async function startServer() {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const upstream = await fetch(parsed.toString(), {
         method: 'GET',
         headers: {
           Accept: 'text/calendar, text/plain;q=0.9, */*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
           'User-Agent': 'PCH-PMS-Channel-Manager/1.0 (+https://pchpms.com)',
         },
         signal: controller.signal,
@@ -82,13 +89,14 @@ async function startServer() {
         return;
       }
 
-      const body = await upstream.text();
+      const rawBody = await upstream.text();
+      const body = rawBody.replace(/^\uFEFF/, '');
       if (body.length > 2_500_000) {
         res.status(413).json({ error: 'Calendar feed exceeds maximum supported size.' });
         return;
       }
 
-      if (!body.includes('BEGIN:VCALENDAR')) {
+      if (!/begin:vcalendar/i.test(body)) {
         res.status(422).json({
           error: 'The URL did not return a valid iCalendar (.ics) feed.',
         });

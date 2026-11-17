@@ -5,8 +5,15 @@ export interface ParsedIcalEvent {
   checkInDate: string; // YYYY-MM-DD
   checkOutDate: string; // YYYY-MM-DD
   nights: number;
+  guestFirstName?: string;
+  guestLastName?: string;
   guestName: string;
   guestPhone?: string;
+  guestEmail?: string;
+  adults?: number;
+  children?: number;
+  otaBookingRef?: string;
+  listingIdHint?: string;
   summary: string;
   description: string;
   location: string;
@@ -19,7 +26,7 @@ export interface ParsedIcalEvent {
 }
 
 function unfoldIcalLines(raw: string): string[] {
-  const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const normalized = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const unfolded = normalized.replace(/\n[ \t]/g, '');
   return unfolded.split('\n');
 }
@@ -35,13 +42,23 @@ function unescapeIcalText(value: string): string {
 
 function parseIcalDateToIso(rawVal: string): string | null {
   const val = rawVal.trim();
-  const match = val.match(/^(\d{4})(\d{2})(\d{2})/);
+  const match = val.match(/^(\d{4})-?(\d{2})-?(\d{2})/);
   if (!match) return null;
   const [, year, month, day] = match;
   const m = Number(month);
   const d = Number(day);
   if (m < 1 || m > 12 || d < 1 || d > 31) return null;
   return `${year}-${month}-${day}`;
+}
+
+function parseIcalDurationDays(rawDuration: string): number {
+  const val = rawDuration.trim().toUpperCase();
+  const match = val.match(/^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?)?$/);
+  if (!match) return 0;
+  const weeks = Number(match[1] || 0);
+  const days = Number(match[2] || 0);
+  const hours = Number(match[3] || 0);
+  return weeks * 7 + days + (hours >= 12 ? 1 : 0);
 }
 
 function addDaysIso(iso: string, days: number): string {
@@ -57,8 +74,11 @@ function diffNights(startIso: string, endIso: string): number {
   return Math.max(0, diff);
 }
 
-function extractPhoneHint(text: string): string | undefined {
-  const phoneLabel = text.match(/(?:Phone|Mobile|Tel|WhatsApp|Contact)\s*[:=-]\s*(\+?[\d\s()-]{7,20})/i);
+function extractPhoneHint(text: string, xPhone: string): string | undefined {
+  if (xPhone.trim().length >= 6) return xPhone.trim().slice(0, 32);
+  const phoneLabel = text.match(
+    /(?:Phone|Mobile|Tel|WhatsApp|Contact\s*(?:Number|No)?)\s*[:=-]\s*(\+?[\d\s()-]{6,22})/i
+  );
   if (phoneLabel && /\d{4}/.test(phoneLabel[1])) {
     return phoneLabel[1].trim().slice(0, 32);
   }
@@ -69,10 +89,76 @@ function extractPhoneHint(text: string): string | undefined {
   return undefined;
 }
 
+function extractEmailHint(text: string, attendeeEmail: string, xEmail: string): string | undefined {
+  if (xEmail.trim().includes('@')) return xEmail.trim().toLowerCase().slice(0, 120);
+  if (attendeeEmail.trim().includes('@')) return attendeeEmail.trim().toLowerCase().slice(0, 120);
+  const match = text.match(/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/);
+  return match ? match[1].toLowerCase().slice(0, 120) : undefined;
+}
+
+function extractAdultsAndChildren(
+  text: string,
+  xAdults: string,
+  xChildren: string
+): { adults?: number; children?: number } {
+  let adults: number | undefined;
+  let children: number | undefined;
+
+  if (xAdults) {
+    const n = Number(xAdults.replace(/[^0-9]/g, ''));
+    if (Number.isFinite(n) && n >= 1 && n <= 20) adults = n;
+  }
+  if (xChildren) {
+    const n = Number(xChildren.replace(/[^0-9]/g, ''));
+    if (Number.isFinite(n) && n >= 0 && n <= 20) children = n;
+  }
+
+  if (adults === undefined) {
+    const adultsMatch = text.match(/(?:Adults?|Guests?)\s*[:=-]\s*(\d{1,2})/i);
+    if (adultsMatch) {
+      const n = Number(adultsMatch[1]);
+      if (Number.isFinite(n) && n >= 1 && n <= 20) adults = n;
+    }
+  }
+  if (children === undefined) {
+    const childMatch = text.match(/(?:Children|Child|Kids?)\s*[:=-]\s*(\d{1,2})/i);
+    if (childMatch) {
+      const n = Number(childMatch[1]);
+      if (Number.isFinite(n) && n >= 0 && n <= 20) children = n;
+    }
+  }
+  return { adults, children };
+}
+
+function extractOtaBookingRef(text: string, summary: string, xRef: string): string | undefined {
+  if (xRef.trim().length >= 4) {
+    return xRef.trim().replace(/[^A-Za-z0-9-]/g, '').toUpperCase().slice(0, 32);
+  }
+  const combined = `${summary}\n${text}`;
+  const detailCode = combined.match(/reservations\/details\/([A-Z0-9-]{5,24})/i);
+  if (detailCode) return detailCode[1].toUpperCase().slice(0, 32);
+
+  const labelCode = combined.match(
+    /(?:Confirmation\s*(?:Code|Number|No|#)?|Booking\s*(?:Ref|Reference|ID|Code)|Reservation\s*(?:Code|ID)|Ref(?:erence)?)\s*[:=#-]\s*([A-Z0-9-]{4,28})/i
+  );
+  if (labelCode) return labelCode[1].toUpperCase().slice(0, 32);
+
+  const hmMatch = combined.match(/\b(HM[A-Z0-9]{6,14})\b/i);
+  if (hmMatch) return hmMatch[1].toUpperCase().slice(0, 32);
+
+  return undefined;
+}
+
+function extractListingIdHint(text: string, xListingId: string): string | undefined {
+  if (xListingId.trim().length >= 2) return xListingId.trim().slice(0, 120);
+  const m = text.match(/(?:Listing\s*ID|Property\s*Listing\s*ID|Property\s*ID|Hotel\s*ID)\s*[:=-]\s*([A-Za-z0-9_-]{3,80})/i);
+  return m ? m[1].trim().slice(0, 120) : undefined;
+}
+
 function isGenericRoomNoise(val: string): boolean {
   const v = val.trim();
   if (v.length < 2) return true;
-  if (/^(?:not available|unavailable|closed|blocked|reserved|confirmed|airbnb|booking\.com|vrbo|expedia)$/i.test(v)) {
+  if (/^(?:not available|unavailable|closed|blocked|reserved|confirmed|airbnb|booking\.com|vrbo|expedia|hotels\.ng)$/i.test(v)) {
     return true;
   }
   // Ignore pure reservation codes like HMA1234567 or numeric IDs
@@ -84,14 +170,18 @@ function extractRoomHint(
   summary: string,
   description: string,
   location: string,
-  calendarName: string
+  calendarName: string,
+  xRoomType: string
 ): string | undefined {
+  if (xRoomType.trim().length >= 2 && !isGenericRoomNoise(xRoomType)) {
+    return xRoomType.trim().slice(0, 64);
+  }
   const combined = `${location}\n${summary}\n${description}\n${calendarName}`;
   const rmCode = combined.match(/\b(RM-\d{1,2})\b/i);
   if (rmCode) return rmCode[1].toUpperCase();
 
   const unitMatch = combined.match(
-    /(?:Room\s*Type|Suite\s*Type|Accommodation|Unit\s*Type|Room|Suite|Unit|Listing|Apartment|Category)\s*[:#-]\s*([^\n|;,()]{2,64})/i
+    /(?:Room\s*Type|Suite\s*Type|Accommodation|Unit\s*Type|Room\s*Number|Room|Suite|Unit|Listing|Apartment|Category)\s*[:#-]\s*([^\n|;,()]{2,64})/i
   );
   if (unitMatch && !isGenericRoomNoise(unitMatch[1])) {
     return unitMatch[1].trim();
@@ -260,12 +350,27 @@ function extractAttendeeCn(propHeader: string): string {
   return candidate;
 }
 
-function extractGuestLabel(
+function extractAttendeeEmail(valuePart: string): string {
+  const clean = valuePart.replace(/^mailto:/i, '').trim();
+  return clean.includes('@') ? clean : '';
+}
+
+function splitFirstAndLastName(fullName: string): { firstName?: string; lastName?: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return {};
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' '),
+  };
+}
+
+function extractGuestNames(
   summaryRaw: string,
   descriptionRaw: string,
   attendeeCnRaw: string,
   channelName: BookingSourceOption
-): string {
+): { guestFirstName?: string; guestLastName?: string; guestName: string } {
   const summary = summaryRaw.trim();
   const desc = descriptionRaw.trim();
 
@@ -273,9 +378,15 @@ function extractGuestLabel(
   const firstMatch = desc.match(/(?:Guest\s*)?First\s*Name\s*[:=-]\s*([^\n|;,]+)/i);
   const lastMatch = desc.match(/(?:Guest\s*)?Last\s*Name\s*[:=-]\s*([^\n|;,]+)/i);
   if (firstMatch || lastMatch) {
-    const combinedName = `${firstMatch?.[1]?.trim() || ''} ${lastMatch?.[1]?.trim() || ''}`.trim();
+    const fName = firstMatch?.[1]?.trim() || '';
+    const lName = lastMatch?.[1]?.trim() || '';
+    const combinedName = `${fName} ${lName}`.trim();
     if (!isNonPersonSummaryLabel(combinedName)) {
-      return combinedName.slice(0, 110);
+      return {
+        guestFirstName: fName || undefined,
+        guestLastName: lName || undefined,
+        guestName: combinedName.slice(0, 110),
+      };
     }
   }
 
@@ -284,7 +395,9 @@ function extractGuestLabel(
     /(?:Primary\s*Guest|Guest\s*Full\s*Name|Guest\s*Name|Guest|Booker\s*Name|Booker|Customer\s*Name|Customer|Traveler\s*Name|Traveler|Booked\s*By|Reservation\s*For|Full\s*Name|Name)\s*[:=-]\s*([^\n|;]+)/i
   );
   if (guestLine && !isNonPersonSummaryLabel(guestLine[1])) {
-    return guestLine[1].replace(/\s*\([^)]*\)\s*$/, '').trim().slice(0, 110);
+    const clean = guestLine[1].replace(/\s*\([^)]*\)\s*$/, '').trim().slice(0, 110);
+    const split = splitFirstAndLastName(clean);
+    return { guestFirstName: split.firstName, guestLastName: split.lastName, guestName: clean };
   }
 
   // 3. Check SUMMARY splits like "Reserved (RM-1) - John Doe", "CLOSED - Jane Smith", "Airbnb - Ada Bello"
@@ -292,7 +405,9 @@ function extractGuestLabel(
     /^(?:Reserved|Reservation|Booked|Booking|CLOSED|Blocked|Not\s*available|Airbnb|Booking\.com|VRBO|Expedia|Hotels\.ng)\s*(?:\([^)]+\))?\s*[-–:]\s*(.+)$/i
   );
   if (prefixDashSplit && !isNonPersonSummaryLabel(prefixDashSplit[1])) {
-    return prefixDashSplit[1].replace(/\s*\([^)]*\)\s*$/, '').trim().slice(0, 110);
+    const clean = prefixDashSplit[1].replace(/\s*\([^)]*\)\s*$/, '').trim().slice(0, 110);
+    const split = splitFirstAndLastName(clean);
+    return { guestFirstName: split.firstName, guestLastName: split.lastName, guestName: clean };
   }
 
   // 4. Check "Booking for Jane Smith" / "Reservation for John Doe" in summary or description
@@ -300,18 +415,24 @@ function extractGuestLabel(
     /(?:Booking|Reservation|Stay)\s+for\s+([A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){0,3})/i
   );
   if (forMatch && !isNonPersonSummaryLabel(forMatch[1])) {
-    return forMatch[1].trim().slice(0, 110);
+    const clean = forMatch[1].trim().slice(0, 110);
+    const split = splitFirstAndLastName(clean);
+    return { guestFirstName: split.firstName, guestLastName: split.lastName, guestName: clean };
   }
 
   // 5. Check ATTENDEE / ORGANIZER CN header
   if (attendeeCnRaw && !isNonPersonSummaryLabel(attendeeCnRaw)) {
-    return attendeeCnRaw.slice(0, 110);
+    const clean = attendeeCnRaw.slice(0, 110);
+    const split = splitFirstAndLastName(clean);
+    return { guestFirstName: split.firstName, guestLastName: split.lastName, guestName: clean };
   }
 
   // 6. Check if summary itself is a guest name (e.g. "Jane Smith (RM-2)" or "Jane Smith")
   const strippedSummary = summary.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
   if (strippedSummary && !isNonPersonSummaryLabel(strippedSummary)) {
-    return strippedSummary.slice(0, 110);
+    const clean = strippedSummary.slice(0, 110);
+    const split = splitFirstAndLastName(clean);
+    return { guestFirstName: split.firstName, guestLastName: split.lastName, guestName: clean };
   }
 
   // 7. Confirmation code fallback
@@ -319,14 +440,14 @@ function extractGuestLabel(
     desc.match(/reservations\/details\/([A-Z0-9]+)/i) ||
     desc.match(/Ref(?:erence)?[:#\s]+([A-Z0-9-]{4,20})/i);
   if (codeMatch) {
-    return `${channelName} Guest (${codeMatch[1]})`.slice(0, 110);
+    return { guestName: `${channelName} Guest (${codeMatch[1]})`.slice(0, 110) };
   }
 
   if (/not available|closed|blocked/i.test(summary)) {
-    return `${channelName} Reservation`;
+    return { guestName: `${channelName} Reservation` };
   }
 
-  return `${channelName} Guest`;
+  return { guestName: `${channelName} Guest` };
 }
 
 export function parseIcalEvents(
@@ -337,18 +458,28 @@ export function parseIcalEvents(
   const events: ParsedIcalEvent[] = [];
 
   let calendarName = '';
+  let calendarMethod = '';
   let inEvent = false;
   let uid = '';
   let dtStart = '';
   let dtEnd = '';
+  let duration = '';
   let summary = '';
   let description = '';
   let location = '';
   let status = '';
   let attendeeCn = '';
+  let attendeeEmail = '';
   let xRate = '';
   let xTotal = '';
   let xCurrency = '';
+  let xRoomType = '';
+  let xAdults = '';
+  let xChildren = '';
+  let xPhone = '';
+  let xEmail = '';
+  let xBookingRef = '';
+  let xListingId = '';
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -359,14 +490,23 @@ export function parseIcalEvents(
       uid = '';
       dtStart = '';
       dtEnd = '';
+      duration = '';
       summary = '';
       description = '';
       location = '';
       status = '';
       attendeeCn = '';
+      attendeeEmail = '';
       xRate = '';
       xTotal = '';
       xCurrency = '';
+      xRoomType = '';
+      xAdults = '';
+      xChildren = '';
+      xPhone = '';
+      xEmail = '';
+      xBookingRef = '';
+      xListingId = '';
       continue;
     }
 
@@ -375,6 +515,10 @@ export function parseIcalEvents(
         const checkIn = parseIcalDateToIso(dtStart);
         let checkOut = dtEnd ? parseIcalDateToIso(dtEnd) : null;
         if (checkIn) {
+          if ((!checkOut || checkOut <= checkIn) && duration) {
+            const durDays = parseIcalDurationDays(duration);
+            if (durDays > 0) checkOut = addDaysIso(checkIn, durDays);
+          }
           if (!checkOut || checkOut <= checkIn) {
             checkOut = addDaysIso(checkIn, 1);
           }
@@ -393,21 +537,35 @@ export function parseIcalEvents(
             xCurrency,
             nights
           );
+          const guestNames = extractGuestNames(cleanSummary, cleanDesc, attendeeCn, channelName);
+          const combinedText = `${cleanSummary}\n${cleanDesc}`;
+          const occupancy = extractAdultsAndChildren(combinedText, xAdults, xChildren);
+          const isCancelled =
+            status.trim().toUpperCase() === 'CANCELLED' ||
+            calendarMethod.trim().toUpperCase() === 'CANCEL' ||
+            /^cancelled\b/i.test(cleanSummary);
 
           events.push({
             uid: stableUid.slice(0, 155),
             checkInDate: checkIn,
             checkOutDate: checkOut,
             nights,
-            guestName: extractGuestLabel(cleanSummary, cleanDesc, attendeeCn, channelName),
-            guestPhone: extractPhoneHint(cleanDesc),
+            guestFirstName: guestNames.guestFirstName,
+            guestLastName: guestNames.guestLastName,
+            guestName: guestNames.guestName,
+            guestPhone: extractPhoneHint(cleanDesc, xPhone),
+            guestEmail: extractEmailHint(cleanDesc, attendeeEmail, xEmail),
+            adults: occupancy.adults,
+            children: occupancy.children,
+            otaBookingRef: extractOtaBookingRef(cleanDesc, cleanSummary, xBookingRef),
+            listingIdHint: extractListingIdHint(combinedText, xListingId),
             summary: cleanSummary,
             description: cleanDesc,
             location: cleanLocation,
             calendarName: cleanCalName || undefined,
-            roomHint: extractRoomHint(cleanSummary, cleanDesc, cleanLocation, cleanCalName),
+            roomHint: extractRoomHint(cleanSummary, cleanDesc, cleanLocation, cleanCalName, xRoomType),
             ...priceInfo,
-            cancelled: status.toUpperCase() === 'CANCELLED',
+            cancelled: isCancelled,
           });
         }
       }
@@ -426,6 +584,8 @@ export function parseIcalEvents(
     if (!inEvent) {
       if (propName === 'X-WR-CALNAME') {
         calendarName = valuePart;
+      } else if (propName === 'METHOD') {
+        calendarMethod = valuePart;
       }
       continue;
     }
@@ -433,12 +593,14 @@ export function parseIcalEvents(
     if (propName === 'UID') uid = valuePart;
     else if (propName === 'DTSTART') dtStart = valuePart;
     else if (propName === 'DTEND') dtEnd = valuePart;
+    else if (propName === 'DURATION') duration = valuePart;
     else if (propName === 'SUMMARY') summary = valuePart;
     else if (propName === 'DESCRIPTION') description = valuePart;
     else if (propName === 'LOCATION') location = valuePart;
     else if (propName === 'STATUS') status = valuePart;
-    else if ((propName === 'ATTENDEE' || propName === 'ORGANIZER') && !attendeeCn) {
-      attendeeCn = extractAttendeeCn(propPart);
+    else if (propName === 'ATTENDEE' || propName === 'ORGANIZER') {
+      if (!attendeeCn) attendeeCn = extractAttendeeCn(propPart);
+      if (!attendeeEmail) attendeeEmail = extractAttendeeEmail(valuePart);
     } else if (propName === 'X-TOTAL' || propName === 'X-TOTAL-AMOUNT') {
       xTotal = valuePart;
     } else if (
@@ -450,6 +612,20 @@ export function parseIcalEvents(
       xRate = valuePart;
     } else if (propName === 'X-CURRENCY') {
       xCurrency = valuePart;
+    } else if (propName === 'X-ROOM-TYPE' || propName === 'X-ROOM') {
+      xRoomType = valuePart;
+    } else if (propName === 'X-ADULTS') {
+      xAdults = valuePart;
+    } else if (propName === 'X-CHILDREN') {
+      xChildren = valuePart;
+    } else if (propName === 'X-GUEST-PHONE') {
+      xPhone = valuePart;
+    } else if (propName === 'X-GUEST-EMAIL') {
+      xEmail = valuePart;
+    } else if (propName === 'X-BOOKING-REF') {
+      xBookingRef = valuePart;
+    } else if (propName === 'X-LISTING-ID') {
+      xListingId = valuePart;
     }
   }
 

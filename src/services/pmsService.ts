@@ -2681,6 +2681,68 @@ function datesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string
   return aStart < bEnd && bStart < aEnd;
 }
 
+function normalizeIcalUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const converted = trimmed.replace(/^webcals?:\/\//i, 'https://');
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(converted) ? converted : `https://${converted}`;
+}
+
+async function fetchRemoteIcsFeed(rawImportUrl: string, channelName: string): Promise<string> {
+  const normalizedUrl = normalizeIcalUrl(rawImportUrl);
+  if (!normalizedUrl) {
+    throw new Error(
+      `No inbound .ics calendar link is saved for ${channelName}. Paste your property OTA .ics link or upload a .ics file.`
+    );
+  }
+
+  let proxyErrorMsg = '';
+  try {
+    const resp = await fetch(`/api/ical-proxy?url=${encodeURIComponent(normalizedUrl)}`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+    if (resp.ok) {
+      const text = (await resp.text()).replace(/^\uFEFF/, '');
+      if (/begin:vcalendar/i.test(text)) {
+        return text;
+      }
+      proxyErrorMsg = 'Calendar endpoint did not return an .ics calendar feed.';
+    } else {
+      proxyErrorMsg = `Calendar sync failed (HTTP ${resp.status}).`;
+      try {
+        const json = (await resp.json()) as { error?: string };
+        if (json.error) proxyErrorMsg = json.error;
+      } catch {
+        // ignore non-JSON error
+      }
+    }
+  } catch (err) {
+    proxyErrorMsg = err instanceof Error ? err.message : 'Unable to reach calendar sync proxy.';
+  }
+
+  // Fallback: direct CORS-enabled fetch if host does not mount /api/ical-proxy
+  try {
+    const directResp = await fetch(normalizedUrl, {
+      method: 'GET',
+      headers: { Accept: 'text/calendar, text/plain, */*' },
+    });
+    if (directResp.ok) {
+      const directText = (await directResp.text()).replace(/^\uFEFF/, '');
+      if (/begin:vcalendar/i.test(directText)) {
+        return directText;
+      }
+    }
+  } catch {
+    // Browser CORS blocked direct fetch; surface the proxy error below
+  }
+
+  throw new Error(
+    proxyErrorMsg ||
+      `Unable to fetch valid iCalendar (.ics) data for ${channelName}. Verify the link or upload the .ics file directly.`
+  );
+}
+
 export async function syncOtaChannelWorkflow(params: {
   property: PropertyRecord;
   channel: OtaIntegrationRecord;
@@ -2719,28 +2781,21 @@ export async function syncOtaChannelWorkflow(params: {
   }
 
   // Real OTA .ics fetch via server/Edge proxy or uploaded .ics text
-  let rawIcs = params.icsRawText?.trim() || '';
-  if (!rawIcs) {
+  let rawIcs = (params.icsRawText || '').replace(/^\uFEFF/, '').trim();
+  if (rawIcs) {
+    if (!/begin:vcalendar/i.test(rawIcs)) {
+      throw new Error(
+        `The uploaded file for ${params.channel.channelName} is not a valid iCalendar (.ics) file.`
+      );
+    }
+  } else {
     const importUrl = params.channel.icalImportUrl?.trim();
     if (!importUrl) {
       throw new Error(
         `No inbound .ics calendar link is saved for ${params.channel.channelName}. Paste your property OTA .ics link or upload a .ics file.`
       );
     }
-    const resp = await fetch(`/api/ical-proxy?url=${encodeURIComponent(importUrl)}`, {
-      method: 'GET',
-    });
-    if (!resp.ok) {
-      let errMsg = `Calendar sync failed (HTTP ${resp.status}).`;
-      try {
-        const json = (await resp.json()) as { error?: string };
-        if (json.error) errMsg = json.error;
-      } catch {
-        // ignore non-JSON error
-      }
-      throw new Error(errMsg);
-    }
-    rawIcs = await resp.text();
+    rawIcs = await fetchRemoteIcsFeed(importUrl, params.channel.channelName);
   }
 
   const resolvedChannelSource =
@@ -2750,8 +2805,8 @@ export async function syncOtaChannelWorkflow(params: {
 
   const parsedEvents = parseIcalEvents(rawIcs, resolvedChannelSource);
 
-  // Load current rooms & reservations if not provided
-  let roomList = params.rooms || [];
+  // Load current rooms, reservations & guests fresh when not supplied
+  let roomList = params.rooms ? params.rooms.map((r) => ({ ...r })) : [];
   if (roomList.length === 0) {
     const roomsSnap = await getDocs(collection(db, 'properties', params.property.id, 'rooms'));
     roomList = roomsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RoomRecord, 'id'>) }));
@@ -2761,7 +2816,7 @@ export async function syncOtaChannelWorkflow(params: {
     throw new Error('No rooms exist in this property to assign imported OTA bookings.');
   }
 
-  let existingReservations = params.reservations || [];
+  let existingReservations = params.reservations ? [...params.reservations] : [];
   if (existingReservations.length === 0) {
     const resSnap = await getDocs(
       collection(db, 'properties', params.property.id, 'reservations')
@@ -2772,12 +2827,33 @@ export async function syncOtaChannelWorkflow(params: {
     }));
   }
 
+  const guestsSnap = await getDocs(collection(db, 'properties', params.property.id, 'guests'));
+  const existingGuests: GuestRecord[] = guestsSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<GuestRecord, 'id'>),
+  }));
+
+  const guestByEmail = new Map<string, GuestRecord>();
+  const guestByPhone = new Map<string, GuestRecord>();
+  const guestByName = new Map<string, GuestRecord>();
+  for (const g of existingGuests) {
+    if (g.email && g.email.trim()) guestByEmail.set(g.email.trim().toLowerCase(), g);
+    if (g.phone && g.phone.trim() && g.phone !== 'Not Provided') {
+      guestByPhone.set(g.phone.replace(/\s+/g, ''), g);
+    }
+    if (g.fullName && g.fullName.trim()) guestByName.set(g.fullName.trim().toLowerCase(), g);
+  }
+
   const byId = new Map<string, ReservationRecord>();
   const byExternalUid = new Map<string, ReservationRecord>();
+  const byBookingRef = new Map<string, ReservationRecord>();
   for (const r of existingReservations) {
     byId.set(r.id, r);
     if (r.externalUid) {
       byExternalUid.set(`${r.channel}::${r.externalUid}`, r);
+    }
+    if (r.bookingRef) {
+      byBookingRef.set(`${r.channel}::${r.bookingRef.toUpperCase()}`, r);
     }
   }
 
@@ -2785,8 +2861,9 @@ export async function syncOtaChannelWorkflow(params: {
   const todayIso = new Date().toISOString().slice(0, 10);
 
   const normalizedMappedRoom = (params.channel.roomNumber || '').trim();
-  const isSpecificMappedSuite =
+  const isSpecificMappedRoom =
     Boolean(normalizedMappedRoom) &&
+    normalizedMappedRoom.toLowerCase() !== 'all rooms' &&
     normalizedMappedRoom.toLowerCase() !== 'all suites' &&
     normalizedMappedRoom.toLowerCase() !== 'all';
 
@@ -2822,7 +2899,7 @@ export async function syncOtaChannelWorkflow(params: {
     return [];
   };
 
-  const mappedRoomsFromChannel = isSpecificMappedSuite
+  const mappedRoomsFromChannel = isSpecificMappedRoom
     ? roomList.filter((r) => r.roomNumber.trim().toLowerCase() === normalizedMappedRoom.toLowerCase())
     : [];
 
@@ -2837,6 +2914,7 @@ export async function syncOtaChannelWorkflow(params: {
       ev.calendarName,
       ev.summary,
       ev.description,
+      ev.listingIdHint,
       params.channel.propertyListingId,
     ];
     let matchedPool: RoomRecord[] = [];
@@ -2866,7 +2944,7 @@ export async function syncOtaChannelWorkflow(params: {
       return freeMatch || matchedPool[0];
     }
 
-    // When unmapped (All Suites & no room hint), prefer an existing room type offset per channel so Airbnb and Booking.com do not pile onto roomList[0]
+    // When unmapped (All Rooms & no room hint), spread channels deterministically across available rooms
     let channelHash = 0;
     for (let i = 0; i < params.channel.id.length; i++) {
       channelHash = (channelHash * 31 + params.channel.id.charCodeAt(i)) >>> 0;
@@ -2944,8 +3022,77 @@ export async function syncOtaChannelWorkflow(params: {
   let cancelled = 0;
   let skipped = 0;
 
-  const batch = writeBatch(db);
+  type QueuedWrite =
+    | { kind: 'set'; ref: ReturnType<typeof doc>; data: Record<string, unknown> }
+    | { kind: 'update'; ref: ReturnType<typeof doc>; data: Record<string, unknown> };
+  const writes: QueuedWrite[] = [];
   const now = serverTimestamp();
+
+  const ensureGuestForEvent = (ev: ParsedIcalEvent, chargeNgn: number): string | undefined => {
+    const safeName = (ev.guestName || `${resolvedChannelSource} Guest`).trim().slice(0, 120);
+    if (safeName.length < 2) return undefined;
+
+    const emailKey = ev.guestEmail?.trim().toLowerCase() || '';
+    const phoneRaw = ev.guestPhone?.trim().slice(0, 32) || '';
+    const phoneKey = phoneRaw.replace(/\s+/g, '');
+    const nameKey = safeName.toLowerCase();
+
+    const matched =
+      (emailKey && guestByEmail.get(emailKey)) ||
+      (phoneKey.length >= 6 && guestByPhone.get(phoneKey)) ||
+      guestByName.get(nameKey);
+
+    if (matched) {
+      const updates: Record<string, unknown> = {};
+      if (emailKey && (!matched.email || matched.email !== emailKey)) {
+        updates.email = emailKey;
+        matched.email = emailKey;
+        guestByEmail.set(emailKey, matched);
+      }
+      if (phoneRaw.length >= 6 && (matched.phone === 'Not Provided' || !matched.phone)) {
+        updates.phone = phoneRaw;
+        matched.phone = phoneRaw;
+        guestByPhone.set(phoneKey, matched);
+      }
+      if (Object.keys(updates).length > 0) {
+        writes.push({
+          kind: 'update',
+          ref: doc(db, 'properties', params.property.id, 'guests', matched.id),
+          data: { ...updates, updatedAt: now },
+        });
+      }
+      return matched.id;
+    }
+
+    const guestId = cleanId('gst');
+    const validPhone = phoneRaw.length >= 6 ? phoneRaw : 'Not Provided';
+    const newGuest: Omit<GuestRecord, 'id'> & Record<string, unknown> = {
+      propertyId: params.property.id,
+      fullName: safeName,
+      ...(emailKey ? { email: emailKey } : {}),
+      phone: validPhone,
+      idType: 'International Passport',
+      vipTier: 'Standard',
+      totalStays: 1,
+      lifetimeSpendNgn: Math.max(0, chargeNgn),
+      notes: `Synced from ${resolvedChannelSource} iCal`.slice(0, 400),
+      authorizedEmails: params.property.authorizedEmails,
+      ownerUid: uid,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    writes.push({
+      kind: 'set',
+      ref: doc(db, 'properties', params.property.id, 'guests', guestId),
+      data: newGuest,
+    });
+    const cachedGuest: GuestRecord = { id: guestId, ...(newGuest as Omit<GuestRecord, 'id'>) };
+    if (emailKey) guestByEmail.set(emailKey, cachedGuest);
+    if (validPhone !== 'Not Provided') guestByPhone.set(validPhone.replace(/\s+/g, ''), cachedGuest);
+    guestByName.set(nameKey, cachedGuest);
+    return guestId;
+  };
 
   for (const ev of parsedEvents) {
     // Ignore events exported by this property's own PMS feed to avoid circular duplicates
@@ -2957,72 +3104,143 @@ export async function syncOtaChannelWorkflow(params: {
     const deterministicId = deterministicOtaReservationId(params.channel.id, ev.uid);
     const existing =
       byId.get(deterministicId) ||
-      byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`);
+      byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`) ||
+      (ev.otaBookingRef
+        ? byBookingRef.get(`${resolvedChannelSource}::${ev.otaBookingRef.toUpperCase()}`)
+        : undefined);
+
+    const safeGuestName = (ev.guestName || `${resolvedChannelSource} Guest`).trim().slice(0, 120);
+    const safeAdults = Math.max(1, Math.min(20, ev.adults ?? 2));
+    const safeChildren = Math.max(0, Math.min(20, ev.children ?? 0));
+    const safeBookingRef =
+      ev.otaBookingRef && ev.otaBookingRef.length >= 4
+        ? ev.otaBookingRef.slice(0, 32)
+        : `OTA-${deterministicId.slice(4, 10).toUpperCase()}`;
 
     if (existing) {
-      if (
-        existing.status === 'checked_out' ||
-        existing.status === 'checked_in' ||
-        existing.status === 'no_show'
-      ) {
+      if (existing.status === 'checked_out' || existing.status === 'no_show') {
         skipped += 1;
         continue;
       }
 
-      if (ev.cancelled && existing.status !== 'cancelled') {
-        const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
-        batch.update(resRef, {
-          status: 'cancelled',
-          updatedAt: now,
-        });
-        cancelled += 1;
+      if (ev.cancelled) {
+        if (existing.status !== 'cancelled') {
+          const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
+          writes.push({
+            kind: 'update',
+            ref: resRef,
+            data: {
+              status: 'cancelled',
+              cancellationType: 'free',
+              cancellationFeeNgn: 0,
+              cancellationReason: `Cancelled via ${resolvedChannelSource} iCal sync`,
+              cancelledAtIso: new Date().toISOString(),
+              updatedAt: now,
+            },
+          });
+          const heldRoom = roomList.find((r) => r.currentReservationId === existing.id);
+          if (heldRoom && heldRoom.occupancyStatus === 'reserved') {
+            writes.push({
+              kind: 'update',
+              ref: doc(db, 'properties', params.property.id, 'rooms', heldRoom.id),
+              data: {
+                occupancyStatus: 'vacant',
+                currentGuestName: '',
+                currentReservationId: '',
+                updatedAt: now,
+              },
+            });
+            heldRoom.occupancyStatus = 'vacant';
+            heldRoom.currentGuestName = '';
+            heldRoom.currentReservationId = '';
+          }
+          existing.status = 'cancelled';
+          cancelled += 1;
+        } else {
+          skipped += 1;
+        }
         continue;
       }
 
-      if (!ev.cancelled) {
-        const assignedRoom = pickRoomForEvent(ev, existing.id);
-        const pricing = resolveChannelPricing(ev, assignedRoom);
-        const needsUpdate =
-          existing.checkInDate !== ev.checkInDate ||
-          existing.checkOutDate !== ev.checkOutDate ||
-          existing.nights !== ev.nights ||
-          existing.guestName !== ev.guestName ||
-          (ev.guestPhone && existing.guestPhone !== ev.guestPhone) ||
-          existing.roomId !== assignedRoom.id ||
-          existing.roomNumber !== assignedRoom.roomNumber ||
-          (existing.requestedRoomType || '') !== assignedRoom.roomType ||
-          existing.nightlyRateNgn !== pricing.nightlyRateNgn ||
-          existing.roomChargesNgn !== pricing.roomChargesNgn ||
-          (existing.sourceCurrency || 'NGN') !== pricing.sourceCurrency ||
-          (existing.sourceNightlyRate ?? 0) !== pricing.sourceNightlyRate ||
-          (existing.sourceTotalAmount ?? 0) !== pricing.sourceTotalAmount ||
-          (existing.fxRateToNgn ?? 1) !== pricing.fxRateToNgn;
+      const assignedRoom =
+        existing.status === 'checked_in'
+          ? roomList.find((r) => r.id === existing.roomId) || pickRoomForEvent(ev, existing.id)
+          : pickRoomForEvent(ev, existing.id);
+      const pricing = resolveChannelPricing(ev, assignedRoom);
+      const linkedGuestId = existing.guestId || ensureGuestForEvent(ev, pricing.roomChargesNgn);
+      const nextAdults = Math.max(
+        1,
+        Math.min(20, ev.adults ?? existing.adults ?? Math.min(2, assignedRoom.maxGuests || 2))
+      );
+      const nextChildren = Math.max(0, Math.min(20, ev.children ?? existing.children ?? 0));
+      const targetBookingRef =
+        ev.otaBookingRef && ev.otaBookingRef.length >= 4
+          ? ev.otaBookingRef.slice(0, 32)
+          : existing.bookingRef;
+      const targetStatus = existing.status === 'cancelled' ? 'confirmed' : existing.status;
 
-        if (needsUpdate) {
-          const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
-          batch.update(resRef, {
+      const needsUpdate =
+        existing.checkInDate !== ev.checkInDate ||
+        existing.checkOutDate !== ev.checkOutDate ||
+        existing.nights !== ev.nights ||
+        existing.guestName !== safeGuestName ||
+        (ev.guestPhone && existing.guestPhone !== ev.guestPhone) ||
+        (linkedGuestId && existing.guestId !== linkedGuestId) ||
+        existing.bookingRef !== targetBookingRef ||
+        existing.adults !== nextAdults ||
+        (existing.children ?? 0) !== nextChildren ||
+        existing.roomId !== assignedRoom.id ||
+        existing.roomNumber !== assignedRoom.roomNumber ||
+        (existing.requestedRoomType || '') !== assignedRoom.roomType.slice(0, 64) ||
+        existing.nightlyRateNgn !== pricing.nightlyRateNgn ||
+        existing.roomChargesNgn !== pricing.roomChargesNgn ||
+        (existing.sourceCurrency || 'NGN') !== pricing.sourceCurrency ||
+        (existing.sourceNightlyRate ?? 0) !== pricing.sourceNightlyRate ||
+        (existing.sourceTotalAmount ?? 0) !== pricing.sourceTotalAmount ||
+        (existing.fxRateToNgn ?? 1) !== pricing.fxRateToNgn ||
+        existing.status !== targetStatus;
+
+      if (needsUpdate) {
+        const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
+        writes.push({
+          kind: 'update',
+          ref: resRef,
+          data: {
+            bookingRef: targetBookingRef,
+            ...(linkedGuestId ? { guestId: linkedGuestId } : {}),
             roomId: assignedRoom.id,
             roomNumber: assignedRoom.roomNumber,
-            requestedRoomType: assignedRoom.roomType,
+            requestedRoomType: assignedRoom.roomType.slice(0, 64),
             checkInDate: ev.checkInDate,
             checkOutDate: ev.checkOutDate,
             nights: ev.nights,
-            guestName: ev.guestName,
-            ...(ev.guestPhone ? { guestPhone: ev.guestPhone } : {}),
+            adults: nextAdults,
+            children: nextChildren,
+            guestName: safeGuestName,
+            ...(ev.guestPhone ? { guestPhone: ev.guestPhone.slice(0, 32) } : {}),
             nightlyRateNgn: pricing.nightlyRateNgn,
             roomChargesNgn: pricing.roomChargesNgn,
             sourceCurrency: pricing.sourceCurrency,
             sourceNightlyRate: pricing.sourceNightlyRate,
             sourceTotalAmount: pricing.sourceTotalAmount,
             fxRateToNgn: pricing.fxRateToNgn,
+            status: targetStatus,
             updatedAt: now,
-          });
-          updated += 1;
-          continue;
-        }
-      }
+          },
+        });
 
-      skipped += 1;
+        existing.bookingRef = targetBookingRef;
+        existing.roomId = assignedRoom.id;
+        existing.roomNumber = assignedRoom.roomNumber;
+        existing.checkInDate = ev.checkInDate;
+        existing.checkOutDate = ev.checkOutDate;
+        existing.nights = ev.nights;
+        existing.guestName = safeGuestName;
+        existing.status = targetStatus;
+        updated += 1;
+      } else {
+        skipped += 1;
+      }
       continue;
     }
 
@@ -3034,7 +3252,7 @@ export async function syncOtaChannelWorkflow(params: {
 
     const assignedRoom = pickRoomForEvent(ev);
     const pricing = resolveChannelPricing(ev, assignedRoom);
-    const bookingRef = `OTA-${deterministicId.slice(4, 10).toUpperCase()}`;
+    const guestId = ensureGuestForEvent(ev, pricing.roomChargesNgn);
 
     const resRef = doc(db, 'properties', params.property.id, 'reservations', deterministicId);
     const newRecord: Omit<ReservationRecord, 'id' | 'createdAt'> & {
@@ -3042,19 +3260,20 @@ export async function syncOtaChannelWorkflow(params: {
       updatedAt: ReturnType<typeof serverTimestamp>;
     } = {
       propertyId: params.property.id,
-      bookingRef,
+      bookingRef: safeBookingRef,
       roomId: assignedRoom.id,
       roomNumber: assignedRoom.roomNumber,
-      requestedRoomType: assignedRoom.roomType,
-      guestName: ev.guestName,
-      ...(ev.guestPhone ? { guestPhone: ev.guestPhone } : {}),
+      requestedRoomType: assignedRoom.roomType.slice(0, 64),
+      ...(guestId ? { guestId } : {}),
+      guestName: safeGuestName,
+      ...(ev.guestPhone ? { guestPhone: ev.guestPhone.slice(0, 32) } : {}),
       checkInDate: ev.checkInDate,
       checkOutDate: ev.checkOutDate,
       bookedDate: todayIso,
       nights: ev.nights,
-      adults: Math.min(2, assignedRoom.maxGuests || 2),
-      children: 0,
-      channel: params.channel.channelName === 'Direct Website Engine' ? 'Direct Web' : params.channel.channelName,
+      adults: Math.max(1, Math.min(20, ev.adults ?? Math.min(2, assignedRoom.maxGuests || 2))),
+      children: safeChildren,
+      channel: resolvedChannelSource,
       nightlyRateNgn: pricing.nightlyRateNgn,
       roomChargesNgn: pricing.roomChargesNgn,
       posChargesNgn: 0,
@@ -3065,32 +3284,86 @@ export async function syncOtaChannelWorkflow(params: {
       fxRateToNgn: pricing.fxRateToNgn,
       status: 'confirmed',
       paymentMethod: 'Online Gateway',
-      externalUid: ev.uid,
+      externalUid: ev.uid.slice(0, 160),
       authorizedEmails: params.property.authorizedEmails,
       ownerUid: uid,
       createdAt: now,
       updatedAt: now,
     };
 
-    batch.set(resRef, newRecord);
-    existingReservations.push({ id: deterministicId, ...(newRecord as Omit<ReservationRecord, 'id'>) });
+    writes.push({
+      kind: 'set',
+      ref: resRef,
+      data: newRecord as Record<string, unknown>,
+    });
+
+    // Mark vacant room as reserved when stay covers today
+    if (
+      ev.checkInDate <= todayIso &&
+      ev.checkOutDate > todayIso &&
+      assignedRoom.occupancyStatus === 'vacant'
+    ) {
+      writes.push({
+        kind: 'update',
+        ref: doc(db, 'properties', params.property.id, 'rooms', assignedRoom.id),
+        data: {
+          occupancyStatus: 'reserved',
+          currentGuestName: safeGuestName,
+          currentReservationId: deterministicId,
+          updatedAt: now,
+        },
+      });
+      assignedRoom.occupancyStatus = 'reserved';
+      assignedRoom.currentGuestName = safeGuestName;
+      assignedRoom.currentReservationId = deterministicId;
+    }
+
+    const cachedRes: ReservationRecord = {
+      id: deterministicId,
+      ...(newRecord as Omit<ReservationRecord, 'id'>),
+    };
+    existingReservations.push(cachedRes);
+    byId.set(deterministicId, cachedRes);
+    byExternalUid.set(`${resolvedChannelSource}::${ev.uid}`, cachedRes);
     created += 1;
   }
 
-  batch.update(ref, {
-    lastSyncedIso: new Date().toISOString(),
-    bookingsImported: params.channel.bookingsImported + created,
-    updatedAt: now,
+  const totalActiveChannelBookings = existingReservations.filter(
+    (r) => r.channel === resolvedChannelSource && Boolean(r.externalUid) && r.status !== 'cancelled'
+  ).length;
+
+  writes.push({
+    kind: 'update',
+    ref,
+    data: {
+      lastSyncedIso: new Date().toISOString(),
+      bookingsImported: Math.max(totalActiveChannelBookings, params.channel.bookingsImported + created),
+      updatedAt: now,
+    },
   });
 
   try {
-    await batch.commit();
+    // Commit in chunks <= 350 to stay well under Firestore's 500-operation batch limit
+    const CHUNK_SIZE = 350;
+    for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
+      const chunk = writes.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+      for (const op of chunk) {
+        if (op.kind === 'set') {
+          batch.set(op.ref, op.data);
+        } else {
+          batch.update(op.ref, op.data);
+        }
+      }
+      await batch.commit();
+    }
+
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Synced ${params.channel.channelName}`,
-      details: `${parsedEvents.length} calendar events checked · Created: ${created} · Updated: ${updated} · Cancelled: ${cancelled} · Duplicates skipped: ${skipped}`,
+      details: `${parsedEvents.length} calendar events checked · Created: ${created} · Updated: ${updated} · Cancelled: ${cancelled} · Unchanged/Skipped: ${skipped}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -3120,17 +3393,20 @@ export async function createOtaChannelWithIcal(params: {
   const id = cleanId('ota');
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', id);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const normalizedRoom = params.roomNumber || 'All Suites';
-  const exportRoom = encodeURIComponent(normalizedRoom === 'All Suites' ? 'ALL' : normalizedRoom);
+  const rawRoom = (params.roomNumber || '').trim();
+  const normalizedRoom = !rawRoom || rawRoom.toLowerCase() === 'all suites' ? 'All Rooms' : rawRoom;
+  const exportRoom = encodeURIComponent(normalizedRoom === 'All Rooms' ? 'ALL' : normalizedRoom);
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${exportRoom}`;
+  const cleanListingId = params.propertyListingId.trim().slice(0, 120) || `ICAL-${id.slice(-5).toUpperCase()}`;
+  const cleanImportUrl = params.icalImportUrl.trim().slice(0, 2000);
 
   try {
     await setDoc(ref, {
       propertyId: params.property.id,
       channelName: params.channelName,
-      propertyListingId: params.propertyListingId.trim() || `ICAL-${id.slice(-5).toUpperCase()}`,
+      propertyListingId: cleanListingId,
       roomNumber: normalizedRoom,
-      icalImportUrl: params.icalImportUrl.trim(),
+      icalImportUrl: cleanImportUrl,
       icalExportUrl,
       commissionPct: Math.max(0, Math.min(50, params.commissionPct)),
       autoSync: params.autoSync,
@@ -3147,7 +3423,7 @@ export async function createOtaChannelWithIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Added ${params.channelName} with iCal Link`,
-      details: `${normalizedRoom} · ${params.icalImportUrl.trim() || 'Export-only feed'}`,
+      details: `${cleanListingId} · ${normalizedRoom} · ${cleanImportUrl || 'Export-only feed'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -3160,18 +3436,29 @@ export async function updateOtaChannelIcal(params: {
   channel: OtaIntegrationRecord;
   icalImportUrl: string;
   roomNumber: string;
+  propertyListingId?: string;
+  commissionPct?: number;
   actorRole: string;
 }) {
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', params.channel.id);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const normalizedRoom = params.roomNumber || 'All Suites';
-  const exportRoom = normalizedRoom === 'All Suites' ? 'ALL' : normalizedRoom;
+  const rawRoom = (params.roomNumber || '').trim();
+  const normalizedRoom = !rawRoom || rawRoom.toLowerCase() === 'all suites' ? 'All Rooms' : rawRoom;
+  const exportRoom = normalizedRoom === 'All Rooms' ? 'ALL' : normalizedRoom;
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${encodeURIComponent(exportRoom)}`;
-  const cleanImportUrl = params.icalImportUrl.trim();
+  const cleanImportUrl = params.icalImportUrl.trim().slice(0, 2000);
+  const cleanListingId =
+    params.propertyListingId !== undefined
+      ? params.propertyListingId.trim().slice(0, 120) || params.channel.propertyListingId
+      : params.channel.propertyListingId;
   const urlChanged = cleanImportUrl !== (params.channel.icalImportUrl || '').trim();
 
   try {
     await updateDoc(ref, {
+      propertyListingId: cleanListingId,
+      ...(params.commissionPct !== undefined
+        ? { commissionPct: Math.max(0, Math.min(50, params.commissionPct)) }
+        : {}),
       icalImportUrl: cleanImportUrl,
       roomNumber: normalizedRoom,
       icalExportUrl,
@@ -3182,8 +3469,8 @@ export async function updateOtaChannelIcal(params: {
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Channel Manager',
-      action: `Updated iCal Link on ${params.channel.channelName}`,
-      details: `${normalizedRoom} · ${cleanImportUrl}`,
+      action: `Updated OTA & iCal Settings on ${params.channel.channelName}`,
+      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${cleanImportUrl || 'No inbound link'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -3218,14 +3505,18 @@ export function buildPropertyIcalFeed(params: {
   blockedDates: BlockedDateRecord[];
   roomNumberFilter?: string;
 }): string {
+  const filterClean = (params.roomNumberFilter || '').trim();
   const target =
-    params.roomNumberFilter &&
-    params.roomNumberFilter !== 'ALL' &&
-    params.roomNumberFilter !== 'All Suites'
-      ? params.roomNumberFilter
+    filterClean &&
+    filterClean.toUpperCase() !== 'ALL' &&
+    filterClean.toLowerCase() !== 'all rooms' &&
+    filterClean.toLowerCase() !== 'all suites'
+      ? filterClean
       : null;
   const toIcalDate = (iso: string) => iso.replace(/-/g, '');
   const nowStamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const escapeIcal = (val: string) =>
+    val.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
 
   const lines = [
     'BEGIN:VCALENDAR',
@@ -3233,20 +3524,54 @@ export function buildPropertyIcalFeed(params: {
     'PRODID:-//Richgates Apartments//Channel Manager iCal//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    `X-WR-CALNAME:${params.propertyName}${target ? ` - ${target}` : ''}`,
+    `X-WR-CALNAME:${escapeIcal(params.propertyName)}${target ? ` - ${escapeIcal(target)}` : ''}`,
   ];
 
   for (const res of params.reservations) {
     if (res.status === 'cancelled' || res.status === 'checked_out') continue;
     if (target && res.roomNumber !== target) continue;
+
+    const nameParts = res.guestName.trim().split(/\s+/).filter(Boolean);
+    const firstName = nameParts[0] || res.guestName;
+    const lastName = nameParts.slice(1).join(' ');
+    const cur = res.sourceCurrency || 'NGN';
+    const nightly =
+      res.sourceNightlyRate && res.sourceNightlyRate > 0 ? res.sourceNightlyRate : res.nightlyRateNgn;
+    const total =
+      res.sourceTotalAmount && res.sourceTotalAmount > 0 ? res.sourceTotalAmount : res.roomChargesNgn;
+
+    const descParts = [
+      `Ref: ${res.bookingRef}`,
+      `Channel: ${res.channel}`,
+      `Room: ${res.roomNumber}`,
+      res.requestedRoomType ? `Room Type: ${res.requestedRoomType}` : '',
+      `Guest Name: ${res.guestName}`,
+      `First Name: ${firstName}`,
+      lastName ? `Last Name: ${lastName}` : '',
+      res.guestPhone ? `Phone: ${res.guestPhone}` : '',
+      `Adults: ${res.adults}`,
+      `Children: ${res.children ?? 0}`,
+      `Nightly Rate: ${cur} ${nightly}`,
+      `Total: ${cur} ${total}`,
+    ].filter(Boolean);
+
     lines.push(
       'BEGIN:VEVENT',
       `UID:${res.id}@richgates-pms`,
       `DTSTAMP:${nowStamp}`,
       `DTSTART;VALUE=DATE:${toIcalDate(res.checkInDate)}`,
       `DTEND;VALUE=DATE:${toIcalDate(res.checkOutDate)}`,
-      `SUMMARY:Reserved (${res.roomNumber}) - ${res.guestName}`,
-      `DESCRIPTION:Ref ${res.bookingRef} | Channel ${res.channel}`,
+      `SUMMARY:${escapeIcal(`Reserved (${res.roomNumber}) - ${res.guestName}`)}`,
+      `LOCATION:${escapeIcal(`${res.roomNumber}${res.requestedRoomType ? ` - ${res.requestedRoomType}` : ''} | ${params.propertyName}`)}`,
+      `DESCRIPTION:${escapeIcal(descParts.join('\n'))}`,
+      `X-BOOKING-REF:${res.bookingRef}`,
+      ...(res.requestedRoomType ? [`X-ROOM-TYPE:${escapeIcal(res.requestedRoomType)}`] : []),
+      `X-ADULTS:${res.adults}`,
+      `X-CHILDREN:${res.children ?? 0}`,
+      ...(res.guestPhone ? [`X-GUEST-PHONE:${escapeIcal(res.guestPhone)}`] : []),
+      `X-CURRENCY:${cur}`,
+      `X-NIGHTLY-RATE:${nightly}`,
+      `X-TOTAL-AMOUNT:${total}`,
       'STATUS:CONFIRMED',
       'END:VEVENT'
     );
@@ -3260,8 +3585,9 @@ export function buildPropertyIcalFeed(params: {
       `DTSTAMP:${nowStamp}`,
       `DTSTART;VALUE=DATE:${toIcalDate(blk.startDate)}`,
       `DTEND;VALUE=DATE:${toIcalDate(blk.endDate)}`,
-      `SUMMARY:Blocked (${blk.roomNumber}) - ${blk.category}`,
-      `DESCRIPTION:${blk.reason}`,
+      `SUMMARY:${escapeIcal(`Blocked (${blk.roomNumber}) - ${blk.category}`)}`,
+      `LOCATION:${escapeIcal(`${blk.roomNumber} | ${params.propertyName}`)}`,
+      `DESCRIPTION:${escapeIcal(blk.reason)}`,
       'STATUS:CONFIRMED',
       'END:VEVENT'
     );

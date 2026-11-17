@@ -1610,7 +1610,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                 onChange={(e) => setBookingRoomFilter(e.target.value)}
                 className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700"
               >
-                <option value="ALL">All Suites</option>
+                <option value="ALL">All Rooms</option>
                 {sortedRoomsList.map((rm) => (
                   <option key={rm.id} value={rm.roomNumber}>
                     {rm.roomNumber} · {rm.roomType}

@@ -162,7 +162,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <div
       className={`${
         isCollapsed ? 'w-[76px]' : 'w-64'
-      } bg-white text-[#0B245B] flex flex-col shrink-0 border-r border-slate-200 h-full transition-all duration-200`}
+      } bg-white text-[#061539] flex flex-col shrink-0 border-r border-slate-200 h-full transition-all duration-200`}
     >
       {/* Top Header: Brand / Property Name + Collapse Toggle */}
       <div
@@ -172,7 +172,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       >
         {!isCollapsed && (
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-lg bg-[#0B245B] text-white flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-lg bg-[#061539] text-white flex items-center justify-center shrink-0">
               {portalMode === 'pch-admin' ? (
                 <ShieldCheck className="w-4 h-4 text-amber-300" />
               ) : (
@@ -180,10 +180,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
             <div className="min-w-0">
-              <span className="font-display text-sm font-bold tracking-tight text-[#0B245B] block truncate">
+              <span className="font-display text-sm font-extrabold tracking-tight text-[#061539] block truncate">
                 {portalMode === 'pch-admin' ? cms.brand.pchPortalName : propertyName}
               </span>
-              <p className="text-[11px] font-medium text-[#1c46be]/80 truncate">
+              <p className="text-[11px] font-bold text-[#0c2b70] truncate">
                 {portalMode === 'pch-admin'
                   ? cms.brand.pchRoleSubtitle
                   : portalMode === 'richgates-admin'
@@ -200,7 +200,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               type="button"
               onClick={onOpenPortalLinksModal}
               title="Portal Login Links & Switcher"
-              className="p-1.5 rounded-lg text-[#1c46be] hover:bg-blue-50 transition-colors cursor-pointer"
+              className="p-1.5 rounded-lg text-[#061539] hover:bg-blue-50 transition-colors cursor-pointer"
             >
               <Link2 className="w-4 h-4" />
             </button>
@@ -212,7 +212,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => setCollapsed((v) => !v)}
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="hidden lg:inline-flex p-1.5 rounded-lg text-[#0B245B] hover:bg-blue-50 hover:text-[#1c46be] transition-colors cursor-pointer"
+            className="hidden lg:inline-flex p-1.5 rounded-lg text-[#061539] hover:bg-blue-50 hover:text-[#1c46be] transition-colors cursor-pointer"
           >
             {isCollapsed ? (
               <PanelLeftOpen className="w-4 h-4" />
@@ -225,7 +225,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onCloseMobile}
-            className="lg:hidden p-1.5 rounded-lg text-[#0B245B] hover:bg-blue-50"
+            className="lg:hidden p-1.5 rounded-lg text-[#061539] hover:bg-blue-50"
             aria-label="Close navigation menu"
           >
             <X className="w-4 h-4" />
@@ -241,11 +241,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return (
             <div key={group.group} className="space-y-1">
               {!isCollapsed ? (
-                <p className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-[#1c46be]/60">
+                <p className="px-2.5 text-[10px] font-extrabold uppercase tracking-wider text-[#061539]">
                   {group.group}
                 </p>
               ) : (
-                <div className="mx-2 border-t border-slate-100 my-1.5" />
+                <div className="mx-2 border-t border-slate-200 my-1.5" />
               )}
 
               {visibleItems.map((item) => {
@@ -265,8 +265,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2 px-2.5 py-2'
                     } rounded-lg text-xs transition-colors whitespace-nowrap cursor-pointer ${
                       isActive
-                        ? 'bg-[#0B245B] text-white font-semibold'
-                        : 'text-[#0B245B] hover:bg-blue-50 hover:text-[#1c46be] font-medium'
+                        ? 'bg-[#061539] text-white font-bold shadow-xs'
+                        : 'text-[#061539] hover:bg-blue-50 hover:text-[#041438] font-bold'
                     }`}
                   >
                     <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
@@ -277,7 +277,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {showUnread && !isCollapsed && (
                       <span
                         className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
-                          isActive ? 'bg-white text-[#0B245B]' : 'bg-[#1c46be] text-white'
+                          isActive ? 'bg-white text-[#061539]' : 'bg-[#061539] text-white'
                         }`}
                       >
                         {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
@@ -307,7 +307,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }}
             className={`w-full flex items-center justify-center gap-2 ${
               isCollapsed ? 'p-2' : 'px-3 py-2'
-            } rounded-lg border border-blue-200 bg-white hover:bg-blue-50 text-xs font-semibold text-[#1c46be] transition-colors cursor-pointer`}
+            } rounded-lg border border-slate-300 bg-white hover:bg-blue-50 text-xs font-bold text-[#061539] transition-colors cursor-pointer`}
           >
             <ClipboardList className="w-3.5 h-3.5 shrink-0" />
             {!isCollapsed && <span>Portal Links &amp; Switch</span>}
@@ -328,7 +328,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }}
             className={`w-full flex items-center justify-center gap-2 ${
               isCollapsed ? 'p-2' : 'px-3 py-2'
-            } rounded-lg border border-blue-200 bg-white hover:bg-blue-50 text-xs font-semibold text-[#1c46be] transition-colors cursor-pointer`}
+            } rounded-lg border border-slate-300 bg-white hover:bg-blue-50 text-xs font-bold text-[#061539] transition-colors cursor-pointer`}
           >
             <ClipboardList className="w-3.5 h-3.5 shrink-0" />
             {!isCollapsed && (
@@ -352,7 +352,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               isCollapsed ? 'justify-center' : 'flex-1 text-left'
             } rounded-lg p-1 -m-1 hover:bg-blue-50 transition-colors cursor-pointer`}
           >
-            <span className="w-8 h-8 rounded-lg bg-[#0B245B] text-white font-mono-tabular text-[11px] font-bold flex items-center justify-center shrink-0">
+            <span className="w-8 h-8 rounded-lg bg-[#061539] text-white font-mono-tabular text-[11px] font-bold flex items-center justify-center shrink-0">
               {userName
                 .split(/\s+/)
                 .slice(0, 2)
@@ -361,8 +361,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </span>
             {!isCollapsed && (
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-[#0B245B] truncate">{userName}</p>
-                <p className="text-[11px] text-[#1c46be]/80 truncate">{ROLE_LABELS[activeRole]}</p>
+                <p className="text-xs font-bold text-[#061539] truncate">{userName}</p>
+                <p className="text-[11px] font-semibold text-slate-700 truncate">
+                  {ROLE_LABELS[activeRole]}
+                </p>
               </div>
             )}
           </button>
@@ -372,7 +374,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={onSignOut}
             title={`Sign out (${userEmail})`}
             aria-label="Sign out"
-            className="p-2 rounded-lg text-[#1c46be] hover:text-rose-700 hover:bg-rose-50 transition-colors shrink-0 cursor-pointer"
+            className="p-2 rounded-lg text-[#061539] hover:text-rose-700 hover:bg-rose-50 transition-colors shrink-0 cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
           </button>
