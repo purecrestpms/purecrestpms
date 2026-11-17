@@ -66,6 +66,7 @@ import {
   formatBookingSourceLabel,
   formatChannelCurrency,
   formatNgn,
+  formatPriceInputWithCommas,
   formatUsd,
   getFxRateToNgn,
   getReservationBookedDate,
@@ -77,6 +78,7 @@ import {
   matchesBookingSourceFilter,
   NavSectionId,
   OtaPaymentCollectionMode,
+  parseFormattedPriceInput,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
@@ -189,6 +191,59 @@ function diffNights(startIso: string, endIso: string): number {
   return Math.max(1, Math.round((end - start) / 86400000));
 }
 
+function handleCommaPriceChange(
+  e: React.ChangeEvent<HTMLInputElement>,
+  prevFormatted: string,
+  setFormatted: (next: string) => void
+) {
+  const inputEl = e.target;
+  const rawVal = inputEl.value;
+  const cursorPos = inputEl.selectionStart ?? rawVal.length;
+
+  // If user pressed Backspace right after a comma, delete the digit preceding that comma
+  if (
+    rawVal.length === prevFormatted.length - 1 &&
+    rawVal.replace(/,/g, '') === prevFormatted.replace(/,/g, '') &&
+    cursorPos > 0 &&
+    prevFormatted.charAt(cursorPos) === ','
+  ) {
+    const deletedRaw = rawVal.slice(0, cursorPos - 1) + rawVal.slice(cursorPos);
+    const significantBefore = deletedRaw
+      .slice(0, Math.max(0, cursorPos - 1))
+      .replace(/[^0-9.]/g, '').length;
+    const nextFormatted = formatPriceInputWithCommas(deletedRaw);
+    setFormatted(nextFormatted);
+    requestAnimationFrame(() => {
+      if (document.activeElement !== inputEl) return;
+      let seen = 0;
+      let targetIdx = 0;
+      while (targetIdx < nextFormatted.length && seen < significantBefore) {
+        if (/[0-9.]/.test(nextFormatted[targetIdx])) seen += 1;
+        targetIdx += 1;
+      }
+      inputEl.setSelectionRange(targetIdx, targetIdx);
+    });
+    return;
+  }
+
+  const significantBefore = rawVal
+    .slice(0, cursorPos)
+    .replace(/[^0-9.]/g, '').length;
+  const nextFormatted = formatPriceInputWithCommas(rawVal);
+  setFormatted(nextFormatted);
+
+  requestAnimationFrame(() => {
+    if (document.activeElement !== inputEl) return;
+    let seen = 0;
+    let targetIdx = 0;
+    while (targetIdx < nextFormatted.length && seen < significantBefore) {
+      if (/[0-9.]/.test(nextFormatted[targetIdx])) seen += 1;
+      targetIdx += 1;
+    }
+    inputEl.setSelectionRange(targetIdx, targetIdx);
+  });
+}
+
 export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   section,
   property,
@@ -243,7 +298,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   // Quick inline rate edit
   const [editingRateRoomId, setEditingRateRoomId] = useState<string | null>(null);
-  const [rateDraft, setRateDraft] = useState<number>(65500);
+  const [rateDraftInput, setRateDraftInput] = useState<string>('65,500');
 
   // Full Room Editor Modal
   const [editingRoom, setEditingRoom] = useState<RoomRecord | null>(null);
@@ -251,7 +306,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [draftName, setDraftName] = useState('');
   const [draftRoomType, setDraftRoomType] = useState('');
   const [draftSection, setDraftSection] = useState<RoomSection>('Serviced Apartment');
-  const [draftRateNgn, setDraftRateNgn] = useState<number>(65500);
+  const [draftRateInput, setDraftRateInput] = useState<string>('65,500');
   const [draftMaxGuests, setDraftMaxGuests] = useState<number>(2);
   const [draftOccupancy, setDraftOccupancy] =
     useState<RoomRecord['occupancyStatus']>('vacant');
@@ -260,6 +315,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [draftAmenitiesText, setDraftAmenitiesText] = useState('');
   const [draftImageUrl, setDraftImageUrl] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [editRoomError, setEditRoomError] = useState<string | null>(null);
 
   // Add New Room Modal state
   const [showAddRoomModal, setShowAddRoomModal] = useState(false);
@@ -514,13 +570,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setDraftName(room.name);
     setDraftRoomType(room.roomType);
     setDraftSection(getRoomSection(room));
-    setDraftRateNgn(room.nightlyRateNgn);
+    setDraftRateInput(formatPriceInputWithCommas(room.nightlyRateNgn));
     setDraftMaxGuests(room.maxGuests);
     setDraftOccupancy(room.occupancyStatus);
     setDraftHousekeeping(room.housekeepingStatus);
     setDraftAmenitiesText((room.amenities || []).join(', '));
     setDraftImageUrl(room.imageUrl || DEFAULT_SUITE_IMAGE);
     setUploadError(null);
+    setEditRoomError(null);
   };
 
   const handleImageFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -540,6 +597,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const handleSaveRoomEditor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRoom || !canManageRooms) return;
+    setEditRoomError(null);
+    const parsedRate = parseFormattedPriceInput(draftRateInput);
+    if (parsedRate === null || parsedRate < 1000) {
+      setEditRoomError('Enter a valid nightly rate of at least ₦1,000.');
+      return;
+    }
+    const cleanRate = Number(parsedRate);
     setBusyId(editingRoom.id);
     try {
       const parsedAmenities = Array.from(
@@ -558,7 +622,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           name: draftName.trim() || editingRoom.name,
           roomType: draftRoomType.trim() || editingRoom.roomType,
           section: draftSection,
-          nightlyRateNgn: Math.max(5000, draftRateNgn),
+          nightlyRateNgn: cleanRate,
           maxGuests: Math.max(1, draftMaxGuests),
           occupancyStatus: draftOccupancy,
           housekeepingStatus: draftHousekeeping,
@@ -569,6 +633,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       });
       onNotify(`Saved changes for ${draftRoomNumber.trim() || editingRoom.roomNumber}`);
       setEditingRoom(null);
+    } catch (err) {
+      setEditRoomError(parseReadableError(err));
     } finally {
       setBusyId(null);
     }
@@ -929,15 +995,22 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   const handleSaveRate = async (room: RoomRecord) => {
     if (!canManageRooms) return;
+    const parsedRate = parseFormattedPriceInput(rateDraftInput);
+    if (parsedRate === null || parsedRate < 1000) {
+      setActionError('Enter a valid nightly rate of at least ₦1,000.');
+      return;
+    }
+    const cleanRate = Number(parsedRate);
+    setActionError(null);
     setBusyId(room.id);
     try {
       await updateRoomStatus({
         property,
         room,
-        updates: { nightlyRateNgn: Math.max(5000, rateDraft) },
+        updates: { nightlyRateNgn: cleanRate },
         actorRole,
       });
-      onNotify(`Updated ${room.roomNumber} rate to ${formatNgn(rateDraft)}`);
+      onNotify(`Updated ${room.roomNumber} rate to ${formatNgn(cleanRate)}`);
       setEditingRateRoomId(null);
     } finally {
       setBusyId(null);
@@ -2811,11 +2884,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           {canManageRooms && editingRateRoomId === room.id ? (
                             <div className="flex items-center gap-2">
                               <input
-                                type="number"
-                                step={500}
-                                value={rateDraft}
-                                onChange={(e) => setRateDraft(Number(e.target.value))}
-                                className="w-28 border border-slate-300 rounded px-2 py-1 text-xs font-mono-tabular"
+                                type="text"
+                                inputMode="decimal"
+                                value={rateDraftInput}
+                                onChange={(e) =>
+                                  handleCommaPriceChange(e, rateDraftInput, setRateDraftInput)
+                                }
+                                className="w-32 border border-slate-300 rounded px-2 py-1 text-xs font-mono-tabular font-semibold"
                               />
                               <button
                                 type="button"
@@ -2852,7 +2927,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="button"
                                   onClick={() => {
                                     setEditingRateRoomId(room.id);
-                                    setRateDraft(room.nightlyRateNgn);
+                                    setRateDraftInput(formatPriceInputWithCommas(room.nightlyRateNgn));
                                   }}
                                   className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:underline cursor-pointer"
                                 >
@@ -4486,6 +4561,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               </button>
             </div>
 
+            {editRoomError && (
+              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 font-medium">
+                {editRoomError}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
                 <label className="block font-medium text-slate-700 mb-1">Room Code</label>
@@ -4537,12 +4618,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   Nightly Rate (₦ NGN)
                 </label>
                 <input
-                  type="number"
-                  min={5000}
-                  step={500}
+                  type="text"
+                  inputMode="decimal"
                   required
-                  value={draftRateNgn}
-                  onChange={(e) => setDraftRateNgn(Number(e.target.value))}
+                  placeholder="e.g. 87,000"
+                  value={draftRateInput}
+                  onChange={(e) => {
+                    setEditRoomError(null);
+                    handleCommaPriceChange(e, draftRateInput, setDraftRateInput);
+                  }}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
                 />
               </div>

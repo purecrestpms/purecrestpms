@@ -1095,11 +1095,45 @@ export function sortRoomsByNumber<T extends Pick<RoomRecord, 'roomNumber'>>(room
 }
 
 export function formatNgn(amount: number): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  const hasDecimals = Math.abs(safe - Math.trunc(safe)) > 0.0001;
   return new Intl.NumberFormat('en-NG', {
     style: 'currency',
     currency: 'NGN',
-    maximumFractionDigits: 0,
-  }).format(Number.isFinite(amount) ? amount : 0);
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 4,
+  }).format(safe);
+}
+
+export function formatPriceInputWithCommas(rawOrNumber: string | number): string {
+  const raw =
+    typeof rawOrNumber === 'number'
+      ? Number.isFinite(rawOrNumber)
+        ? String(rawOrNumber)
+        : ''
+      : String(rawOrNumber ?? '');
+  if (!raw) return '';
+  let sanitized = raw.replace(/[^0-9.]/g, '');
+  const firstDot = sanitized.indexOf('.');
+  if (firstDot !== -1) {
+    sanitized =
+      sanitized.slice(0, firstDot + 1) +
+      sanitized.slice(firstDot + 1).replace(/\./g, '');
+  }
+  const hasDot = firstDot !== -1;
+  const [intRaw = '', decRaw = ''] = sanitized.split('.');
+  if (!intRaw && !hasDot) return '';
+  const normalizedInt = intRaw === '' ? '0' : intRaw.replace(/^0+(?=\d)/, '');
+  const formattedInt = normalizedInt.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return hasDot ? `${formattedInt}.${decRaw}` : formattedInt;
+}
+
+export function parseFormattedPriceInput(raw: string): number | null {
+  const cleaned = String(raw ?? '').replace(/,/g, '').trim();
+  if (!cleaned || cleaned === '.') return null;
+  if (!/^(?:\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : null;
 }
 
 export const DEFAULT_USD_RATE_NGN = 1580;
