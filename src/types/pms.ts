@@ -40,6 +40,7 @@ export type NavSectionId =
   | 'messages'
   | 'training_help'
   | 'shift_daily_report'
+  | 'invoices'
   | 'deployment'
   | 'profile'
   | 'cms';
@@ -233,6 +234,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
 
 export interface PropertyRecord {
   id: string;
+  systemPropertyId?: string;
   name: string;
   code: string;
   city: string;
@@ -254,6 +256,34 @@ export interface PropertyRecord {
   adminEmail: string;
   authorizedEmails: string[];
   ownerUid: string;
+}
+
+export const STARTING_PROPERTY_SEQ = 11;
+
+export function formatSystemPropertyId(seq: number): string {
+  const safeSeq = Math.max(STARTING_PROPERTY_SEQ, Math.floor(Number.isFinite(seq) ? seq : STARTING_PROPERTY_SEQ));
+  return `PCH-PROP-${String(safeSeq).padStart(6, '0')}`;
+}
+
+export function parseSystemPropertySeq(systemId?: string | null): number | null {
+  if (!systemId) return null;
+  const match = /^PCH-PROP-(\d+)$/.exec(systemId.trim().toUpperCase());
+  if (!match) return null;
+  const num = Number(match[1]);
+  return Number.isFinite(num) && num >= STARTING_PROPERTY_SEQ ? num : null;
+}
+
+export function getPropertySystemId(
+  property?: Pick<PropertyRecord, 'id' | 'code' | 'systemPropertyId'> | null
+): string {
+  if (!property) return formatSystemPropertyId(STARTING_PROPERTY_SEQ);
+  if (property.systemPropertyId && /^PCH-PROP-\d{6,}$/.test(property.systemPropertyId)) {
+    return property.systemPropertyId;
+  }
+  if (property.id === 'richgates-enugu' || property.code === 'RG-ENU-01') {
+    return formatSystemPropertyId(STARTING_PROPERTY_SEQ);
+  }
+  return 'PCH-PROP-PENDING';
 }
 
 export interface LicenseRecord {
@@ -965,6 +995,7 @@ export const PROPERTY_PRIVILEGE_OPTIONS: Array<{
   { id: 'in_house', label: 'In-House Guests', group: 'Operations' },
   { id: 'walk_in', label: 'Walk-In Check-In', group: 'Operations' },
   { id: 'front_desk', label: 'Front Desk & Folios', group: 'Operations' },
+  { id: 'invoices', label: 'Invoices & Receipts', group: 'Operations' },
   { id: 'rooms', label: 'Rooms & Rates', group: 'Operations' },
   { id: 'guests', label: 'Guest Profiles', group: 'Operations' },
   { id: 'housekeeping', label: 'Housekeeping', group: 'Operations' },
@@ -1011,6 +1042,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'in_house',
     'walk_in',
     'front_desk',
+    'invoices',
     'guests',
     'housekeeping',
     'pos_kitchen',
@@ -1044,6 +1076,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'in_house',
     'walk_in',
     'front_desk',
+    'invoices',
     'guests',
     'housekeeping',
     'pos_kitchen',
@@ -1064,7 +1097,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'licensing',
     'profile',
   ],
-  front_desk: ['dashboard', 'rooms', 'calendar', 'reservations', 'arrivals', 'in_house', 'walk_in', 'front_desk', 'guests', 'housekeeping', 'pos_kitchen', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
+  front_desk: ['dashboard', 'rooms', 'calendar', 'reservations', 'arrivals', 'in_house', 'walk_in', 'front_desk', 'invoices', 'guests', 'housekeeping', 'pos_kitchen', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
   housekeeping: ['dashboard', 'rooms', 'calendar', 'housekeeping', 'maintenance', 'inventory', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
   fnb_kitchen: ['dashboard', 'pos_kitchen', 'inventory', 'procurement', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
   accountant: ['dashboard', 'inventory', 'procurement', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
@@ -1566,6 +1599,12 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       title: 'Front Desk Operations & Guest Folios',
       subtitle: 'Active stays, room charges, POS postings, folio payments, and check-out settlements',
       ctaLabel: 'New Reservation',
+    },
+    invoices: {
+      navLabel: 'Invoices & Receipts',
+      title: 'Guest Invoices & Folio Receipts',
+      subtitle: 'Search, preview, print, and download itemized NGN & FX guest stay invoices',
+      ctaLabel: 'Download PDF',
     },
     rooms: {
       navLabel: 'Rooms & Rates',

@@ -29,6 +29,7 @@ export function buildRichgatesSeedPayload(
 
   const property = {
     id: targetPropertyId,
+    systemPropertyId: 'PCH-PROP-000011',
     name: RICHGATES_PROPERTY_INFO.name,
     code: 'RG-ENU-01',
     city: 'Enugu',

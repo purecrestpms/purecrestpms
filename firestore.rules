@@ -85,11 +85,12 @@ service cloud.firestore {
         'roomCount', 'status', 'adminEmail', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
+        'systemPropertyId', 'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
         'currency', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource',
         'roomCount', 'status', 'licenseKey', 'licensePlan', 'adminEmail',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
+      (!('systemPropertyId' in data) || (data.systemPropertyId is string && data.systemPropertyId.size() >= 15 && data.systemPropertyId.size() <= 32 && data.systemPropertyId.matches('^PCH-PROP-[0-9]{6,}$'))) &&
       data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
       data.code is string && data.code.size() >= 2 && data.code.size() <= 24 && data.code.matches('^[A-Z0-9\\-]+$') &&
       data.city is string && data.city.size() >= 2 && data.city.size() <= 80 &&
@@ -712,7 +713,8 @@ service cloud.firestore {
       allow update: if isValidId(propertyId) && isValidProperty(incoming()) &&
         incoming().ownerUid == existing().ownerUid &&
         incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time && (
+        incoming().updatedAt == request.time &&
+        (!('systemPropertyId' in existing()) || existing().systemPropertyId == '' || incoming().systemPropertyId == existing().systemPropertyId) && (
           isBootstrappedAdmin() || (
             isMemberResource(existing()) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'authorizedEmails', 'updatedAt'])
