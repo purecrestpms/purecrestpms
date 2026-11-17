@@ -3987,6 +3987,7 @@ async function syncPropertyAuthorizedEmailsAcrossCollections(
     'purchase_orders',
     'staff_members',
     'user_accounts',
+    'staff_sessions',
     'shifts',
     'attendance',
     'payroll_runs',
@@ -4758,3 +4759,110 @@ export async function updatePlanInquiryStatusWorkflow(params: {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
 }
+
+function getSafeUserAgentLabel(): string {
+  if (typeof navigator === 'undefined') return 'Web Browser';
+  const ua = navigator.userAgent || '';
+  if (ua.includes('Edg/')) return 'Microsoft Edge';
+  if (ua.includes('Chrome/') && !ua.includes('Edg/')) return 'Google Chrome';
+  if (ua.includes('Firefox/')) return 'Mozilla Firefox';
+  if (ua.includes('Safari/') && !ua.includes('Chrome/')) return 'Apple Safari';
+  return 'Web Browser';
+}
+
+export async function upsertStaffSessionLoginWorkflow(params: {
+  property: PropertyRecord;
+  uid: string;
+  email: string;
+  fullName: string;
+  assignedRole: AssignablePropertyRole | 'pch_admin';
+  department: string;
+  portal: 'richgates-admin' | 'staff' | 'pch-admin';
+}): Promise<void> {
+  const cleanEmail = params.email.trim().toLowerCase();
+  if (!params.uid || !cleanEmail) return;
+  const nowIso = new Date().toISOString();
+  const safeEmails = sanitizeAuthorizedEmailList(
+    [...(params.property.authorizedEmails || []), cleanEmail],
+    params.property,
+    cleanEmail
+  );
+  const sessionRef = doc(db, 'properties', params.property.id, 'staff_sessions', params.uid);
+  try {
+    const existingSnap = await getDoc(sessionRef);
+    const existingData = existingSnap.exists() ? existingSnap.data() : null;
+    const preservedLoginAtIso =
+      existingData && existingData.status === 'logged_in' && typeof existingData.loginAtIso === 'string'
+        ? existingData.loginAtIso
+        : nowIso;
+    const basePayload = {
+      propertyId: params.property.id,
+      uid: params.uid,
+      email: cleanEmail.slice(0, 120),
+      fullName: (params.fullName.trim() || cleanEmail).slice(0, 120),
+      assignedRole: params.assignedRole,
+      department: (params.department || 'Management').slice(0, 64),
+      portal: params.portal,
+      status: 'logged_in' as const,
+      loginAtIso: preservedLoginAtIso,
+      lastActiveIso: nowIso,
+      userAgentLabel: getSafeUserAgentLabel().slice(0, 120),
+      authorizedEmails: safeEmails,
+    };
+
+    if (existingData) {
+      await setDoc(sessionRef, {
+        ...basePayload,
+        ownerUid: existingData.ownerUid || params.uid,
+        createdAt: existingData.createdAt || serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(sessionRef, {
+        ...basePayload,
+        ownerUid: params.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch {
+    // Non-blocking session tracking telemetry
+  }
+}
+
+export async function heartbeatStaffSessionWorkflow(params: {
+  propertyId: string;
+  uid: string;
+}): Promise<void> {
+  if (!params.propertyId || !params.uid) return;
+  const sessionRef = doc(db, 'properties', params.propertyId, 'staff_sessions', params.uid);
+  try {
+    await updateDoc(sessionRef, {
+      status: 'logged_in',
+      lastActiveIso: new Date().toISOString(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking heartbeat update
+  }
+}
+
+export async function recordStaffSessionLogoutWorkflow(params: {
+  propertyId: string;
+  uid: string;
+}): Promise<void> {
+  if (!params.propertyId || !params.uid) return;
+  const nowIso = new Date().toISOString();
+  const sessionRef = doc(db, 'properties', params.propertyId, 'staff_sessions', params.uid);
+  try {
+    await updateDoc(sessionRef, {
+      status: 'logged_out',
+      lastActiveIso: nowIso,
+      loggedOutAtIso: nowIso,
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking logout status update
+  }
+}
+

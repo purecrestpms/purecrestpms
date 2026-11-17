@@ -635,6 +635,34 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidStaffSession(data, propertyId) {
+      return data.keys().hasAll([
+        'propertyId', 'uid', 'email', 'fullName', 'assignedRole', 'department',
+        'portal', 'status', 'loginAtIso', 'lastActiveIso', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'propertyId', 'uid', 'email', 'fullName', 'assignedRole', 'department',
+        'portal', 'status', 'loginAtIso', 'lastActiveIso', 'loggedOutAtIso', 'userAgentLabel',
+        'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+      ]) &&
+      data.propertyId == propertyId &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+      data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
+      data.assignedRole in ['pch_admin', 'property_admin', 'front_desk', 'housekeeping', 'fnb_kitchen', 'accountant', 'maintenance', 'unassigned'] &&
+      data.department is string && data.department.size() <= 64 &&
+      data.portal in ['richgates-admin', 'staff', 'pch-admin'] &&
+      data.status in ['logged_in', 'logged_out'] &&
+      data.loginAtIso is string && data.loginAtIso.size() <= 40 &&
+      data.lastActiveIso is string && data.lastActiveIso.size() <= 40 &&
+      (!('loggedOutAtIso' in data) || (data.loggedOutAtIso is string && data.loggedOutAtIso.size() <= 40)) &&
+      (!('userAgentLabel' in data) || (data.userAgentLabel is string && data.userAgentLabel.size() <= 120)) &&
+      isAuthorizedEmailList(data.authorizedEmails) &&
+      data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     function isValidPlanInquiry(data) {
       return data.keys().hasAll([
         'referenceCode', 'inquiryType', 'plan', 'billingCycle', 'estimatedTotalNgn',
@@ -864,6 +892,23 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['firstName', 'lastName', 'fullName', 'phone', 'department', 'role', 'privileges', 'active', 'linkedStaffId', 'authProvisioned', 'lastRoleUpdatedIso', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId);
+      }
+
+      // Subcollection: Employee Login & Logout Session Monitor
+      match /staff_sessions/{sessionId} {
+        allow get: if isValidId(propertyId) && isValidId(sessionId) && isPropertyOperator(propertyId);
+        allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
+        allow create: if isValidId(propertyId) && isValidId(sessionId) && isPropertyOperator(propertyId) &&
+          isValidStaffSession(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        allow update: if isValidId(propertyId) && isValidId(sessionId) && isPropertyOperator(propertyId) &&
+          isValidStaffSession(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+            isBootstrappedAdmin() ||
+            (request.auth.uid == sessionId && incoming().uid == existing().uid) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['authorizedEmails', 'updatedAt'])
+          );
+        allow delete: if isValidId(propertyId) && isValidId(sessionId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Shifts

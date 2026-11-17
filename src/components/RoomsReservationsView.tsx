@@ -252,6 +252,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     useState<RoomRecord['occupancyStatus']>('vacant');
   const [draftHousekeeping, setDraftHousekeeping] =
     useState<RoomRecord['housekeepingStatus']>('clean');
+  const [draftAmenitiesText, setDraftAmenitiesText] = useState('');
   const [draftImageUrl, setDraftImageUrl] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -508,6 +509,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setDraftMaxGuests(room.maxGuests);
     setDraftOccupancy(room.occupancyStatus);
     setDraftHousekeeping(room.housekeepingStatus);
+    setDraftAmenitiesText((room.amenities || []).join(', '));
     setDraftImageUrl(room.imageUrl || DEFAULT_SUITE_IMAGE);
     setUploadError(null);
   };
@@ -531,6 +533,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (!editingRoom || !canManageRooms) return;
     setBusyId(editingRoom.id);
     try {
+      const parsedAmenities = Array.from(
+        new Set(
+          draftAmenitiesText
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean)
+        )
+      ).slice(0, 15);
       await updateRoomStatus({
         property,
         room: editingRoom,
@@ -543,6 +553,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           maxGuests: Math.max(1, draftMaxGuests),
           occupancyStatus: draftOccupancy,
           housekeepingStatus: draftHousekeeping,
+          amenities: parsedAmenities,
           imageUrl: draftImageUrl.trim() || DEFAULT_SUITE_IMAGE,
         },
         actorRole,
@@ -2612,7 +2623,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/75 hover:bg-slate-950 text-white text-[11px] font-medium backdrop-blur-sm cursor-pointer"
                           >
                             <SlidersHorizontal className="w-3 h-3" />
-                            <span>Edit Suite</span>
+                            <span>Edit</span>
                           </button>
                         )}
                         <div className="absolute bottom-2.5 left-3 right-3 flex items-end justify-between text-white">
@@ -2803,7 +2814,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   Arrivals &amp; Check-In Schedule
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Today&apos;s expected check-ins are strictly separated from future scheduled dates and overdue arrivals.
+                  Today&apos;s expected check-ins are separated cleanly from upcoming scheduled dates and overdue arrivals.
                 </p>
               </div>
             </div>
@@ -2887,7 +2898,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     arrivalsTab === 'future' ? 'text-blue-100' : 'text-slate-600'
                   }`}
                 >
-                  Future Arrivals
+                  Upcoming Arrivals
                 </span>
                 <CalendarPlus className="w-4 h-4 opacity-80" />
               </div>
@@ -3000,8 +3011,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     ? 'CHECKED IN TODAY'
                     : mode === 'future'
                       ? res.checkInDate === tomorrowIso
-                        ? 'FUTURE · TOMORROW'
-                        : `FUTURE · IN ${daysDelta} DAYS`
+                        ? 'TOMORROW'
+                        : `IN ${daysDelta} DAYS`
                       : `OVERDUE · ${daysDelta}D PAST DUE`;
 
               const timingClass =
@@ -3259,7 +3270,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   </p>
                   <p className="text-xs text-slate-500">
                     {arrivalsFutureList.length > 0
-                      ? `You have ${arrivalsFutureList.length} future arrival(s) scheduled on upcoming dates — switch to the Future Arrivals tab to inspect them.`
+                      ? `You have ${arrivalsFutureList.length} upcoming arrival(s) scheduled — switch to the Upcoming Arrivals tab to inspect them.`
                       : 'Use New Reservation or Walk-in Check-in above to register a guest for today.'}
                   </p>
                 </div>
@@ -3273,12 +3284,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             if (arrivalsTab === 'future') {
               return futureArrivalsByDate.length === 0 ? (
                 <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-xs text-slate-500">
-                  No future arrivals scheduled beyond {todayIso}.
+                  No upcoming arrivals scheduled beyond {todayIso}.
                 </div>
               ) : (
                 <div className="space-y-5">
                   <div className="px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 font-medium">
-                    Future Arrivals Schedule — Guests below are scheduled for future dates after today ({todayIso}).
+                    Upcoming Arrivals Schedule — Guests below are scheduled for check-in dates after today ({todayIso}).
                   </div>
                   {futureArrivalsByDate.map((grp) => (
                     <div key={grp.dateIso} className="space-y-2.5">
@@ -3338,7 +3349,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       {isStayTableSection && (
         <div className="space-y-4">
           {/* Operational Summary Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <p className="text-[11px] font-medium text-slate-500">Total Reservations</p>
               <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
@@ -3364,12 +3375,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <p className="text-[11px] font-medium text-slate-500">Payments Received</p>
               <p className="font-mono-tabular text-lg font-bold text-slate-900 mt-0.5">
                 {formatNgn(reservationMetrics.totalPaid)}
-              </p>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 col-span-2 sm:col-span-1">
-              <p className="text-[11px] font-medium text-slate-500">Outstanding Balance</p>
-              <p className="font-mono-tabular text-lg font-bold text-amber-700 mt-0.5">
-                {formatNgn(reservationMetrics.totalBalance)}
               </p>
             </div>
           </div>
@@ -4259,7 +4264,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Manage Suite &amp; Rates — {editingRoom.roomNumber}
+                  Edit Room &amp; Rates — {editingRoom.roomNumber}
                 </h3>
                 <p className="text-xs text-slate-500">
                   Update pricing in Naira (₦), room classification, status, and suite photography
@@ -4380,6 +4385,76 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <option value="cleaning">Cleaning</option>
                   <option value="dirty">Dirty</option>
                 </select>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 pt-4 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <label className="font-semibold text-slate-800">
+                  Room Amenities (comma-separated, up to 15)
+                </label>
+                <span className="font-mono-tabular text-[11px] text-slate-500">
+                  {
+                    draftAmenitiesText
+                      .split(',')
+                      .map((item) => item.trim())
+                      .filter(Boolean).length
+                  }
+                  /15
+                </span>
+              </div>
+              <input
+                type="text"
+                placeholder="King Bed, Wi-Fi, Smart TV, Fitted Kitchenette, 24/7 Power"
+                value={draftAmenitiesText}
+                onChange={(e) => setDraftAmenitiesText(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs"
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  'King Bed',
+                  'Wi-Fi',
+                  'Smart TV',
+                  'Fitted Kitchenette',
+                  '24/7 Power',
+                  'Work Desk',
+                  'Split AC',
+                  'En-Suite Shower',
+                  'Private Balcony',
+                  'Tea & Coffee Station',
+                ].map((preset) => {
+                  const currentList = draftAmenitiesText
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  const isActive = currentList.some(
+                    (item) => item.toLowerCase() === preset.toLowerCase()
+                  );
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        if (isActive) {
+                          setDraftAmenitiesText(
+                            currentList
+                              .filter((item) => item.toLowerCase() !== preset.toLowerCase())
+                              .join(', ')
+                          );
+                        } else if (currentList.length < 15) {
+                          setDraftAmenitiesText([...currentList, preset].join(', '));
+                        }
+                      }}
+                      className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                        isActive
+                          ? 'bg-[#061539] text-white border-[#061539]'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {isActive ? `✓ ${preset}` : `+ ${preset}`}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

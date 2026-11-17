@@ -3,16 +3,22 @@ import {
   Activity,
   AlertTriangle,
   Award,
+  Bell,
   Calendar,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   Eye,
   FileText,
   KeyRound,
+  Link2,
   Lock,
+  Mail,
   Pencil,
   Plus,
   Printer,
+  Send,
   ShieldAlert,
   ShieldCheck,
   Trash2,
@@ -36,8 +42,8 @@ import {
   deletePropertyUserAccountWorkflow,
   deleteShiftWorkflow,
   deleteStaffMemberWorkflow,
-  prepareRichgatesProductionDatabaseWorkflow,
   runAndPostPayrollWorkflow,
+  sendPropertyMessageWorkflow,
   unassignPropertyUserRoleWorkflow,
   updatePropertyUserRolePrivilegesWorkflow,
   updateStaffMemberWorkflow,
@@ -50,6 +56,7 @@ import {
   AttendanceRecord,
   DepartmentName,
   formatNgn,
+  getPortalUrl,
   HousekeepingTaskRecord,
   MaintenanceTicketRecord,
   NavSectionId,
@@ -65,6 +72,7 @@ import {
   ShiftScheduleRecord,
   StaffMemberRecord,
   StaffRole,
+  StaffSessionRecord,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
@@ -77,6 +85,9 @@ interface StaffHrPayrollViewProps {
   activeRole: StaffRole;
   staffMembers: StaffMemberRecord[];
   userAccounts: PropertyUserAccountRecord[];
+  staffSessions?: StaffSessionRecord[];
+  currentUserEmail?: string;
+  currentUserName?: string;
   shifts: ShiftScheduleRecord[];
   attendance: AttendanceRecord[];
   payrollRuns: PayrollRunRecord[];
@@ -85,6 +96,8 @@ interface StaffHrPayrollViewProps {
   posOrders: PosOrderRecord[];
   actorRole: string;
   onNotify: (msg: string) => void;
+  onOpenSessionMonitor?: () => void;
+  onSendPasswordSetupEmail?: (email: string) => Promise<void>;
 }
 
 const PRIVILEGE_GROUPS = Array.from(new Set(PROPERTY_PRIVILEGE_OPTIONS.map((p) => p.group)));
@@ -106,6 +119,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   activeRole,
   staffMembers,
   userAccounts,
+  staffSessions = [],
+  currentUserEmail = '',
+  currentUserName = '',
   shifts,
   attendance,
   payrollRuns,
@@ -114,6 +130,8 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   posOrders,
   actorRole,
   onNotify,
+  onOpenSessionMonitor,
+  onSendPasswordSetupEmail,
 }) => {
   const { cms } = useCms();
   const isAdminManager = activeRole === 'property_admin' || activeRole === 'pch_admin';
@@ -185,8 +203,6 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const [viewingStaffDetail, setViewingStaffDetail] = useState<StaffMemberRecord | null>(null);
 
   // Inline Confirmations (no window.confirm)
-  const [confirmClearDemo, setConfirmClearDemo] = useState(false);
-  const [clearingDemo, setClearingDemo] = useState(false);
   const [confirmDeleteStaffId, setConfirmDeleteStaffId] = useState<string | null>(null);
   const [confirmUnassignAccId, setConfirmUnassignAccId] = useState<string | null>(null);
   const [confirmDeleteAccId, setConfirmDeleteAccId] = useState<string | null>(null);
@@ -194,6 +210,17 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const [confirmDeleteAttId, setConfirmDeleteAttId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
+
+  // Send Notification & Login Link Modal state
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [copiedUserLinkId, setCopiedUserLinkId] = useState<string | null>(null);
+  const [notifyAccTarget, setNotifyAccTarget] = useState<PropertyUserAccountRecord | null>(null);
+  const [notifyAccPortal, setNotifyAccPortal] = useState<'staff' | 'richgates-admin'>('staff');
+  const [notifyAccSubject, setNotifyAccSubject] = useState('');
+  const [notifyAccBody, setNotifyAccBody] = useState('');
+  const [notifyAccBusy, setNotifyAccBusy] = useState(false);
+  const [notifyAccResetBusy, setNotifyAccResetBusy] = useState(false);
+  const [notifyAccFeedback, setNotifyAccFeedback] = useState<string | null>(null);
 
   const [shiftStaffId, setShiftStaffId] = useState(staffMembers[0]?.id || '');
   const [shiftDate, setShiftDate] = useState(new Date().toISOString().slice(0, 10));
@@ -446,22 +473,72 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     }
   };
 
-  const handleClearDemoStaffAndData = async () => {
-    setActionError(null);
-    setClearingDemo(true);
+  const staffLoginUrl = getPortalUrl('staff', property);
+  const adminLoginUrl = getPortalUrl('richgates-admin', property);
+
+  const openNotifyAccModal = (acc: PropertyUserAccountRecord) => {
+    const portalChoice: 'staff' | 'richgates-admin' =
+      acc.role === 'property_admin' ? 'richgates-admin' : 'staff';
+    const linkUrl = portalChoice === 'richgates-admin' ? adminLoginUrl : staffLoginUrl;
+    setNotifyAccTarget(acc);
+    setNotifyAccPortal(portalChoice);
+    setNotifyAccSubject(`Your ${property.name} Portal Login Link & Assigned Role`);
+    setNotifyAccBody(
+      `Hello ${acc.fullName},\n\nYour role at ${property.name} is: ${ASSIGNABLE_ROLE_LABELS[acc.role]}.\nSign in here:\n${linkUrl}\n\nWork Email: ${acc.email}`
+    );
+    setNotifyAccFeedback(null);
+  };
+
+  const handleNotifyAccPortalSwitch = (portal: 'staff' | 'richgates-admin') => {
+    setNotifyAccPortal(portal);
+    if (!notifyAccTarget) return;
+    const nextUrl = portal === 'richgates-admin' ? adminLoginUrl : staffLoginUrl;
+    setNotifyAccBody(
+      `Hello ${notifyAccTarget.fullName},\n\nYour role at ${property.name} is: ${ASSIGNABLE_ROLE_LABELS[notifyAccTarget.role]}.\nSign in using the ${portal === 'richgates-admin' ? 'Property Admin (/admin)' : 'Staff Portal (/login)'} link below:\n${nextUrl}\n\nWork Email: ${notifyAccTarget.email}`
+    );
+  };
+
+  const handleSendAccLoginNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!notifyAccTarget) return;
+    setNotifyAccBusy(true);
+    setNotifyAccFeedback(null);
     try {
-      const res = await prepareRichgatesProductionDatabaseWorkflow({
+      await sendPropertyMessageWorkflow({
         property,
-        actorRole,
+        senderName: currentUserName || 'Property Admin',
+        senderRole: actorRole,
+        senderDepartment: 'Management',
+        recipientScope: 'direct_staff',
+        recipientEmails: [notifyAccTarget.email.trim().toLowerCase()],
+        recipientNames: [notifyAccTarget.fullName],
+        subject: notifyAccSubject.trim() || `${property.name} Login Link`,
+        body: notifyAccBody.trim(),
+        priority: 'Normal',
       });
-      onNotify(
-        `Cleared ${res.deletedDocsCount} demo staff, shift, attendance, payroll & sample records; ${res.roomsResetCount} suites reset clean & vacant.`
-      );
-      setConfirmClearDemo(false);
+      const msg = `Notification & login link sent to ${notifyAccTarget.fullName} (${notifyAccTarget.email}).`;
+      setNotifyAccFeedback(msg);
+      onNotify(msg);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setNotifyAccFeedback(err instanceof Error ? err.message : 'Unable to send notification.');
     } finally {
-      setClearingDemo(false);
+      setNotifyAccBusy(false);
+    }
+  };
+
+  const handleSendAccPasswordSetup = async () => {
+    if (!notifyAccTarget || !onSendPasswordSetupEmail) return;
+    setNotifyAccResetBusy(true);
+    setNotifyAccFeedback(null);
+    try {
+      await onSendPasswordSetupEmail(notifyAccTarget.email);
+      setNotifyAccFeedback(
+        `Password setup email sent to ${notifyAccTarget.email}. They can set their password and open the login link.`
+      );
+    } catch (err) {
+      setNotifyAccFeedback(err instanceof Error ? err.message : 'Unable to send password setup email.');
+    } finally {
+      setNotifyAccResetBusy(false);
     }
   };
 
@@ -583,15 +660,32 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     }
   };
 
+  const sessionByEmailMap = useMemo(() => {
+    const map = new Map<string, StaffSessionRecord>();
+    for (const s of staffSessions) {
+      const em = (s.email || '').trim().toLowerCase();
+      if (!em) continue;
+      const prev = map.get(em);
+      if (!prev || (s.lastActiveIso || '') > (prev.lastActiveIso || '')) {
+        map.set(em, s);
+      }
+    }
+    return map;
+  }, [staffSessions]);
+
   const filteredAccounts = useMemo(() => {
-    if (userFilter === 'assigned') {
-      return userAccounts.filter((a) => a.role !== 'unassigned' && a.active);
-    }
-    if (userFilter === 'unassigned') {
-      return userAccounts.filter((a) => a.role === 'unassigned' || !a.active);
-    }
-    return userAccounts;
-  }, [userAccounts, userFilter]);
+    const q = userSearchQuery.trim().toLowerCase();
+    return userAccounts.filter((a) => {
+      if (userFilter === 'assigned' && (a.role === 'unassigned' || !a.active)) return false;
+      if (userFilter === 'unassigned' && a.role !== 'unassigned' && a.active) return false;
+      if (q) {
+        const hay =
+          `${a.fullName} ${a.email} ${a.department} ${ASSIGNABLE_ROLE_LABELS[a.role]}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [userAccounts, userFilter, userSearchQuery]);
 
   const staffPerformanceRows = useMemo(() => {
     return staffMembers.map((staff) => {
@@ -892,14 +986,16 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
               <Plus className="w-3.5 h-3.5" />
               <span>{cms.pages.staff.ctaLabel || 'Onboard Staff Member'}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setConfirmClearDemo((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Clear Demo Staff &amp; Data</span>
-            </button>
+            {onOpenSessionMonitor && (
+              <button
+                type="button"
+                onClick={onOpenSessionMonitor}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#061539] rounded-lg cursor-pointer"
+              >
+                <Activity className="w-3.5 h-3.5 text-[#1c46be]" />
+                <span>Monitor Employee Logins</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -974,42 +1070,6 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       {/* SECTION: USER ACCOUNTS, STAFF RECORDS & PERFORMANCE */}
       {section === 'staff' && (
         <div className="space-y-6">
-          {/* Inline Clear Demo Staff & Data Confirmation */}
-          {confirmClearDemo && isAdminManager && (
-            <div className="bg-rose-50 border border-rose-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <p className="font-bold text-rose-900 text-sm">
-                    Delete all demo staff records and sample operational data in {property.name}?
-                  </p>
-                  <p className="text-rose-800 leading-relaxed">
-                    Removes all sample staff records, shifts, attendance, payroll runs, guests,
-                    bookings, housekeeping tasks, POS orders, inventory, maintenance tickets,
-                    ledger entries, and legacy <span className="font-mono-tabular">gm@richgatesenugu.com</span> access.
-                    Your 8 suites (RM-1 to RM-8), POS menu, OTA channels, and newly created user accounts remain preserved.
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setConfirmClearDemo(false)}
-                  className="px-3.5 py-2 border border-rose-200 bg-white text-slate-700 font-semibold rounded-lg cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={clearingDemo}
-                  onClick={handleClearDemoStaffAndData}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
-                >
-                  {clearingDemo ? 'Clearing...' : 'Confirm Delete Demo Data'}
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Tab Navigation */}
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
@@ -1071,6 +1131,121 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
           {/* TAB 1: USER ACCOUNTS, ROLES & PRIVILEGES */}
           {isAdminManager && staffTab === 'users' && (
             <div className="space-y-5">
+              {/* Simple 3-Step Guide + Quick Property Portal Links */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-display text-sm font-bold text-[#061539]">
+                      How Property User Access Works
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Add a team member, assign their role &amp; pages, and send them the Staff (/login) or Admin (/admin) sign-in link.
+                    </p>
+                  </div>
+                  {onOpenSessionMonitor && (
+                    <button
+                      type="button"
+                      onClick={onOpenSessionMonitor}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold shrink-0 cursor-pointer"
+                    >
+                      <Activity className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Open Employee Login Monitor</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
+                    <p className="font-bold text-[#061539]">1. Create User &amp; Pick Role</p>
+                    <p className="text-slate-600">
+                      Roles like Front Desk, Housekeeping, or Kitchen automatically pre-select the right workspace pages.
+                    </p>
+                  </div>
+                  <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
+                    <p className="font-bold text-[#061539]">2. Send Notification &amp; Link</p>
+                    <p className="text-slate-600">
+                      Click <strong>Notify &amp; Link</strong> beside any user to send an alert, copy their login link, or email a password setup link.
+                    </p>
+                  </div>
+                  <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
+                    <p className="font-bold text-[#061539]">3. Unassign Anytime</p>
+                    <p className="text-slate-600">
+                      Unassigning removes login access immediately without deleting payroll or shift history.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 text-xs">
+                  <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase text-emerald-700 flex items-center gap-1">
+                        <Link2 className="w-3 h-3" />
+                        <span>Staff Login Link (/login)</span>
+                      </p>
+                      <p className="font-mono-tabular text-xs font-semibold text-slate-900 truncate">
+                        {staffLoginUrl}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(staffLoginUrl);
+                        setCopiedUserLinkId('staff-url');
+                        onNotify(`Copied Staff Login link: ${staffLoginUrl}`);
+                        setTimeout(() => setCopiedUserLinkId(null), 2000);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-md font-semibold text-slate-800 shrink-0 cursor-pointer"
+                    >
+                      {copiedUserLinkId === 'staff-url' ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase text-[#1c46be] flex items-center gap-1">
+                        <Link2 className="w-3 h-3" />
+                        <span>Property Admin Link (/admin)</span>
+                      </p>
+                      <p className="font-mono-tabular text-xs font-semibold text-slate-900 truncate">
+                        {adminLoginUrl}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(adminLoginUrl);
+                        setCopiedUserLinkId('admin-url');
+                        onNotify(`Copied Admin Login link: ${adminLoginUrl}`);
+                        setTimeout(() => setCopiedUserLinkId(null), 2000);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-md font-semibold text-slate-800 shrink-0 cursor-pointer"
+                    >
+                      {copiedUserLinkId === 'admin-url' ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {showUserForm && (
                 <form
                   onSubmit={handleCreateUserAccount}
@@ -1319,20 +1494,27 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
               {/* User Accounts Filter & List */}
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="px-5 py-3.5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4 text-emerald-700" />
                     <h2 className="font-display text-sm font-bold text-slate-900">
-                      Property User Accounts, Roles &amp; Privileges
+                      Property User Accounts ({filteredAccounts.length})
                     </h2>
                   </div>
-                  <div className="flex items-center gap-1.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <input
+                      type="text"
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      placeholder="Filter name, email or role..."
+                      className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-[#1c46be]"
+                    />
                     {(
                       [
                         { id: 'all', label: `All (${userAccounts.length})` },
                         {
                           id: 'assigned',
-                          label: `Assigned (${userAccounts.filter((a) => a.role !== 'unassigned' && a.active).length})`,
+                          label: `Active Roles (${userAccounts.filter((a) => a.role !== 'unassigned' && a.active).length})`,
                         },
                         {
                           id: 'unassigned',
@@ -1360,21 +1542,34 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
-                        <th className="py-3 px-4">User</th>
-                        <th className="py-3 px-4">Department &amp; Assigned Role</th>
-                        <th className="py-3 px-4">Module Privileges</th>
-                        <th className="py-3 px-4">Access Status</th>
-                        <th className="py-3 px-4 text-right">Role &amp; Account Actions</th>
+                        <th className="py-3 px-4">Employee &amp; Login Session</th>
+                        <th className="py-3 px-4">Role &amp; Department</th>
+                        <th className="py-3 px-4">Allowed Pages</th>
+                        <th className="py-3 px-4">Sign-In Permission</th>
+                        <th className="py-3 px-4 text-right">Actions &amp; Login Link</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-xs">
                       {filteredAccounts.map((acc) => {
                         const isUnassigned = acc.role === 'unassigned' || !acc.active;
+                        const sess = sessionByEmailMap.get(acc.email.trim().toLowerCase());
                         return (
                           <tr key={acc.id} className="hover:bg-slate-50 align-top">
-                            <td className="py-3 px-4">
-                              <p className="font-semibold text-slate-900">{acc.fullName}</p>
-                              <p className="font-mono-tabular text-[11px] text-slate-500">
+                            <td className="py-3.5 px-4">
+                              <div className="flex items-center gap-2">
+                                <p className="font-semibold text-slate-900">{acc.fullName}</p>
+                                {sess?.status === 'logged_in' ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    Online
+                                  </span>
+                                ) : sess?.status === 'logged_out' ? (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-medium">
+                                    Logged Out
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="font-mono-tabular text-[11px] text-slate-500 mt-0.5">
                                 {acc.email}
                               </p>
                               {acc.phone && (
@@ -1383,26 +1578,28 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                                 </p>
                               )}
                             </td>
-                            <td className="py-3 px-4">
-                              <p className="font-medium text-slate-800">{acc.department}</p>
+                            <td className="py-3.5 px-4">
                               <span
-                                className={`inline-block mt-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
                                   acc.role === 'unassigned'
                                     ? 'bg-amber-100 text-amber-800'
-                                    : 'bg-emerald-50 text-emerald-800'
+                                    : acc.role === 'property_admin'
+                                      ? 'bg-blue-50 text-[#061539]'
+                                      : 'bg-emerald-50 text-emerald-800'
                                 }`}
                               >
                                 {ASSIGNABLE_ROLE_LABELS[acc.role]}
                               </span>
+                              <p className="text-[11px] text-slate-500 mt-1">{acc.department}</p>
                             </td>
-                            <td className="py-3 px-4 max-w-xs">
+                            <td className="py-3.5 px-4 max-w-xs">
                               {acc.privileges.length === 0 ? (
                                 <span className="text-[11px] text-slate-400 italic">
-                                  No module privileges assigned
+                                  No pages enabled yet
                                 </span>
                               ) : (
                                 <div className="flex flex-wrap gap-1">
-                                  {acc.privileges.slice(0, 5).map((p) => (
+                                  {acc.privileges.slice(0, 4).map((p) => (
                                     <span
                                       key={p}
                                       className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded text-[10px]"
@@ -1411,36 +1608,44 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                                         p}
                                     </span>
                                   ))}
-                                  {acc.privileges.length > 5 && (
+                                  {acc.privileges.length > 4 && (
                                     <span className="px-1.5 py-0.5 bg-slate-200 text-slate-800 rounded text-[10px] font-semibold">
-                                      +{acc.privileges.length - 5} more
+                                      +{acc.privileges.length - 4} more
                                     </span>
                                   )}
                                 </div>
                               )}
                             </td>
-                            <td className="py-3 px-4">
+                            <td className="py-3.5 px-4">
                               {isUnassigned ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold text-[11px]">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 font-semibold text-[11px]">
                                   <ShieldAlert className="w-3 h-3" />
-                                  <span>Unassigned / Revoked</span>
+                                  <span>Paused / Unassigned</span>
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold text-[11px]">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-[11px]">
                                   <UserCheck className="w-3 h-3" />
-                                  <span>Active ({acc.privileges.length})</span>
+                                  <span>Active ({acc.privileges.length} pages)</span>
                                 </span>
                               )}
                             </td>
-                            <td className="py-3 px-4 text-right space-y-1.5">
+                            <td className="py-3.5 px-4 text-right space-y-1.5">
                               <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openNotifyAccModal(acc)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#061539] font-semibold rounded cursor-pointer"
+                                >
+                                  <Bell className="w-3 h-3 text-[#1c46be]" />
+                                  <span>Notify &amp; Link</span>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => openEditUserModal(acc)}
                                   className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded cursor-pointer"
                                 >
                                   <Pencil className="w-3 h-3" />
-                                  <span>Assign / Edit Role</span>
+                                  <span>Edit Role</span>
                                 </button>
                                 {acc.role !== 'unassigned' && (
                                   <button
@@ -1452,7 +1657,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                                     className="inline-flex items-center gap-1 px-2.5 py-1 border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold rounded cursor-pointer"
                                   >
                                     <UserMinus className="w-3 h-3" />
-                                    <span>Delete Role</span>
+                                    <span>Unassign</span>
                                   </button>
                                 )}
                                 <button
@@ -3125,6 +3330,157 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
           </div>
         );
       })()}
+
+      {/* Send Notification & Login Link Modal */}
+      {notifyAccTarget && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={handleSendAccLoginNotification}
+            className="bg-white border border-slate-200 rounded-xl max-w-xl w-full p-6 space-y-4 text-xs my-8 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Send Notification &amp; Login Link — {notifyAccTarget.fullName}
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {notifyAccTarget.email} · {ASSIGNABLE_ROLE_LABELS[notifyAccTarget.role]}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotifyAccTarget(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block font-semibold text-slate-700">
+                Choose Login Portal Link
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleNotifyAccPortalSwitch('staff')}
+                  className={`p-3 rounded-lg border text-left cursor-pointer ${
+                    notifyAccPortal === 'staff'
+                      ? 'border-[#061539] bg-blue-50 text-[#061539]'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <p className="font-bold">Staff Portal (/login)</p>
+                  <p className="font-mono-tabular text-[10px] truncate mt-0.5">{staffLoginUrl}</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNotifyAccPortalSwitch('richgates-admin')}
+                  className={`p-3 rounded-lg border text-left cursor-pointer ${
+                    notifyAccPortal === 'richgates-admin'
+                      ? 'border-[#061539] bg-blue-50 text-[#061539]'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <p className="font-bold">Property Admin (/admin)</p>
+                  <p className="font-mono-tabular text-[10px] truncate mt-0.5">{adminLoginUrl}</p>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Notification Subject
+              </label>
+              <input
+                type="text"
+                required
+                value={notifyAccSubject}
+                onChange={(e) => setNotifyAccSubject(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Message &amp; Login Link
+              </label>
+              <textarea
+                rows={5}
+                required
+                value={notifyAccBody}
+                onChange={(e) => setNotifyAccBody(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 font-sans leading-relaxed"
+              />
+            </div>
+
+            {notifyAccFeedback && (
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                <span>{notifyAccFeedback}</span>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const urlToCopy =
+                      notifyAccPortal === 'richgates-admin' ? adminLoginUrl : staffLoginUrl;
+                    await navigator.clipboard.writeText(urlToCopy);
+                    onNotify(`Copied login link: ${urlToCopy}`);
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-semibold cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Link</span>
+                </button>
+
+                <a
+                  href={`mailto:${encodeURIComponent(notifyAccTarget.email)}?subject=${encodeURIComponent(
+                    notifyAccSubject
+                  )}&body=${encodeURIComponent(notifyAccBody)}`}
+                  className="inline-flex items-center gap-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-semibold"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Email Draft</span>
+                </a>
+
+                {onSendPasswordSetupEmail && (
+                  <button
+                    type="button"
+                    disabled={notifyAccResetBusy}
+                    onClick={handleSendAccPasswordSetup}
+                    className="inline-flex items-center gap-1 px-3 py-2 border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg font-semibold cursor-pointer"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>{notifyAccResetBusy ? 'Sending...' : 'Send Password Setup Email'}</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNotifyAccTarget(null)}
+                  className="px-3.5 py-2 text-slate-600 cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={notifyAccBusy}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{notifyAccBusy ? 'Sending...' : 'Send Notification'}</span>
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

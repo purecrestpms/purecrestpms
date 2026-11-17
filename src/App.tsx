@@ -47,6 +47,7 @@ import { ReservationsCalendarView } from './components/ReservationsCalendarView'
 import { RoomsReservationsView } from './components/RoomsReservationsView';
 import { Sidebar } from './components/Sidebar';
 import { StaffHrPayrollView } from './components/StaffHrPayrollView';
+import { StaffSessionsView } from './components/StaffSessionsView';
 import { mergeCmsWithDefaults, useCms } from './context/CmsContext';
 import { RICHGATES_PROPERTY_ID } from './data/seedData';
 import {
@@ -59,7 +60,9 @@ import {
 } from './firebase';
 import {
   buildPropertyIcalFeed,
+  heartbeatStaffSessionWorkflow,
   markMessageReadWorkflow,
+  recordStaffSessionLogoutWorkflow,
   seedRichgatesIfNeeded,
   syncDefaultMessagesIfNeeded,
   syncDefaultPosMenuIfNeeded,
@@ -67,6 +70,7 @@ import {
   syncRichgatesLicenseCapIfNeeded,
   syncRichgatesOfficialCatalogIfNeeded,
   syncRichgatesPropertyInfoIfNeeded,
+  upsertStaffSessionLoginWorkflow,
 } from './services/pmsService';
 import {
   AttendanceRecord,
@@ -100,6 +104,7 @@ import {
   ShiftScheduleRecord,
   StaffMemberRecord,
   StaffRole,
+  StaffSessionRecord,
   UserRoleProfile,
 } from './types/pms';
 
@@ -165,6 +170,7 @@ const VALID_SECTIONS: NavSectionId[] = [
   'procurement',
   'staff',
   'user_management',
+  'staff_sessions',
   'shifts_attendance',
   'payroll',
   'maintenance',
@@ -349,6 +355,7 @@ export default function App() {
   const [staffMembers, setStaffMembers] = useState<StaffMemberRecord[]>([]);
   const [userAccounts, setUserAccounts] = useState<PropertyUserAccountRecord[]>([]);
   const [userAccountsLoaded, setUserAccountsLoaded] = useState(false);
+  const [staffSessions, setStaffSessions] = useState<StaffSessionRecord[]>([]);
   const [shifts, setShifts] = useState<ShiftScheduleRecord[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>([]);
@@ -463,6 +470,7 @@ export default function App() {
         autoSeedAttemptedRef.current = null;
         setProperties([]);
         setUserAccounts([]);
+        setStaffSessions([]);
       }
     });
     return () => {
@@ -528,7 +536,7 @@ export default function App() {
     effectiveRole === 'pch_admin' ||
     effectiveRole === 'property_admin' ||
     baseAllowedSections.includes('staff')
-      ? Array.from(new Set([...baseAllowedSections, 'user_management']))
+      ? Array.from(new Set([...baseAllowedSections, 'user_management', 'staff_sessions']))
       : baseAllowedSections;
 
   useEffect(() => {
@@ -719,6 +727,7 @@ export default function App() {
       sub<PropertyUserAccountRecord>('user_accounts', setUserAccounts, () =>
         setUserAccountsLoaded(true)
       ),
+      sub<StaffSessionRecord>('staff_sessions', setStaffSessions),
       sub<ShiftScheduleRecord>('shifts', setShifts),
       sub<AttendanceRecord>('attendance', setAttendance),
       sub<PayrollRunRecord>('payroll_runs', setPayrollRuns),
@@ -912,6 +921,53 @@ export default function App() {
     }
   }, [messages, activeRole, user?.email]);
 
+  // Record active employee/admin login & keep session heartbeat fresh for the Session Monitor
+  useEffect(() => {
+    if (!authReady || !user || !user.email || portalMode === 'home') return;
+    const activeProp = properties.find((p) => p.id === activePropertyId);
+    if (!activeProp) return;
+
+    const fullName =
+      matchedUserAccount?.fullName ||
+      userProfile?.displayName ||
+      user.displayName ||
+      user.email.split('@')[0] ||
+      'Property Operator';
+    const department = matchedUserAccount?.department || 'Management';
+
+    void upsertStaffSessionLoginWorkflow({
+      property: activeProp,
+      uid: user.uid,
+      email: user.email,
+      fullName,
+      assignedRole: effectiveRole,
+      department,
+      portal: portalMode,
+    }).catch(() => undefined);
+
+    const intervalId = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void heartbeatStaffSessionWorkflow({
+        propertyId: activeProp.id,
+        uid: user.uid,
+      }).catch(() => undefined);
+    }, 3 * 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    authReady,
+    user?.uid,
+    user?.email,
+    user?.displayName,
+    portalMode,
+    properties,
+    activePropertyId,
+    matchedUserAccount?.fullName,
+    matchedUserAccount?.department,
+    userProfile?.displayName,
+    effectiveRole,
+  ]);
+
   const handlePortalSelection = (portal: PortalMode) => {
     setPortalMode(portal);
     const nextSection: NavSectionId = 'dashboard';
@@ -1004,6 +1060,12 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    if (user && activePropertyId) {
+      await recordStaffSessionLogoutWorkflow({
+        propertyId: activePropertyId,
+        uid: user.uid,
+      }).catch(() => undefined);
+    }
     await signOut(auth);
   };
 
@@ -1589,6 +1651,7 @@ export default function App() {
                   activeRole={effectiveRole}
                   staffMembers={staffMembers}
                   userAccounts={userAccounts}
+                  staffSessions={staffSessions}
                   shifts={shifts}
                   attendance={attendance}
                   payrollRuns={payrollRuns}
@@ -1596,7 +1659,44 @@ export default function App() {
                   maintenanceTickets={maintenanceTickets}
                   posOrders={posOrders}
                   actorRole={ROLE_LABELS[effectiveRole]}
+                  currentUserEmail={user.email || ''}
+                  currentUserName={
+                    matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    'Property Admin'
+                  }
+                  onOpenSessionMonitor={() => handleSelectSection('staff_sessions')}
+                  onSendPasswordSetupEmail={async (targetEmail) => {
+                    await sendPasswordResetEmail(auth, targetEmail);
+                    notify(`Password setup email sent to ${targetEmail}`);
+                  }}
                   onNotify={notify}
+                />
+              )}
+
+              {activeSection === 'staff_sessions' && (
+                <StaffSessionsView
+                  key={`staff-sessions-${activeProperty.id}`}
+                  property={activeProperty}
+                  activeRole={effectiveRole}
+                  userAccounts={userAccounts}
+                  staffSessions={staffSessions}
+                  staffMembers={staffMembers}
+                  currentUserEmail={user.email || ''}
+                  currentUserName={
+                    matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    'Property Admin'
+                  }
+                  actorRole={ROLE_LABELS[effectiveRole]}
+                  onNotify={notify}
+                  onNavigateSection={handleSelectSection}
+                  onSendPasswordSetupEmail={async (targetEmail) => {
+                    await sendPasswordResetEmail(auth, targetEmail);
+                    notify(`Password setup email sent to ${targetEmail}`);
+                  }}
                 />
               )}
 

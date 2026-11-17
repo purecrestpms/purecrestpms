@@ -693,6 +693,30 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["propertyId", "firstName", "lastName", "fullName", "email", "department", "role", "privileges", "active", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "StaffSession": {
+      "title": "StaffSession",
+      "description": "Live login/logout activity monitor record for a property user or staff member.",
+      "type": "object",
+      "properties": {
+        "propertyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "assignedRole": { "type": "string", "enum": ["pch_admin", "property_admin", "front_desk", "housekeeping", "fnb_kitchen", "accountant", "maintenance", "unassigned"] },
+        "department": { "type": "string", "maxLength": 64 },
+        "portal": { "type": "string", "enum": ["richgates-admin", "staff", "pch-admin"] },
+        "status": { "type": "string", "enum": ["logged_in", "logged_out"] },
+        "loginAtIso": { "type": "string", "maxLength": 40 },
+        "lastActiveIso": { "type": "string", "maxLength": 40 },
+        "loggedOutAtIso": { "type": "string", "maxLength": 40 },
+        "userAgentLabel": { "type": "string", "maxLength": 120 },
+        "authorizedEmails": { "type": "array" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["propertyId", "uid", "email", "fullName", "assignedRole", "department", "portal", "status", "loginAtIso", "lastActiveIso", "authorizedEmails", "ownerUid", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -755,6 +779,10 @@
     "/properties/{propertyId}/user_accounts/{accountId}": {
       "schema": { "$ref": "#/entities/PropertyUserAccount" },
       "description": "Property user accounts with assigned roles, module privileges, and unassigned state."
+    },
+    "/properties/{propertyId}/staff_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/StaffSession" },
+      "description": "Live employee login/logout status and session monitor."
     },
     "/properties/{propertyId}/shifts/{shiftId}": {
       "schema": { "$ref": "#/entities/ShiftSchedule" },

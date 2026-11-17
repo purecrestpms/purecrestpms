@@ -390,11 +390,10 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
   };
 
   return (
-    <div id="top" className="min-h-screen bg-[#F8FAFC] text-slate-900">
-      {/* Top Bar Contract: 3 zones separated by gap-8 */}
-      <header className="no-print sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+    <div id="top" className="min-h-screen bg-[#F4F7FB] text-slate-900">
+      {/* Sticky Top Header over Deep Navy Hero */}
+      <header className="no-print sticky top-0 z-30 bg-[#061539]/95 backdrop-blur-md border-b border-white/10">
         <div className="max-w-[1200px] mx-auto h-16 px-4 sm:px-6 flex items-center justify-between gap-8">
-          {/* Zone 1: PCH Web Emblem + Editorial Site Title */}
           <a
             href="#top"
             onClick={(e) => {
@@ -404,52 +403,52 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
             className="inline-flex items-center gap-2.5 whitespace-nowrap shrink-0"
           >
             <PchBrandIcon sizeClass="w-8 h-8" />
-            <span className="font-site-title text-xl font-bold text-[#0B245B]">
-              PCH PMS
-            </span>
+            <div className="leading-tight">
+              <span className="font-site-title text-lg font-bold text-white tracking-tight block">
+                PCH PMS
+              </span>
+            </div>
           </a>
 
-          {/* Zone 2: 4 concise single-line text nav links */}
           <nav
             aria-label="Primary"
-            className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600"
+            className="hidden md:flex items-center gap-7 text-sm font-medium text-blue-100/85"
           >
             <button
               type="button"
               onClick={() => scrollToSection('overview')}
-              className="hover:text-[#0B245B] hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Overview
             </button>
             <button
               type="button"
               onClick={() => scrollToSection('capabilities')}
-              className="hover:text-[#0B245B] hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Capabilities
             </button>
             <button
               type="button"
               onClick={() => scrollToSection('pricing')}
-              className="hover:text-[#0B245B] hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Pricing
             </button>
             <button
               type="button"
               onClick={() => scrollToSection('contact')}
-              className="hover:text-[#0B245B] hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Contact
             </button>
           </nav>
 
-          {/* Zone 3: 1 primary CTA */}
           <div className="flex items-center gap-3 shrink-0">
             <button
               type="button"
               onClick={handleOpenPlatformPortal}
-              className="px-4 py-2 text-xs font-semibold text-white bg-[#0B245B] hover:bg-[#13347D] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="px-4 py-2 text-xs font-bold text-[#061539] bg-[#F5B800] hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-sm"
             >
               {isSignedIn ? 'Open Workspace' : 'Group Admin Sign In'}
             </button>
@@ -457,7 +456,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
               type="button"
               onClick={() => setMobileNavOpen((v) => !v)}
               aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
-              className="md:hidden p-2 rounded-lg border border-slate-200 text-slate-700 cursor-pointer"
+              className="md:hidden p-2 rounded-lg border border-white/15 text-white cursor-pointer"
             >
               {mobileNavOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
             </button>
@@ -465,32 +464,32 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
         </div>
 
         {mobileNavOpen && (
-          <div className="md:hidden border-t border-slate-200 bg-white px-4 py-3 flex flex-col gap-2 text-sm font-medium text-slate-700">
+          <div className="md:hidden border-t border-white/10 bg-[#061539] px-4 py-3 flex flex-col gap-2 text-sm font-medium text-blue-100">
             <button
               type="button"
               onClick={() => scrollToSection('overview')}
-              className="text-left py-2 hover:text-[#0B245B]"
+              className="text-left py-2 hover:text-white"
             >
               Overview
             </button>
             <button
               type="button"
               onClick={() => scrollToSection('capabilities')}
-              className="text-left py-2 hover:text-[#0B245B]"
+              className="text-left py-2 hover:text-white"
             >
               Capabilities
             </button>
             <button
               type="button"
               onClick={() => scrollToSection('pricing')}
-              className="text-left py-2 hover:text-[#0B245B]"
+              className="text-left py-2 hover:text-white"
             >
               Pricing
             </button>
             <button
               type="button"
               onClick={() => scrollToSection('contact')}
-              className="text-left py-2 hover:text-[#0B245B]"
+              className="text-left py-2 hover:text-white"
             >
               Contact
             </button>
@@ -499,24 +498,41 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
       </header>
 
       <main>
-        {/* SECTION 1: EDITORIAL HOSPITALITY HERO */}
-        <section id="overview" className="border-b border-slate-200 bg-white">
-          <div className="max-w-[1200px] mx-auto px-4 sm:px-6 pt-12 pb-12 lg:pt-16 lg:pb-16">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
+        {/* SECTION 1: EXECUTIVE BLUE HOSPITALITY HERO */}
+        <section
+          id="overview"
+          className="relative overflow-hidden bg-gradient-to-br from-[#061539] via-[#0B245B] to-[#13347D] text-white border-b border-[#1c46be]/30"
+        >
+          {/* Subtle Architectural Ambient Radial Glow */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-28 right-0 w-[640px] h-[640px] rounded-full bg-[radial-gradient(circle,rgba(59,130,246,0.22)_0%,rgba(6,21,57,0)_70%)]"
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -bottom-32 -left-20 w-[480px] h-[480px] rounded-full bg-[radial-gradient(circle,rgba(245,184,0,0.12)_0%,rgba(6,21,57,0)_68%)]"
+          />
+
+          <div className="relative max-w-[1200px] mx-auto px-4 sm:px-6 pt-12 pb-12 lg:pt-16 lg:pb-16">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
               <div className="lg:col-span-6 flex flex-col justify-center space-y-6">
-                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold tracking-wide text-[#9A650B]">
-                  <span>PureCrest Hospitality</span>
-                  <span aria-hidden="true" className="text-slate-300">·</span>
-                  <span className="text-slate-600 font-medium">Property Management Software</span>
-                  <span aria-hidden="true" className="text-slate-300">·</span>
-                  <span className="text-slate-600 font-medium">From $25 USD / mo</span>
+                <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold tracking-wide">
+                  <span className="text-[#F5B800] uppercase tracking-wider">
+                    PureCrest Hospitality
+                  </span>
+                  <span aria-hidden="true" className="text-blue-300/40">·</span>
+                  <span className="text-blue-100/90 font-medium">
+                    Property Management Platform
+                  </span>
+                  <span aria-hidden="true" className="text-blue-300/40">·</span>
+                  <span className="text-blue-100/90 font-medium">From $25 USD / mo</span>
                 </div>
 
-                <h1 className="font-site-title text-[clamp(2.25rem,4vw,3.65rem)] leading-[1.08] font-bold text-[#0B245B] [text-wrap:balance]">
+                <h1 className="font-site-title text-[clamp(2.25rem,4.1vw,3.65rem)] leading-[1.07] font-bold text-white [text-wrap:balance]">
                   Hospitality operations, guest folios, and financial control in one workspace.
                 </h1>
 
-                <p className="text-base text-slate-600 leading-relaxed max-w-xl">
+                <p className="text-base text-blue-100/85 leading-relaxed max-w-xl">
                   Manage room reservations, front desk check-ins, housekeeping dispatch, restaurant POS, store inventory, and daily FX accounting across independent hotels, resorts, and serviced apartments anywhere in the world.
                 </p>
 
@@ -524,7 +540,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                   <button
                     type="button"
                     onClick={() => scrollToSection('pricing')}
-                    className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold text-white bg-[#0B245B] hover:bg-[#13347D] rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    className="inline-flex items-center gap-2 px-6 py-3.5 text-sm font-bold text-[#061539] bg-[#F5B800] hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-lg shadow-slate-950/25"
                   >
                     <span>Explore Plans from $25 USD</span>
                     <ArrowRight className="w-4 h-4" />
@@ -532,7 +548,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                   <button
                     type="button"
                     onClick={() => scrollToSection('contact')}
-                    className="px-5 py-3 text-sm font-semibold text-[#0B245B] border border-slate-300 bg-white hover:bg-slate-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    className="px-5 py-3.5 text-sm font-semibold text-white border border-white/25 bg-white/10 hover:bg-white/15 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer backdrop-blur-sm"
                   >
                     Request Live Demo
                   </button>
@@ -540,50 +556,56 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
               </div>
 
               <div className="lg:col-span-6 flex flex-col">
-                <div className="relative flex-1 min-h-[280px] lg:min-h-[430px] rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                  {!heroImgFailed ? (
-                    <img
-                      src={heroLobbyImg}
-                      alt="Contemporary hotel lobby and reception desk powered by PCH PMS"
-                      referrerPolicy="no-referrer"
-                      onError={() => setHeroImgFailed(true)}
-                      className="w-full h-full lg:h-full object-cover object-center"
+                <div className="relative rounded-2xl p-2 bg-white/10 border border-white/15 shadow-2xl shadow-slate-950/40 backdrop-blur-sm">
+                  <div className="relative min-h-[280px] lg:min-h-[410px] rounded-xl overflow-hidden bg-[#061539]">
+                    {!heroImgFailed ? (
+                      <img
+                        src={heroLobbyImg}
+                        alt="Contemporary hotel lobby and reception desk powered by PCH PMS"
+                        referrerPolicy="no-referrer"
+                        onError={() => setHeroImgFailed(true)}
+                        className="w-full h-full lg:h-[410px] object-cover object-center"
+                      />
+                    ) : (
+                      <div className="w-full h-full min-h-[300px] bg-gradient-to-br from-[#0B245B] to-[#061539] flex flex-col items-center justify-center p-8 text-center">
+                        <Building2 className="w-10 h-10 text-[#F5B800] mb-3" />
+                        <p className="font-site-title text-lg font-bold text-white">
+                          Unified Hotel &amp; Serviced Apartment Operations
+                        </p>
+                      </div>
+                    )}
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#061539]/75 to-transparent"
                     />
-                  ) : (
-                    <div className="w-full h-full min-h-[300px] bg-gradient-to-br from-[#0B245B]/5 to-amber-50 flex flex-col items-center justify-center p-8 text-center">
-                      <Building2 className="w-10 h-10 text-[#0B245B] mb-3" />
-                      <p className="font-site-title text-lg font-bold text-[#0B245B]">
-                        Unified Hotel &amp; Serviced Apartment Operations
-                      </p>
-                    </div>
-                  )}
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Full-Width 4-Column Proof Strip */}
-            <div className="mt-10 pt-8 border-t border-slate-200 grid grid-cols-2 lg:grid-cols-4 gap-6">
-              <div>
-                <p className="font-mono-tabular text-2xl font-bold text-[#0B245B]">$25 USD/mo</p>
-                <p className="text-xs text-slate-600 mt-1">
+            {/* Integrated Blue-Glass 4-Column Proof Strip */}
+            <div className="mt-10 pt-7 border-t border-white/15 grid grid-cols-2 lg:grid-cols-4 gap-5">
+              <div className="rounded-xl bg-white/[0.06] border border-white/10 px-4 py-3.5">
+                <p className="font-mono-tabular text-2xl font-bold text-[#F5B800]">$25 USD/mo</p>
+                <p className="text-xs text-blue-100/80 mt-1">
                   Starter pricing built for 12-room inns up to 300-room resorts
                 </p>
               </div>
-              <div>
-                <p className="font-mono-tabular text-2xl font-bold text-[#0B245B]">USD &amp; FX</p>
-                <p className="text-xs text-slate-600 mt-1">
+              <div className="rounded-xl bg-white/[0.06] border border-white/10 px-4 py-3.5">
+                <p className="font-mono-tabular text-2xl font-bold text-white">USD &amp; FX</p>
+                <p className="text-xs text-blue-100/80 mt-1">
                   Transparent USD licensing plus live daily exchange conversion
                 </p>
               </div>
-              <div>
-                <p className="font-mono-tabular text-2xl font-bold text-[#0B245B]">iCal Sync</p>
-                <p className="text-xs text-slate-600 mt-1">
+              <div className="rounded-xl bg-white/[0.06] border border-white/10 px-4 py-3.5">
+                <p className="font-mono-tabular text-2xl font-bold text-white">iCal Sync</p>
+                <p className="text-xs text-blue-100/80 mt-1">
                   Two-way calendar feeds for Booking.com, Airbnb, Expedia &amp; VRBO
                 </p>
               </div>
-              <div>
-                <p className="font-mono-tabular text-2xl font-bold text-[#0B245B]">24-Hr Setup</p>
-                <p className="text-xs text-slate-600 mt-1">
+              <div className="rounded-xl bg-white/[0.06] border border-white/10 px-4 py-3.5">
+                <p className="font-mono-tabular text-2xl font-bold text-white">24-Hr Setup</p>
+                <p className="text-xs text-blue-100/80 mt-1">
                   Guided room rate import, staff role matrix &amp; team onboarding
                 </p>
               </div>
@@ -592,11 +614,13 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
         </section>
 
         {/* SECTION 2: CORE CAPABILITIES (Asymmetric Bento Grid) */}
-        <section id="capabilities" className="py-16 lg:py-20 bg-[#F8FAFC] border-b border-slate-200">
+        <section id="capabilities" className="py-16 lg:py-20 bg-[#F4F7FB] border-b border-slate-200">
           <div className="max-w-[1200px] mx-auto px-4 sm:px-6 space-y-10">
             <div className="max-w-2xl space-y-3">
-              <p className="text-xs font-semibold text-[#9A650B]">Core Capabilities</p>
-              <h2 className="font-site-title text-3xl sm:text-4xl font-bold text-[#0B245B] [text-wrap:balance]">
+              <p className="text-xs font-bold uppercase tracking-wider text-[#1c46be]">
+                Core Capabilities
+              </p>
+              <h2 className="font-site-title text-3xl sm:text-4xl font-bold text-[#061539] [text-wrap:balance]">
                 Every department connected in real time, without spreadsheet reconciliation.
               </h2>
               <p className="text-base text-slate-600 leading-relaxed">
@@ -608,15 +632,15 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
               {CAPABILITIES.map((cap) => (
                 <article
                   key={cap.num}
-                  className={`bg-white border border-slate-200 rounded-xl p-6 flex flex-col justify-between gap-6 ${
+                  className={`bg-white border border-slate-200/90 rounded-2xl p-6 shadow-sm flex flex-col justify-between gap-6 ${
                     cap.spanTwo ? 'lg:col-span-2' : 'lg:col-span-1'
                   }`}
                 >
                   <div className="space-y-2.5">
-                    <p className="font-mono-tabular text-xs font-semibold text-[#9A650B]">
+                    <p className="font-mono-tabular text-xs font-bold text-[#1c46be]">
                       {cap.num}
                     </p>
-                    <h3 className="font-display text-xl font-bold text-[#0B245B] tracking-tight">
+                    <h3 className="font-display text-xl font-bold text-[#061539] tracking-tight">
                       {cap.title}
                     </h3>
                     <p className="text-sm text-slate-600 leading-relaxed max-w-2xl">
@@ -625,7 +649,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                   </div>
 
                   {cap.hasImage === 'suite' && (
-                    <div className="rounded-lg overflow-hidden border border-slate-200 aspect-[16/9] max-h-64 bg-slate-100">
+                    <div className="rounded-xl overflow-hidden border border-slate-200 aspect-[16/9] max-h-64 bg-slate-100">
                       {!suiteImgFailed ? (
                         <img
                           src={suitePreviewImg}
@@ -643,7 +667,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                   )}
 
                   {cap.hasImage === 'dining' && (
-                    <div className="rounded-lg overflow-hidden border border-slate-200 aspect-[16/9] max-h-64 bg-slate-100">
+                    <div className="rounded-xl overflow-hidden border border-slate-200 aspect-[16/9] max-h-64 bg-slate-100">
                       {!diningImgFailed ? (
                         <img
                           src={diningPosImg}
@@ -669,8 +693,10 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
         <section className="py-16 lg:py-20 bg-white border-b border-slate-200">
           <div className="max-w-[1200px] mx-auto px-4 sm:px-6 space-y-10">
             <div className="max-w-2xl space-y-2.5">
-              <p className="text-xs font-semibold text-[#9A650B]">Universal Hospitality Fit</p>
-              <h2 className="font-site-title text-3xl font-bold text-[#0B245B] [text-wrap:balance]">
+              <p className="text-xs font-bold uppercase tracking-wider text-[#1c46be]">
+                Universal Hospitality Fit
+              </p>
+              <h2 className="font-site-title text-3xl font-bold text-[#061539] [text-wrap:balance]">
                 Flexible enough for any property model or region.
               </h2>
               <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
@@ -682,12 +708,12 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
               {PROPERTY_TYPES.map((item, idx) => (
                 <div
                   key={item.title}
-                  className="border border-slate-200 rounded-xl p-6 bg-[#F8FAFC] space-y-2.5"
+                  className="border border-slate-200 rounded-2xl p-6 bg-[#F8FAFC] hover:border-[#1c46be]/40 transition-colors space-y-2.5"
                 >
-                  <p className="font-mono-tabular text-xs font-semibold text-[#9A650B]">
+                  <p className="font-mono-tabular text-xs font-bold text-[#1c46be]">
                     0{idx + 1}.
                   </p>
-                  <h3 className="font-display text-base font-bold text-[#0B245B]">{item.title}</h3>
+                  <h3 className="font-display text-base font-bold text-[#061539]">{item.title}</h3>
                   <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">{item.desc}</p>
                 </div>
               ))}
@@ -696,14 +722,14 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
         </section>
 
         {/* SECTION 4: USD PRICING & PLANS (Starting at $25 USD Monthly) */}
-        <section id="pricing" className="py-16 lg:py-20 bg-[#F8FAFC] border-b border-slate-200">
+        <section id="pricing" className="py-16 lg:py-20 bg-[#F4F7FB] border-b border-slate-200">
           <div className="max-w-[1200px] mx-auto px-4 sm:px-6 space-y-10">
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
               <div className="max-w-2xl space-y-2.5">
-                <p className="text-xs font-semibold text-[#9A650B]">
+                <p className="text-xs font-bold uppercase tracking-wider text-[#1c46be]">
                   Transparent USD Licensing
                 </p>
-                <h2 className="font-site-title text-3xl sm:text-4xl font-bold text-[#0B245B] [text-wrap:balance]">
+                <h2 className="font-site-title text-3xl sm:text-4xl font-bold text-[#061539] [text-wrap:balance]">
                   Simple US Dollar plans starting at $25 monthly.
                 </h2>
                 <p className="text-sm sm:text-base text-slate-600">
@@ -715,7 +741,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
               <div
                 role="group"
                 aria-label="Billing cycle"
-                className="inline-flex items-center gap-1 p-1 bg-slate-200/80 rounded-lg self-start lg:self-auto"
+                className="inline-flex items-center gap-1 p-1 bg-slate-200/85 rounded-xl self-start lg:self-auto"
               >
                 {(
                   [
@@ -728,9 +754,9 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                     key={cycle.id}
                     type="button"
                     onClick={() => setBillingCycle(cycle.id)}
-                    className={`px-3.5 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                       billingCycle === cycle.id
-                        ? 'bg-[#0B245B] text-white shadow-sm'
+                        ? 'bg-[#061539] text-white shadow-sm'
                         : 'text-slate-700 hover:text-slate-950'
                     }`}
                   >
@@ -753,41 +779,75 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                 return (
                   <div
                     key={plan.id}
-                    className={`bg-white rounded-xl p-6 flex flex-col justify-between gap-6 ${
+                    className={`rounded-2xl p-6 flex flex-col justify-between gap-6 transition-shadow ${
                       plan.featured
-                        ? 'border-2 border-[#0B245B] shadow-md'
-                        : 'border border-slate-200'
+                        ? 'bg-gradient-to-b from-[#061539] to-[#0B245B] text-white border-2 border-[#0B245B] shadow-xl'
+                        : 'bg-white border border-slate-200 text-slate-900 shadow-sm'
                     }`}
                   >
                     <div className="space-y-4">
                       <div className="space-y-1">
                         <div className="flex items-center justify-between gap-2 text-xs">
-                          <span className="font-mono-tabular text-slate-500">
+                          <span
+                            className={`font-mono-tabular ${
+                              plan.featured ? 'text-blue-200' : 'text-slate-500'
+                            }`}
+                          >
                             Up to {plan.maxRooms} rooms
                           </span>
                           {plan.featured && (
-                            <span className="font-semibold text-[#9A650B]">Most Popular</span>
+                            <span className="font-bold text-[#F5B800]">Most Popular</span>
                           )}
                         </div>
-                        <h3 className="font-site-title text-xl font-bold text-[#0B245B]">
+                        <h3
+                          className={`font-site-title text-xl font-bold ${
+                            plan.featured ? 'text-white' : 'text-[#061539]'
+                          }`}
+                        >
                           {plan.name}
                         </h3>
-                        <p className="text-xs text-slate-600 leading-relaxed min-h-[38px]">
+                        <p
+                          className={`text-xs leading-relaxed min-h-[38px] ${
+                            plan.featured ? 'text-blue-100/85' : 'text-slate-600'
+                          }`}
+                        >
                           {plan.summary}
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-slate-100">
-                        <p className="font-mono-tabular text-3xl font-bold text-[#0B245B]">
+                      <div
+                        className={`pt-3 border-t ${
+                          plan.featured ? 'border-white/15' : 'border-slate-100'
+                        }`}
+                      >
+                        <p
+                          className={`font-mono-tabular text-3xl font-bold ${
+                            plan.featured ? 'text-[#F5B800]' : 'text-[#061539]'
+                          }`}
+                        >
                           {formatUsd(priceUsd, 0)}
                         </p>
-                        <p className="text-xs text-slate-500 mt-0.5">{cycleSuffix}</p>
+                        <p
+                          className={`text-xs mt-0.5 ${
+                            plan.featured ? 'text-blue-200' : 'text-slate-500'
+                          }`}
+                        >
+                          {cycleSuffix}
+                        </p>
                       </div>
 
-                      <ul className="space-y-2.5 text-xs text-slate-700 pt-1">
+                      <ul
+                        className={`space-y-2.5 text-xs pt-1 ${
+                          plan.featured ? 'text-blue-50' : 'text-slate-700'
+                        }`}
+                      >
                         {plan.highlights.map((item) => (
                           <li key={item} className="flex items-start gap-2">
-                            <Check className="w-3.5 h-3.5 text-[#9A650B] shrink-0 mt-0.5" />
+                            <Check
+                              className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                                plan.featured ? 'text-[#F5B800]' : 'text-[#1c46be]'
+                              }`}
+                            />
                             <span>{item}</span>
                           </li>
                         ))}
@@ -797,10 +857,10 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                     <button
                       type="button"
                       onClick={() => openPurchaseModal(plan)}
-                      className={`w-full py-2.5 px-4 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      className={`w-full py-2.5 px-4 rounded-lg text-xs font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                         plan.featured
-                          ? 'bg-[#0B245B] hover:bg-[#13347D] text-white'
-                          : 'bg-slate-900 hover:bg-[#0B245B] text-white'
+                          ? 'bg-[#F5B800] hover:bg-amber-300 text-[#061539]'
+                          : 'bg-[#061539] hover:bg-[#13347D] text-white'
                       }`}
                     >
                       Select {plan.name}
@@ -817,8 +877,10 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
           <div className="max-w-[1200px] mx-auto px-4 sm:px-6 grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
             <div className="lg:col-span-5 space-y-6">
               <div className="space-y-2.5">
-                <p className="text-xs font-semibold text-[#9A650B]">Sales &amp; Onboarding</p>
-                <h2 className="font-site-title text-3xl font-bold text-[#0B245B] [text-wrap:balance]">
+                <p className="text-xs font-bold uppercase tracking-wider text-[#1c46be]">
+                  Sales &amp; Onboarding
+                </p>
+                <h2 className="font-site-title text-3xl font-bold text-[#061539] [text-wrap:balance]">
                   Request a live demonstration or custom property deployment.
                 </h2>
                 <p className="text-sm text-slate-600 leading-relaxed">
@@ -848,7 +910,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
               </div>
             </div>
 
-            <div className="lg:col-span-7 bg-[#F8FAFC] border border-slate-200 rounded-xl p-6 sm:p-8">
+            <div className="lg:col-span-7 bg-[#F4F7FB] border border-slate-200 rounded-2xl p-6 sm:p-8">
               {contactConfirmation ? (
                 <div className="bg-white border border-emerald-200 rounded-xl p-6 space-y-4">
                   <div className="flex items-center gap-2.5 text-emerald-700">
@@ -867,7 +929,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setContactConfirmation(null)}
-                    className="px-4 py-2 text-xs font-semibold bg-[#0B245B] text-white rounded-lg cursor-pointer"
+                    className="px-4 py-2 text-xs font-semibold bg-[#061539] text-white rounded-lg cursor-pointer"
                   >
                     Submit Another Inquiry
                   </button>
@@ -1023,7 +1085,7 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
                     <button
                       type="submit"
                       disabled={contactBusy}
-                      className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold text-white bg-[#0B245B] hover:bg-[#13347D] disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                      className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold text-white bg-[#061539] hover:bg-[#13347D] disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                     >
                       <span>{contactBusy ? 'Submitting...' : 'Submit Inquiry'}</span>
                       <ArrowRight className="w-4 h-4" />
@@ -1039,29 +1101,31 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
         </section>
       </main>
 
-      {/* Quiet Footer (No URLs) */}
-      <footer className="no-print bg-white py-10">
+      {/* Navy Executive Footer (Strict Isolation: Zero Property Links) */}
+      <footer className="no-print bg-[#061539] text-blue-100 py-10 border-t border-white/10">
         <div className="max-w-[1200px] mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="flex items-center gap-3">
             <PchBrandIcon sizeClass="w-9 h-9" />
             <div>
-              <p className="font-site-title text-lg font-bold text-[#0B245B]">PCH PMS</p>
-              <p className="text-xs text-slate-500">
+              <p className="font-site-title text-lg font-bold text-white">PCH PMS</p>
+              <p className="text-xs text-blue-200/75">
                 Hospitality Property Management Platform
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-5 text-xs font-medium text-slate-600">
+          <div className="flex flex-wrap items-center gap-5 text-xs font-medium text-blue-200">
             <button
               type="button"
               onClick={() => onSelectPortal('pch-admin')}
-              className="hover:text-[#0B245B] hover:underline cursor-pointer"
+              className="hover:text-[#F5B800] hover:underline cursor-pointer"
             >
               Group Admin Sign In
             </button>
-            <span className="text-slate-400">·</span>
-            <span className="text-slate-500">© {new Date().getFullYear()} PureCrest Hospitality</span>
+            <span className="text-white/25">·</span>
+            <span className="text-blue-200/75">
+              © {new Date().getFullYear()} PureCrest Hospitality
+            </span>
           </div>
         </div>
       </footer>

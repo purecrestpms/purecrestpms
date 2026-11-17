@@ -29,6 +29,7 @@ export type NavSectionId =
   | 'procurement'
   | 'staff'
   | 'user_management'
+  | 'staff_sessions'
   | 'shifts_attendance'
   | 'payroll'
   | 'maintenance'
@@ -664,6 +665,24 @@ export interface PropertyUserAccountRecord {
   ownerUid: string;
 }
 
+export interface StaffSessionRecord {
+  id: string;
+  propertyId: string;
+  uid: string;
+  email: string;
+  fullName: string;
+  assignedRole: AssignablePropertyRole | 'pch_admin';
+  department: string;
+  portal: 'richgates-admin' | 'staff' | 'pch-admin';
+  status: 'logged_in' | 'logged_out';
+  loginAtIso: string;
+  lastActiveIso: string;
+  loggedOutAtIso?: string;
+  userAgentLabel?: string;
+  authorizedEmails: string[];
+  ownerUid: string;
+}
+
 export interface ShiftScheduleRecord {
   id: string;
   propertyId: string;
@@ -853,6 +872,7 @@ export const PROPERTY_PRIVILEGE_OPTIONS: Array<{
   { id: 'payroll', label: 'Monthly Payroll', group: 'Finance & HR' },
   { id: 'maintenance', label: 'Maintenance', group: 'Finance & HR' },
   { id: 'user_management', label: 'User Management', group: 'Admin' },
+  { id: 'staff_sessions', label: 'Staff Sessions & Links', group: 'Admin' },
   { id: 'ota_channels', label: 'Channel Manager & iCal', group: 'Admin' },
   { id: 'licensing', label: 'Software Licensing', group: 'Admin' },
   { id: 'profile', label: 'Property Profile', group: 'Admin' },
@@ -878,6 +898,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'procurement',
     'staff',
     'user_management',
+    'staff_sessions',
     'shifts_attendance',
     'payroll',
     'maintenance',
@@ -909,6 +930,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'procurement',
     'staff',
     'user_management',
+    'staff_sessions',
     'shifts_attendance',
     'payroll',
     'maintenance',
@@ -1448,6 +1470,12 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       title: 'User Management, Roles & Privileges',
       subtitle: 'Create property user accounts, assign or unassign roles, manage module privileges, and inspect staff performance',
       ctaLabel: 'Create User Account',
+    },
+    staff_sessions: {
+      navLabel: 'Staff Sessions & Links',
+      title: 'Employee Login Monitor & Portal Links',
+      subtitle: 'Monitor active employee logins, logout timestamps, assigned roles, and share Staff (/login) & Admin (/admin) portal links',
+      ctaLabel: 'Broadcast Login Link',
     },
     shifts_attendance: {
       navLabel: 'Shifts & Attendance',
