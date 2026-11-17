@@ -1,4 +1,5 @@
 import express from 'express';
+import { createServer as createHttpServer } from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -31,9 +32,52 @@ function isBlockedPrivateHost(hostname: string): boolean {
   return false;
 }
 
+const DISABLED_HMR_CLIENT_SHIM = `
+const sheetsMap = new Map();
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style && typeof document !== 'undefined') {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    document.head.appendChild(style);
+    sheetsMap.set(id, style);
+  } else if (style && style.textContent !== content) {
+    style.textContent = content;
+  }
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style && style.parentNode) {
+    style.parentNode.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+export function injectQuery(url) {
+  return url;
+}
+export class ErrorOverlay extends HTMLElement {}
+`;
+
 async function startServer() {
   const app = express();
   app.disable('x-powered-by');
+  const httpServer = createHttpServer(app);
 
   // Server-side OTA iCal Proxy (bypasses browser CORS while blocking SSRF to private IPs)
   app.get('/api/ical-proxy', async (req, res) => {
@@ -120,9 +164,20 @@ async function startServer() {
   });
 
   if (!isProduction) {
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
+    if (hmrDisabled) {
+      app.get('/@vite/client', (_req, res) => {
+        res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(200).send(DISABLED_HMR_CLIENT_SHIM);
+      });
+    }
+
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: hmrDisabled
+        ? { middlewareMode: true, ws: false, hmr: false, watch: null }
+        : { middlewareMode: true, ws: { server: httpServer } },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -134,7 +189,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`PCH PMS server listening on http://0.0.0.0:${PORT}`);
   });
 }
