@@ -10,7 +10,9 @@ import {
 } from 'lucide-react';
 import { completeCheckInWorkflow } from '../services/pmsService';
 import {
+  formatChannelCurrency,
   formatNgn,
+  getReservationPaymentSummary,
   GuestRecord,
   PropertyRecord,
   ReservationRecord,
@@ -66,19 +68,25 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
   const selectedRoom =
     sortedRooms.find((r) => r.id === assignedRoomId) || room || preferredRoom;
 
+  const paySummary = getReservationPaymentSummary(
+    reservation,
+    property.usdExchangeRateNgn
+  );
   const isRoomChanged = Boolean(selectedRoom) && selectedRoom?.id !== reservation.roomId;
   const effectiveNightlyRate =
     isRoomChanged && selectedRoom ? selectedRoom.nightlyRateNgn : reservation.nightlyRateNgn;
   const effectiveRoomCharges = effectiveNightlyRate * reservation.nights;
-  const totalFolio = effectiveRoomCharges + reservation.posChargesNgn;
-  const balanceDue = Math.max(0, totalFolio - reservation.paidNgn);
+  const totalFolio =
+    effectiveRoomCharges + reservation.posChargesNgn + (reservation.lateCheckoutFeeNgn || 0);
+  const balanceDue = Math.max(0, totalFolio - paySummary.amountPaid);
 
   const [paymentReceivedNgn, setPaymentReceivedNgn] = useState<number>(balanceDue);
   const [paymentMethod, setPaymentMethod] = useState<ReservationRecord['paymentMethod']>(
     reservation.paymentMethod || 'Bank Transfer'
   );
   const [paymentConfirmed, setPaymentConfirmed] = useState<boolean>(
-    balanceDue === 0 && reservation.paidNgn > 0
+    (balanceDue === 0 && paySummary.amountPaid > 0) ||
+      (paySummary.paymentCollectionMode === 'ota_prepaid' && balanceDue === 0)
   );
 
   const [idType, setIdType] = useState<GuestRecord['idType']>(
@@ -109,8 +117,9 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           ? nextRoom.nightlyRateNgn
           : reservation.nightlyRateNgn) *
           reservation.nights +
-        reservation.posChargesNgn;
-      const nextDue = Math.max(0, nextCharges - reservation.paidNgn);
+        reservation.posChargesNgn +
+        (reservation.lateCheckoutFeeNgn || 0);
+      const nextDue = Math.max(0, nextCharges - paySummary.amountPaid);
       setPaymentReceivedNgn(nextDue);
       setRoomReadyConfirmed(
         nextRoom.housekeepingStatus === 'clean' || nextRoom.housekeepingStatus === 'inspected'
@@ -236,32 +245,72 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
               : 'border-slate-200 bg-slate-50/60'
           }`}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-bold text-slate-900">
               <CreditCard className="w-4 h-4 text-emerald-700" />
               <span>Step 1 — Confirm Payment</span>
             </div>
-            <span className="font-mono-tabular text-[11px] font-semibold text-slate-700">
-              Balance Due: {formatNgn(balanceDue)}
-            </span>
+            <div className="flex items-center gap-2">
+              {paySummary.paymentCollectionMode === 'ota_prepaid' &&
+                balanceDue === 0 &&
+                paySummary.otaPaidAmount > 0 && (
+                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                    OTA Prepaid via {reservation.channel} — ₦0 due at front desk
+                  </span>
+                )}
+              <span className="font-mono-tabular text-[11px] font-semibold text-slate-700">
+                Outstanding Guest Balance: {formatNgn(balanceDue)}
+              </span>
+            </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 bg-white border border-slate-200 rounded-lg p-2.5 text-[11px]">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-white border border-slate-200 rounded-lg p-2.5 text-[11px]">
             <div>
               <p className="text-slate-500">Total Charges</p>
               <p className="font-mono-tabular font-bold text-slate-900">{formatNgn(totalFolio)}</p>
+              {paySummary.sourceCurrency !== 'NGN' && paySummary.sourceTotalAmount > 0 && (
+                <p className="font-mono-tabular text-[10px] text-blue-700 font-semibold">
+                  {formatChannelCurrency(paySummary.sourceTotalAmount, paySummary.sourceCurrency)}{' '}
+                  {paySummary.sourceCurrency} @ ₦{paySummary.fxRateToNgn.toLocaleString('en-NG')}
+                </p>
+              )}
             </div>
             <div>
-              <p className="text-slate-500">Already Paid</p>
+              <p className="text-slate-500">OTA payment received</p>
               <p className="font-mono-tabular font-bold text-emerald-700">
-                {formatNgn(reservation.paidNgn)}
+                {formatNgn(paySummary.otaPaidAmount)}
+              </p>
+              {paySummary.sourceCurrency !== 'NGN' &&
+                paySummary.otaPaidAmount > 0 &&
+                paySummary.otaPaidSourceAmount > 0 && (
+                  <p className="font-mono-tabular text-[10px] text-emerald-700">
+                    ({formatChannelCurrency(paySummary.otaPaidSourceAmount, paySummary.sourceCurrency)}{' '}
+                    {paySummary.sourceCurrency})
+                  </p>
+                )}
+            </div>
+            <div>
+              <p className="text-slate-500">Hotel payment received</p>
+              <p className="font-mono-tabular font-bold text-slate-900">
+                {formatNgn(paySummary.hotelPaidAmount)}
               </p>
             </div>
             <div>
-              <p className="text-slate-500">After Check-In Pay</p>
-              <p className="font-mono-tabular font-bold text-slate-900">
-                {formatNgn(Math.max(0, balanceDue - Math.max(0, paymentReceivedNgn)))} due
+              <p className="text-slate-500">Outstanding guest balance</p>
+              <p
+                className={`font-mono-tabular font-bold ${
+                  Math.max(0, balanceDue - Math.max(0, paymentReceivedNgn)) > 0
+                    ? 'text-rose-700'
+                    : 'text-emerald-700'
+                }`}
+              >
+                {formatNgn(balanceDue)}
               </p>
+              {paymentReceivedNgn > 0 && (
+                <p className="font-mono-tabular text-[10px] text-slate-500">
+                  After pay: {formatNgn(Math.max(0, balanceDue - Math.max(0, paymentReceivedNgn)))}
+                </p>
+              )}
             </div>
           </div>
 

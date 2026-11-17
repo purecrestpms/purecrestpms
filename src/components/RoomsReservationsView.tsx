@@ -60,11 +60,14 @@ import {
 } from '../services/pmsService';
 import {
   BlockedDateRecord,
+  ChannelCurrency,
+  convertCurrencyToNgn,
   convertNgnToUsd,
   formatBookingSourceLabel,
   formatChannelCurrency,
   formatNgn,
   formatUsd,
+  getFxRateToNgn,
   getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
@@ -73,6 +76,7 @@ import {
   LicenseRecord,
   matchesBookingSourceFilter,
   NavSectionId,
+  OtaPaymentCollectionMode,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
@@ -85,6 +89,7 @@ import {
   RoomSection,
   sortRoomsByNumber,
   StaffRole,
+  SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
@@ -284,6 +289,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [adults, setAdults] = useState(1);
   const [childrenCount, setChildrenCount] = useState(0);
   const [channel, setChannel] = useState<ReservationRecord['channel']>('Walk-in');
+  const [bookingCurrency, setBookingCurrency] = useState<ChannelCurrency>('NGN');
+  const [bookingSourceNightlyRate, setBookingSourceNightlyRate] = useState<number>(0);
+  const [bookingCollectionMode, setBookingCollectionMode] =
+    useState<OtaPaymentCollectionMode>('hotel_collect');
   const [initialBookingStatus, setInitialBookingStatus] = useState<'confirmed' | 'pending'>('confirmed');
   const [paymentMethod, setPaymentMethod] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
@@ -715,6 +724,35 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     const resolvedRoomType = targetRoom ? targetRoom.roomType : newRequestedRoomType;
     const fallbackNightlyRate =
       rooms.find((r) => r.roomType === resolvedRoomType)?.nightlyRateNgn || 55000;
+    const baseRoomRateNgn = targetRoom?.nightlyRateNgn ?? fallbackNightlyRate;
+    const fxRateToNgn = getFxRateToNgn(bookingCurrency, property.usdExchangeRateNgn);
+    const hasCustomSourceRate = bookingCurrency !== 'NGN' && bookingSourceNightlyRate > 0;
+    const effectiveNightlyRateNgn = hasCustomSourceRate
+      ? convertCurrencyToNgn(bookingSourceNightlyRate, bookingCurrency, property.usdExchangeRateNgn)
+      : baseRoomRateNgn;
+    const safeNightsVal = Math.max(1, nights);
+    const resolvedSourceNightlyRate =
+      bookingCurrency === 'NGN'
+        ? effectiveNightlyRateNgn
+        : hasCustomSourceRate
+          ? bookingSourceNightlyRate
+          : Number((effectiveNightlyRateNgn / fxRateToNgn).toFixed(2));
+    const resolvedSourceTotal = Number((resolvedSourceNightlyRate * safeNightsVal).toFixed(2));
+    const safeDepositNgn = Math.max(0, depositNgn);
+    const isOtaSource =
+      channel === 'Airbnb' ||
+      channel === 'Booking.com' ||
+      channel === 'Expedia' ||
+      channel === 'Hotels.ng' ||
+      channel === 'VRBO' ||
+      channel === 'Custom iCal';
+    const resolvedCollectionMode: OtaPaymentCollectionMode = isOtaSource
+      ? bookingCollectionMode
+      : 'hotel_collect';
+    const otaPaidNgnVal =
+      isOtaSource && resolvedCollectionMode === 'ota_prepaid' ? safeDepositNgn : 0;
+    const hotelPaidNgnVal =
+      isOtaSource && resolvedCollectionMode === 'ota_prepaid' ? 0 : safeDepositNgn;
     const assignedLabel = targetRoom
       ? targetRoom.roomNumber
       : `Unassigned (${resolvedRoomType})`;
@@ -725,7 +763,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         property,
         room: targetRoom,
         requestedRoomType: resolvedRoomType,
-        nightlyRateNgn: targetRoom?.nightlyRateNgn ?? fallbackNightlyRate,
+        nightlyRateNgn: effectiveNightlyRateNgn,
         guestName: trimmedGuest,
         guestPhone: guestPhone.trim(),
         guestEmail: guestEmail.trim(),
@@ -734,12 +772,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         checkInDate,
         checkOutDate,
         bookedDate: todayIso,
-        nights: Math.max(1, nights),
+        nights: safeNightsVal,
         adults: Math.max(1, adults),
         children: Math.max(0, childrenCount),
         channel,
         paymentMethod,
-        depositNgn: Math.max(0, depositNgn),
+        depositNgn: safeDepositNgn,
+        sourceCurrency: bookingCurrency,
+        sourceNightlyRate: resolvedSourceNightlyRate,
+        sourceTotalAmount: resolvedSourceTotal,
+        fxRateToNgn,
+        paymentCollectionMode: resolvedCollectionMode,
+        otaPaidNgn: otaPaidNgnVal,
+        hotelPaidNgn: hotelPaidNgnVal,
         immediateCheckIn,
         initialStatus: initialBookingStatus,
         paymentConfirmed: immediateCheckIn ? inlinePayConfirmed : false,
@@ -763,6 +808,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setGuestLastName('');
       setGuestEmail('');
       setChildrenCount(0);
+      setBookingCurrency('NGN');
+      setBookingSourceNightlyRate(0);
+      setBookingCollectionMode('hotel_collect');
       setInlineIdNumber('');
       setInlinePayConfirmed(false);
       setInlineIdVerified(false);
@@ -2154,7 +2202,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <label className="block font-medium text-slate-700 mb-1">Booking Source</label>
               <select
                 value={channel}
-                onChange={(e) => setChannel(e.target.value as ReservationRecord['channel'])}
+                onChange={(e) => {
+                  const nextCh = e.target.value as ReservationRecord['channel'];
+                  setChannel(nextCh);
+                  const isOtaPrepaid =
+                    nextCh === 'Airbnb' || nextCh === 'Expedia' || nextCh === 'VRBO';
+                  setBookingCollectionMode(isOtaPrepaid ? 'ota_prepaid' : 'hotel_collect');
+                  if (nextCh === 'Walk-in' || nextCh === 'Website' || nextCh === 'Hotels.ng') {
+                    setBookingCurrency('NGN');
+                  }
+                }}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
               >
                 {PRIMARY_BOOKING_SOURCES.map((src) => (
@@ -2238,9 +2295,77 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <span className="text-[10px] text-slate-400">Nights / Adults / Children</span>
             </div>
 
+            {(channel === 'Airbnb' ||
+              channel === 'Booking.com' ||
+              channel === 'Expedia' ||
+              channel === 'Hotels.ng' ||
+              channel === 'VRBO' ||
+              channel === 'Custom iCal') && (
+              <>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    OTA Currency &amp; Rate / Night
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <select
+                      value={bookingCurrency}
+                      onChange={(e) => setBookingCurrency(e.target.value as ChannelCurrency)}
+                      className="border border-slate-200 rounded-lg px-2 py-2 bg-white font-semibold"
+                    >
+                      {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                        <option key={cur} value={cur}>
+                          {cur}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      step={bookingCurrency === 'NGN' ? 500 : 1}
+                      placeholder="0 = Room rate"
+                      value={bookingSourceNightlyRate}
+                      onChange={(e) =>
+                        setBookingSourceNightlyRate(Math.max(0, Number(e.target.value)))
+                      }
+                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono-tabular">
+                    FX: 1 {bookingCurrency} = ₦
+                    {getFxRateToNgn(bookingCurrency, property.usdExchangeRateNgn).toLocaleString(
+                      'en-NG'
+                    )}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    OTA Payment Collection
+                  </label>
+                  <select
+                    value={bookingCollectionMode}
+                    onChange={(e) =>
+                      setBookingCollectionMode(e.target.value as OtaPaymentCollectionMode)
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="ota_prepaid">OTA Collects (Prepaid)</option>
+                    <option value="hotel_collect">Hotel Collects at Property</option>
+                  </select>
+                </div>
+              </>
+            )}
+
             <div>
               <label className="block font-medium text-slate-700 mb-1">
-                Amount Paid (₦) &amp; Status
+                {bookingCollectionMode === 'ota_prepaid' &&
+                (channel === 'Airbnb' ||
+                  channel === 'Booking.com' ||
+                  channel === 'Expedia' ||
+                  channel === 'VRBO' ||
+                  channel === 'Custom iCal')
+                  ? 'OTA Paid (₦) & Status'
+                  : 'Hotel Paid (₦) & Status'}
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <input
@@ -2288,26 +2413,61 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             const pickedRoom = selectedRoomId
               ? rooms.find((r) => r.id === selectedRoomId)
               : undefined;
-            const ratePerNight =
+            const baseRateNgn =
               pickedRoom?.nightlyRateNgn ||
               rooms.find((r) => r.roomType === newRequestedRoomType)?.nightlyRateNgn ||
               55000;
+            const ratePerNight =
+              bookingCurrency !== 'NGN' && bookingSourceNightlyRate > 0
+                ? convertCurrencyToNgn(
+                    bookingSourceNightlyRate,
+                    bookingCurrency,
+                    property.usdExchangeRateNgn
+                  )
+                : baseRateNgn;
             const estTotal = ratePerNight * Math.max(1, nights);
             const estPaid = Math.max(0, depositNgn);
             const estBal = Math.max(0, estTotal - estPaid);
             const estPayStatus =
               estBal <= 0 && estTotal > 0 ? 'Paid' : estPaid > 0 ? 'Partial' : 'Unpaid';
+            const estOtaPaid =
+              bookingCollectionMode === 'ota_prepaid' &&
+              channel !== 'Walk-in' &&
+              channel !== 'Website'
+                ? estPaid
+                : 0;
+            const estHotelPaid = estPaid - estOtaPaid;
             return (
               <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-xs">
                 <div className="flex flex-wrap items-center gap-4 text-slate-600 font-mono-tabular">
                   <span>
                     Total: <strong className="text-slate-900">{formatNgn(estTotal)}</strong>
+                    {bookingCurrency !== 'NGN' && (
+                      <span className="text-blue-700 ml-1">
+                        (
+                        {formatChannelCurrency(
+                          (bookingSourceNightlyRate > 0
+                            ? bookingSourceNightlyRate
+                            : Number(
+                                (
+                                  ratePerNight /
+                                  getFxRateToNgn(bookingCurrency, property.usdExchangeRateNgn)
+                                ).toFixed(2)
+                              )) * Math.max(1, nights),
+                          bookingCurrency
+                        )}{' '}
+                        {bookingCurrency})
+                      </span>
+                    )}
                   </span>
                   <span>
-                    Paid: <strong className="text-emerald-700">{formatNgn(estPaid)}</strong>
+                    OTA received: <strong className="text-emerald-700">{formatNgn(estOtaPaid)}</strong>
                   </span>
                   <span>
-                    Balance: <strong className="text-slate-900">{formatNgn(estBal)}</strong>
+                    Hotel received: <strong className="text-slate-900">{formatNgn(estHotelPaid)}</strong>
+                  </span>
+                  <span>
+                    Guest balance: <strong className="text-slate-900">{formatNgn(estBal)}</strong>
                   </span>
                   <span>
                     Payment Status:{' '}
@@ -2992,8 +3152,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           {/* Active Arrival Bucket Content */}
           {(() => {
             const renderArrivalCard = (res: ReservationRecord, mode: 'today' | 'future' | 'overdue' | 'checked_in_today') => {
-              const { totalAmount, amountPaid, balance, paymentStatus } =
-                getReservationPaymentSummary(res);
+              const paySummary = getReservationPaymentSummary(
+                res,
+                property.usdExchangeRateNgn
+              );
+              const {
+                totalAmount,
+                otaPaidAmount,
+                hotelPaidAmount,
+                balance,
+                paymentStatus,
+                sourceCurrency,
+                sourceTotalAmount,
+              } = paySummary;
               const roomDisplay = getReservationRoomDisplay(res, rooms);
               const hkStatus = roomDisplay.room?.housekeepingStatus;
               const isRoomReady = hkStatus === 'clean' || hkStatus === 'inspected';
@@ -3134,28 +3305,44 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </p>
                       </div>
 
-                      {/* Payment Status */}
-                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-w-[175px]">
-                        <p className="text-[10px] font-semibold uppercase text-slate-500">
-                          Payment &amp; Balance
-                        </p>
-                        <p className="font-mono-tabular font-bold text-slate-900 mt-0.5">
+                      {/* Payment Status & 3-Way Breakdown */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-w-[205px] space-y-0.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[10px] font-semibold uppercase text-slate-500">
+                            Payment Breakdown
+                          </p>
+                          <span
+                            className={`text-[10px] font-bold ${
+                              paymentStatus === 'Paid'
+                                ? 'text-emerald-700'
+                                : paymentStatus === 'Partial'
+                                  ? 'text-amber-700'
+                                  : 'text-rose-700'
+                            }`}
+                          >
+                            {paymentStatus}
+                          </span>
+                        </div>
+                        <p className="font-mono-tabular font-bold text-slate-900 text-xs">
                           Total: {formatNgn(totalAmount)}
+                          {sourceCurrency !== 'NGN' && sourceTotalAmount > 0 && (
+                            <span className="ml-1 text-[10px] font-semibold text-blue-700">
+                              ({formatChannelCurrency(sourceTotalAmount, sourceCurrency)} {sourceCurrency})
+                            </span>
+                          )}
+                        </p>
+                        <p className="font-mono-tabular text-[11px] text-emerald-700 font-semibold">
+                          OTA payment received: {formatNgn(otaPaidAmount)}
+                        </p>
+                        <p className="font-mono-tabular text-[11px] text-slate-700">
+                          Hotel payment received: {formatNgn(hotelPaidAmount)}
                         </p>
                         <p
-                          className={`text-[11px] font-bold mt-0.5 ${
-                            paymentStatus === 'Paid'
-                              ? 'text-emerald-700'
-                              : paymentStatus === 'Partial'
-                                ? 'text-amber-700'
-                                : 'text-rose-700'
+                          className={`font-mono-tabular text-[11px] font-bold ${
+                            balance > 0 ? 'text-rose-700' : 'text-slate-600'
                           }`}
                         >
-                          {paymentStatus === 'Paid'
-                            ? `Paid (${formatNgn(amountPaid)})`
-                            : paymentStatus === 'Partial'
-                              ? `Partial · Pending ${formatNgn(balance)}`
-                              : `Not Paid · Due ${formatNgn(balance)}`}
+                          Outstanding guest balance: {formatNgn(balance)}
                         </p>
                       </div>
                     </div>
@@ -3541,8 +3728,18 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {filteredReservations.map((res) => {
-                    const { totalAmount, amountPaid, balance, paymentStatus } =
-                      getReservationPaymentSummary(res);
+                    const {
+                      totalAmount,
+                      otaPaidAmount,
+                      hotelPaidAmount,
+                      amountPaid,
+                      balance,
+                      paymentStatus,
+                      sourceCurrency,
+                      sourceNightlyRate,
+                      sourceTotalAmount,
+                      otaPaidSourceAmount,
+                    } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
                     const bookedDate = getReservationBookedDate(res);
                     const adultsCount = res.adults || 1;
                     const kidsCount = res.children || 0;
@@ -3675,21 +3872,28 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
                           <span className="block">{formatNgn(totalAmount)}</span>
-                          {res.sourceCurrency &&
-                            res.sourceCurrency !== 'NGN' &&
-                            typeof res.sourceTotalAmount === 'number' &&
-                            res.sourceTotalAmount > 0 && (
-                              <span className="block text-[10px] font-medium text-blue-700">
-                                {formatChannelCurrency(res.sourceTotalAmount, res.sourceCurrency)} ({res.sourceCurrency})
-                                {typeof res.sourceNightlyRate === 'number' && res.sourceNightlyRate > 0
-                                  ? ` · ${formatChannelCurrency(res.sourceNightlyRate, res.sourceCurrency)}/nt`
-                                  : ''}
-                              </span>
-                            )}
+                          {sourceCurrency !== 'NGN' && sourceTotalAmount > 0 && (
+                            <span className="block text-[10px] font-medium text-blue-700">
+                              {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
+                              {sourceCurrency}
+                              {sourceNightlyRate > 0
+                                ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
+                                : ''}
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular text-emerald-700 whitespace-nowrap">
-                          {formatNgn(amountPaid)}
+                          <span className="block font-semibold">{formatNgn(amountPaid)}</span>
+                          <span className="block text-[10px] text-slate-500">
+                            OTA: {formatNgn(otaPaidAmount)}
+                            {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && otaPaidSourceAmount > 0
+                              ? ` (${formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)})`
+                              : ''}
+                          </span>
+                          <span className="block text-[10px] text-slate-500">
+                            Hotel: {formatNgn(hotelPaidAmount)}
+                          </span>
                         </td>
 
                         <td
@@ -3697,7 +3901,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             balance > 0 ? 'text-rose-700' : 'text-slate-600'
                           }`}
                         >
-                          {formatNgn(balance)}
+                          <span className="block">{formatNgn(balance)}</span>
+                          <span className="block text-[10px] font-normal text-slate-500">
+                            {balance > 0 ? 'Guest bal due' : '₦0 guest bal'}
+                          </span>
                         </td>
 
                         <td className="py-3 px-3.5 whitespace-nowrap">
@@ -5137,76 +5344,116 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 </div>
               )}
 
-              <div className="flex justify-between">
-                <span className="text-slate-600">
-                  Room Accommodation ({activeFolioReservation.nights} nights)
-                </span>
-                <span className="font-mono-tabular font-semibold text-slate-900">
-                  {formatNgn(activeFolioReservation.roomChargesNgn)}
-                </span>
-              </div>
-              {activeFolioReservation.sourceCurrency &&
-                activeFolioReservation.sourceCurrency !== 'NGN' &&
-                typeof activeFolioReservation.sourceTotalAmount === 'number' &&
-                activeFolioReservation.sourceTotalAmount > 0 && (
-                  <div className="flex justify-between text-[11px] text-blue-700">
-                    <span>
-                      Channel Customer Rate ({activeFolioReservation.sourceCurrency} @ ₦
-                      {(activeFolioReservation.fxRateToNgn || 1).toLocaleString()})
-                    </span>
-                    <span className="font-mono-tabular font-semibold">
-                      {formatChannelCurrency(
-                        activeFolioReservation.sourceTotalAmount,
-                        activeFolioReservation.sourceCurrency
+              {(() => {
+                const folioPaySummary = getReservationPaymentSummary(
+                  activeFolioReservation,
+                  property.usdExchangeRateNgn
+                );
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">
+                        Room Accommodation ({activeFolioReservation.nights} nights)
+                      </span>
+                      <span className="font-mono-tabular font-semibold text-slate-900">
+                        {formatNgn(activeFolioReservation.roomChargesNgn)}
+                      </span>
+                    </div>
+                    {folioPaySummary.sourceCurrency !== 'NGN' &&
+                      folioPaySummary.sourceTotalAmount > 0 && (
+                        <div className="flex justify-between text-[11px] text-blue-700">
+                          <span>
+                            Channel Customer Rate ({folioPaySummary.sourceCurrency} @ ₦
+                            {folioPaySummary.fxRateToNgn.toLocaleString('en-NG')} ·{' '}
+                            {formatChannelCurrency(
+                              folioPaySummary.sourceNightlyRate,
+                              folioPaySummary.sourceCurrency
+                            )}
+                            /nt)
+                          </span>
+                          <span className="font-mono-tabular font-semibold">
+                            {formatChannelCurrency(
+                              folioPaySummary.sourceTotalAmount,
+                              folioPaySummary.sourceCurrency
+                            )}{' '}
+                            {folioPaySummary.sourceCurrency}
+                          </span>
+                        </div>
                       )}
-                    </span>
-                  </div>
-                )}
-              <div className="flex justify-between">
-                <span className="text-slate-600">Restaurant POS / Misc Folio Charges</span>
-                <span className="font-mono-tabular font-semibold text-slate-900">
-                  {formatNgn(activeFolioReservation.posChargesNgn)}
-                </span>
-              </div>
-              {(activeFolioReservation.lateCheckoutFeeNgn || 0) > 0 && (
-                <div className="flex justify-between text-amber-800">
-                  <span>
-                    Late Check-Out Fee ({activeFolioReservation.checkOutTime || '14:00'})
-                  </span>
-                  <span className="font-mono-tabular font-semibold">
-                    {formatNgn(activeFolioReservation.lateCheckoutFeeNgn || 0)}
-                  </span>
-                </div>
-              )}
-              {activeFolioReservation.status === 'cancelled' &&
-                activeFolioReservation.cancellationType === 'paid' && (
-                  <div className="flex justify-between text-rose-700">
-                    <span>Cancellation Fee Applied</span>
-                    <span className="font-mono-tabular font-semibold">
-                      {formatNgn(activeFolioReservation.cancellationFeeNgn || 0)}
-                    </span>
-                  </div>
-                )}
-              <div className="flex justify-between">
-                <span className="text-slate-600">Total Amount</span>
-                <span className="font-mono-tabular font-bold text-slate-900">
-                  {formatNgn(getReservationPaymentSummary(activeFolioReservation).totalAmount)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">Amount Paid</span>
-                <span className="font-mono-tabular font-semibold text-emerald-700">
-                  -{formatNgn(activeFolioReservation.paidNgn)}
-                </span>
-              </div>
-              <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-slate-900">
-                <span>
-                  Balance ({getReservationPaymentSummary(activeFolioReservation).paymentStatus})
-                </span>
-                <span className="font-mono-tabular">
-                  {formatNgn(getReservationPaymentSummary(activeFolioReservation).balance)}
-                </span>
-              </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Restaurant POS / Misc Folio Charges</span>
+                      <span className="font-mono-tabular font-semibold text-slate-900">
+                        {formatNgn(activeFolioReservation.posChargesNgn)}
+                      </span>
+                    </div>
+                    {(activeFolioReservation.lateCheckoutFeeNgn || 0) > 0 && (
+                      <div className="flex justify-between text-amber-800">
+                        <span>
+                          Late Check-Out Fee ({activeFolioReservation.checkOutTime || '14:00'})
+                        </span>
+                        <span className="font-mono-tabular font-semibold">
+                          {formatNgn(activeFolioReservation.lateCheckoutFeeNgn || 0)}
+                        </span>
+                      </div>
+                    )}
+                    {activeFolioReservation.status === 'cancelled' &&
+                      activeFolioReservation.cancellationType === 'paid' && (
+                        <div className="flex justify-between text-rose-700">
+                          <span>Cancellation Fee Applied</span>
+                          <span className="font-mono-tabular font-semibold">
+                            {formatNgn(activeFolioReservation.cancellationFeeNgn || 0)}
+                          </span>
+                        </div>
+                      )}
+                    <div className="flex justify-between pt-1.5 border-t border-slate-200/70">
+                      <span className="text-slate-700 font-semibold">Total Folio Charges</span>
+                      <span className="font-mono-tabular font-bold text-slate-900">
+                        {formatNgn(folioPaySummary.totalAmount)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">
+                        OTA payment received ({activeFolioReservation.channel})
+                      </span>
+                      <span className="font-mono-tabular font-semibold text-emerald-700">
+                        {formatNgn(folioPaySummary.otaPaidAmount)}
+                        {folioPaySummary.sourceCurrency !== 'NGN' &&
+                          folioPaySummary.otaPaidAmount > 0 &&
+                          folioPaySummary.otaPaidSourceAmount > 0 && (
+                            <span className="ml-1 text-[11px] font-normal">
+                              (
+                              {formatChannelCurrency(
+                                folioPaySummary.otaPaidSourceAmount,
+                                folioPaySummary.sourceCurrency
+                              )}{' '}
+                              {folioPaySummary.sourceCurrency})
+                            </span>
+                          )}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">
+                        Hotel payment received (front desk)
+                      </span>
+                      <span className="font-mono-tabular font-semibold text-slate-900">
+                        {formatNgn(folioPaySummary.hotelPaidAmount)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-slate-900">
+                      <span>
+                        Outstanding guest balance ({folioPaySummary.paymentStatus})
+                      </span>
+                      <span
+                        className={`font-mono-tabular ${
+                          folioPaySummary.balance > 0 ? 'text-rose-700' : 'text-emerald-700'
+                        }`}
+                      >
+                        {formatNgn(folioPaySummary.balance)}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
               {cms.brand.folioFooterNote && (
                 <p className="text-[11px] text-slate-500 pt-1">
                   {cms.brand.folioFooterNote}
@@ -5497,66 +5744,80 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 Final Folio Settlement — {checkoutTarget.roomNumber}
               </h3>
             </div>
-            <div className="text-xs space-y-2 border-y border-slate-200 py-3">
-              <div className="flex justify-between">
-                <span className="text-slate-600">Guest</span>
-                <span className="font-semibold text-slate-900">{checkoutTarget.guestName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">
-                  Room Charges ({checkoutTarget.nights} nights)
-                </span>
-                <span className="font-mono-tabular">{formatNgn(checkoutTarget.roomChargesNgn)}</span>
-              </div>
-              {checkoutTarget.sourceCurrency &&
-                checkoutTarget.sourceCurrency !== 'NGN' &&
-                typeof checkoutTarget.sourceTotalAmount === 'number' &&
-                checkoutTarget.sourceTotalAmount > 0 && (
-                  <div className="flex justify-between text-[11px] text-blue-700">
-                    <span>Channel Customer Rate ({checkoutTarget.sourceCurrency})</span>
-                    <span className="font-mono-tabular font-semibold">
-                      {formatChannelCurrency(
-                        checkoutTarget.sourceTotalAmount,
-                        checkoutTarget.sourceCurrency
-                      )}
+            {(() => {
+              const checkoutSummary = getReservationPaymentSummary(
+                checkoutTarget,
+                property.usdExchangeRateNgn
+              );
+              return (
+                <div className="text-xs space-y-2 border-y border-slate-200 py-3">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Guest</span>
+                    <span className="font-semibold text-slate-900">{checkoutTarget.guestName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">
+                      Room Charges ({checkoutTarget.nights} nights)
+                    </span>
+                    <span className="font-mono-tabular">{formatNgn(checkoutTarget.roomChargesNgn)}</span>
+                  </div>
+                  {checkoutSummary.sourceCurrency !== 'NGN' &&
+                    checkoutSummary.sourceTotalAmount > 0 && (
+                      <div className="flex justify-between text-[11px] text-blue-700">
+                        <span>
+                          Channel Customer Rate ({checkoutSummary.sourceCurrency} @ ₦
+                          {checkoutSummary.fxRateToNgn.toLocaleString('en-NG')})
+                        </span>
+                        <span className="font-mono-tabular font-semibold">
+                          {formatChannelCurrency(
+                            checkoutSummary.sourceTotalAmount,
+                            checkoutSummary.sourceCurrency
+                          )}{' '}
+                          {checkoutSummary.sourceCurrency}
+                        </span>
+                      </div>
+                    )}
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Restaurant / Bar POS Charges</span>
+                    <span className="font-mono-tabular">{formatNgn(checkoutTarget.posChargesNgn)}</span>
+                  </div>
+                  {(checkoutTarget.lateCheckoutFeeNgn || 0) > 0 && (
+                    <div className="flex justify-between text-amber-800">
+                      <span>
+                        Late Check-Out Fee ({checkoutTarget.checkOutTime || '14:00'})
+                      </span>
+                      <span className="font-mono-tabular font-semibold">
+                        {formatNgn(checkoutTarget.lateCheckoutFeeNgn || 0)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-1 border-t border-slate-100">
+                    <span className="text-slate-600">
+                      OTA payment received ({checkoutTarget.channel})
+                    </span>
+                    <span className="font-mono-tabular font-semibold text-emerald-700">
+                      {formatNgn(checkoutSummary.otaPaidAmount)}
                     </span>
                   </div>
-                )}
-              <div className="flex justify-between">
-                <span className="text-slate-600">Restaurant / Bar POS Charges</span>
-                <span className="font-mono-tabular">{formatNgn(checkoutTarget.posChargesNgn)}</span>
-              </div>
-              {(checkoutTarget.lateCheckoutFeeNgn || 0) > 0 && (
-                <div className="flex justify-between text-amber-800">
-                  <span>
-                    Late Check-Out Fee ({checkoutTarget.checkOutTime || '14:00'})
-                  </span>
-                  <span className="font-mono-tabular font-semibold">
-                    {formatNgn(checkoutTarget.lateCheckoutFeeNgn || 0)}
-                  </span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Hotel payment received</span>
+                    <span className="font-mono-tabular font-semibold text-slate-900">
+                      {formatNgn(checkoutSummary.hotelPaidAmount)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-slate-100 text-sm font-bold text-slate-900">
+                    <span>Outstanding guest balance (Due Now)</span>
+                    <span
+                      className={`font-mono-tabular ${
+                        checkoutSummary.balance > 0 ? 'text-rose-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {formatNgn(checkoutSummary.balance)}
+                    </span>
+                  </div>
                 </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-slate-600">Previously Paid</span>
-                <span className="font-mono-tabular text-emerald-700">
-                  -{formatNgn(checkoutTarget.paidNgn)}
-                </span>
-              </div>
-              <div className="flex justify-between pt-2 border-t border-slate-100 text-sm font-bold text-slate-900">
-                <span>Balance Due Now</span>
-                <span className="font-mono-tabular">
-                  {formatNgn(
-                    Math.max(
-                      0,
-                      checkoutTarget.roomChargesNgn +
-                        checkoutTarget.posChargesNgn +
-                        (checkoutTarget.lateCheckoutFeeNgn || 0) -
-                        checkoutTarget.paidNgn
-                    )
-                  )}
-                </span>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Quick Late Check-Out Fee & Check-Out Time Adjuster */}
             <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 space-y-2.5 text-xs">

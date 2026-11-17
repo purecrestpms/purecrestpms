@@ -88,6 +88,7 @@ const NAV_GROUPS: Array<{
       { id: 'rooms', label: 'Rooms & Rates', icon: BedDouble },
       { id: 'guests', label: 'Guest Profiles', icon: Users },
       { id: 'housekeeping', label: 'Housekeeping', icon: Sparkles },
+      { id: 'shift_daily_report', label: 'Shift Daily Report', icon: ClipboardList },
       { id: 'messages', label: 'Messages & Alerts', icon: Mail },
     ],
   },
@@ -174,7 +175,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ? allowedSections
       : ROLE_ALLOWED_SECTIONS[activeRole];
   const activeProp = properties.find((p) => p.id === activePropertyId) || properties[0];
-  const propertyName = activeProp?.name || 'Richgates Apartments, Enugu';
+  const propertyName = activeProp?.name || 'Property Workspace';
 
   const handleNavClick = (sectionId: NavSectionId) => {
     onSelectSection(sectionId);

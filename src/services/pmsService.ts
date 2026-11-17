@@ -51,9 +51,9 @@ import {
   MessageRecipientScope,
   NavSectionId,
   OtaIntegrationRecord,
+  OtaPaymentCollectionMode,
   PayrollRunRecord,
   PlanInquiryRecord,
-  POS_MENU_ITEMS,
   PosMenuItemRecord,
   PosOrderRecord,
   PropertyMessageRecord,
@@ -207,6 +207,14 @@ export async function createReservationWorkflow(params: {
   channel: ReservationRecord['channel'];
   paymentMethod: ReservationRecord['paymentMethod'];
   depositNgn: number;
+  sourceCurrency?: ChannelCurrency;
+  sourceNightlyRate?: number;
+  sourceTotalAmount?: number;
+  fxRateToNgn?: number;
+  paymentCollectionMode?: OtaPaymentCollectionMode;
+  otaPaidNgn?: number;
+  otaPaidSourceAmount?: number;
+  hotelPaidNgn?: number;
   immediateCheckIn: boolean;
   initialStatus?: 'confirmed' | 'pending';
   paymentConfirmed?: boolean;
@@ -234,6 +242,44 @@ export async function createReservationWorkflow(params: {
     : params.initialStatus || 'confirmed';
   const authEmails = params.property.authorizedEmails;
 
+  const defaultMode: OtaPaymentCollectionMode =
+    params.paymentCollectionMode ||
+    (params.channel === 'Airbnb' || params.channel === 'Expedia' || params.channel === 'VRBO'
+      ? 'ota_prepaid'
+      : 'hotel_collect');
+  const otaPaidNgn = Math.max(0, Math.round(params.otaPaidNgn ?? 0));
+  const hotelPaidNgn = Math.max(
+    0,
+    Math.round(
+      params.hotelPaidNgn ??
+        (otaPaidNgn > 0 ? Math.max(0, params.depositNgn - otaPaidNgn) : params.depositNgn)
+    )
+  );
+  const totalPaidNgn = Math.max(0, Math.round(params.depositNgn || otaPaidNgn + hotelPaidNgn));
+  const sourceCurrency: ChannelCurrency = params.sourceCurrency || 'NGN';
+  const fxRateToNgn =
+    params.fxRateToNgn && params.fxRateToNgn > 0
+      ? params.fxRateToNgn
+      : getFxRateToNgn(sourceCurrency, params.property.usdExchangeRateNgn);
+  const sourceNightlyRate =
+    params.sourceNightlyRate !== undefined
+      ? params.sourceNightlyRate
+      : sourceCurrency === 'NGN'
+        ? effectiveRate
+        : Number((effectiveRate / fxRateToNgn).toFixed(2));
+  const sourceTotalAmount =
+    params.sourceTotalAmount !== undefined
+      ? params.sourceTotalAmount
+      : sourceCurrency === 'NGN'
+        ? roomChargesNgn
+        : Number((roomChargesNgn / fxRateToNgn).toFixed(2));
+  const otaPaidSourceAmount =
+    params.otaPaidSourceAmount !== undefined
+      ? params.otaPaidSourceAmount
+      : sourceCurrency === 'NGN'
+        ? otaPaidNgn
+        : Number((otaPaidNgn / fxRateToNgn).toFixed(2));
+
   const batch = writeBatch(db);
   const now = serverTimestamp();
 
@@ -249,7 +295,7 @@ export async function createReservationWorkflow(params: {
     idNumber: params.guestIdNumber || '',
     vipTier: 'Standard',
     totalStays: params.immediateCheckIn ? 1 : 0,
-    lifetimeSpendNgn: params.depositNgn,
+    lifetimeSpendNgn: totalPaidNgn,
     notes: `Created via ${params.channel}`,
     authorizedEmails: authEmails,
     ownerUid: uid,
@@ -276,7 +322,15 @@ export async function createReservationWorkflow(params: {
     nightlyRateNgn: effectiveRate,
     roomChargesNgn,
     posChargesNgn: 0,
-    paidNgn: params.depositNgn,
+    paidNgn: totalPaidNgn,
+    sourceCurrency,
+    sourceNightlyRate,
+    sourceTotalAmount,
+    fxRateToNgn,
+    paymentCollectionMode: defaultMode,
+    otaPaidNgn,
+    otaPaidSourceAmount,
+    hotelPaidNgn,
     status,
     paymentMethod: params.paymentMethod,
     ...(params.guestIdType ? { idType: params.guestIdType } : {}),
@@ -288,7 +342,9 @@ export async function createReservationWorkflow(params: {
           keyIssued: params.keyIssued ?? true,
           checkedInAtIso: new Date().toISOString(),
         }
-      : {}),
+      : {
+          ...(totalPaidNgn > 0 ? { paymentConfirmed: true } : {}),
+        }),
     authorizedEmails: authEmails,
     ownerUid: uid,
     createdAt: now,
@@ -423,7 +479,17 @@ export async function transitionReservationStatus(params: {
     }
   }
 
-  const newPaid = params.reservation.paidNgn + extraPayment;
+  const existingOtaPaid = Math.max(0, Math.round(params.reservation.otaPaidNgn ?? 0));
+  const existingHotelPaid = Math.max(
+    0,
+    Math.round(
+      params.reservation.hotelPaidNgn ??
+        Math.max(0, (params.reservation.paidNgn || 0) - existingOtaPaid)
+    )
+  );
+  const nextHotelPaid = existingHotelPaid + extraPayment;
+  const newPaid = Math.max(params.reservation.paidNgn + extraPayment, existingOtaPaid + nextHotelPaid);
+  resUpdates.hotelPaidNgn = nextHotelPaid;
   resUpdates.paidNgn = newPaid;
   batch.update(resRef, resUpdates);
 
@@ -572,7 +638,16 @@ export async function completeCheckInWorkflow(params: {
   const targetRoomRef = doc(db, 'properties', params.property.id, 'rooms', targetRoomId);
 
   const extraPayment = Math.max(0, Math.round(params.paymentReceivedNgn));
-  const newPaid = params.reservation.paidNgn + extraPayment;
+  const existingOtaPaid = Math.max(0, Math.round(params.reservation.otaPaidNgn ?? 0));
+  const existingHotelPaid = Math.max(
+    0,
+    Math.round(
+      params.reservation.hotelPaidNgn ??
+        Math.max(0, (params.reservation.paidNgn || 0) - existingOtaPaid)
+    )
+  );
+  const nextHotelPaid = existingHotelPaid + extraPayment;
+  const newPaid = Math.max(params.reservation.paidNgn + extraPayment, existingOtaPaid + nextHotelPaid);
   const cleanIdNumber = params.idNumber.trim().slice(0, 64);
   const nextNightlyRate =
     roomChanged && targetRoom ? targetRoom.nightlyRateNgn : params.reservation.nightlyRateNgn;
@@ -585,6 +660,7 @@ export async function completeCheckInWorkflow(params: {
     nightlyRateNgn: nextNightlyRate,
     roomChargesNgn: nextRoomCharges,
     status: 'checked_in',
+    hotelPaidNgn: nextHotelPaid,
     paidNgn: newPaid,
     paymentMethod: params.paymentMethod,
     paymentConfirmed: true,
@@ -768,6 +844,25 @@ export async function updateReservationDetailsWorkflow(params: {
       ? params.newRoom.nightlyRateNgn
       : params.reservation.nightlyRateNgn;
   const nextRoomCharges = nextNightlyRate * safeNights;
+  const srcCurrency = params.reservation.sourceCurrency || 'NGN';
+  const fxRate =
+    params.reservation.fxRateToNgn && params.reservation.fxRateToNgn > 0
+      ? params.reservation.fxRateToNgn
+      : getFxRateToNgn(srcCurrency, params.property.usdExchangeRateNgn);
+  const nextSourceNightlyRate =
+    roomChanged && params.newRoom
+      ? srcCurrency === 'NGN'
+        ? nextNightlyRate
+        : Number((nextNightlyRate / fxRate).toFixed(2))
+      : params.reservation.sourceNightlyRate && params.reservation.sourceNightlyRate > 0
+        ? params.reservation.sourceNightlyRate
+        : srcCurrency === 'NGN'
+          ? nextNightlyRate
+          : Number((nextNightlyRate / fxRate).toFixed(2));
+  const nextSourceTotalAmount =
+    srcCurrency === 'NGN'
+      ? nextRoomCharges
+      : Number((nextSourceNightlyRate * safeNights).toFixed(2));
   const nextStatus = params.status || params.reservation.status;
   const nextGuestName = (params.guestName || params.reservation.guestName).trim();
   const nextGuestPhone = (params.guestPhone ?? params.reservation.guestPhone ?? '').trim();
@@ -789,6 +884,9 @@ export async function updateReservationDetailsWorkflow(params: {
     children: safeChildren,
     nightlyRateNgn: nextNightlyRate,
     roomChargesNgn: nextRoomCharges,
+    sourceNightlyRate: nextSourceNightlyRate,
+    sourceTotalAmount: nextSourceTotalAmount,
+    fxRateToNgn: fxRate,
     channel: params.channel,
     status: nextStatus,
     paymentMethod: params.paymentMethod || params.reservation.paymentMethod,
@@ -862,8 +960,20 @@ export async function recordReservationFolioPayment(params: {
   const resRef = doc(db, 'properties', params.property.id, 'reservations', params.reservation.id);
   const ledId = cleanId('led');
 
+  const existingOtaPaid = Math.max(0, Math.round(params.reservation.otaPaidNgn ?? 0));
+  const existingHotelPaid = Math.max(
+    0,
+    Math.round(
+      params.reservation.hotelPaidNgn ??
+        Math.max(0, (params.reservation.paidNgn || 0) - existingOtaPaid)
+    )
+  );
+  const nextHotelPaid = existingHotelPaid + amount;
+  const nextPaidNgn = Math.max(params.reservation.paidNgn + amount, existingOtaPaid + nextHotelPaid);
+
   batch.update(resRef, {
-    paidNgn: params.reservation.paidNgn + amount,
+    hotelPaidNgn: nextHotelPaid,
+    paidNgn: nextPaidNgn,
     paymentMethod: params.paymentMethod,
     updatedAt: now,
   });
@@ -1642,34 +1752,9 @@ export async function deleteHousekeepingTaskWorkflow(params: {
   }
 }
 
-export async function syncDefaultPosMenuIfNeeded(property: PropertyRecord): Promise<boolean> {
-  try {
-    const colRef = collection(db, 'properties', property.id, 'pos_menu_items');
-    const snap = await getDocs(colRef);
-    if (!snap.empty) return false;
-    const { uid } = getActorContext();
-    const batch = writeBatch(db);
-    const now = serverTimestamp();
-    for (const item of POS_MENU_ITEMS) {
-      batch.set(doc(db, 'properties', property.id, 'pos_menu_items', item.id), {
-        propertyId: property.id,
-        name: item.name,
-        category: item.category,
-        priceNgn: item.priceNgn,
-        costNgn: item.costNgn ?? 0,
-        prepMinutes: item.prepMinutes,
-        available: item.available ?? true,
-        authorizedEmails: property.authorizedEmails,
-        ownerUid: uid,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-    await batch.commit();
-    return true;
-  } catch {
-    return false;
-  }
+export async function syncDefaultPosMenuIfNeeded(_property: PropertyRecord): Promise<boolean> {
+  // No demo restaurant menu seeding; operators create real dishes & beverages via Menu Management.
+  return false;
 }
 
 export async function createPosMenuItemWorkflow(params: {
@@ -2985,6 +3070,7 @@ export async function syncOtaChannelWorkflow(params: {
   const resolveChannelPricing = (ev: ParsedIcalEvent, assignedRoom: RoomRecord) => {
     const usdRate = params.property.usdExchangeRateNgn;
 
+    // 1. Explicit price + currency parsed directly from iCal VEVENT
     if (ev.parsedCurrency && ev.parsedNightlyRate && ev.parsedNightlyRate > 0) {
       const sourceCurrency = ev.parsedCurrency;
       const fxRateToNgn = getFxRateToNgn(sourceCurrency, usdRate);
@@ -3005,8 +3091,43 @@ export async function syncOtaChannelWorkflow(params: {
       };
     }
 
+    // 2. Channel configured currency + nightly rate fallback when .ics omits explicit price headers
+    const chanCur = params.channel.defaultCurrency;
+    const chanRate = params.channel.defaultNightlyRate;
+    if (chanCur && typeof chanRate === 'number' && chanRate > 0) {
+      const sourceCurrency = chanCur;
+      const fxRateToNgn = getFxRateToNgn(sourceCurrency, usdRate);
+      const sourceNightlyRate = Number(chanRate.toFixed(2));
+      const sourceTotalAmount = Number((sourceNightlyRate * ev.nights).toFixed(2));
+      const nightlyRateNgn = convertCurrencyToNgn(sourceNightlyRate, sourceCurrency, usdRate);
+      const roomChargesNgn = convertCurrencyToNgn(sourceTotalAmount, sourceCurrency, usdRate);
+      return {
+        sourceCurrency,
+        sourceNightlyRate,
+        sourceTotalAmount,
+        fxRateToNgn,
+        nightlyRateNgn,
+        roomChargesNgn,
+      };
+    }
+
+    // 3. Fallback to assigned physical room NGN rack rate (or convert into channel currency if selected)
     const nightlyRateNgn = assignedRoom.nightlyRateNgn || 0;
     const roomChargesNgn = nightlyRateNgn * ev.nights;
+    if (chanCur && chanCur !== 'NGN') {
+      const fxRateToNgn = getFxRateToNgn(chanCur, usdRate);
+      const sourceNightlyRate = Number((nightlyRateNgn / fxRateToNgn).toFixed(2));
+      const sourceTotalAmount = Number((roomChargesNgn / fxRateToNgn).toFixed(2));
+      return {
+        sourceCurrency: chanCur,
+        sourceNightlyRate,
+        sourceTotalAmount,
+        fxRateToNgn,
+        nightlyRateNgn,
+        roomChargesNgn,
+      };
+    }
+
     return {
       sourceCurrency: 'NGN' as const,
       sourceNightlyRate: nightlyRateNgn,
@@ -3014,6 +3135,45 @@ export async function syncOtaChannelWorkflow(params: {
       fxRateToNgn: 1,
       nightlyRateNgn,
       roomChargesNgn,
+    };
+  };
+
+  const resolveChannelPayment = (
+    ev: ParsedIcalEvent,
+    pricing: ReturnType<typeof resolveChannelPricing>,
+    existingRes?: ReservationRecord
+  ) => {
+    const defaultChannelMode: OtaPaymentCollectionMode =
+      params.channel.paymentCollectionMode ||
+      (params.channel.channelName === 'Airbnb' ||
+      params.channel.channelName === 'Expedia' ||
+      params.channel.channelName === 'VRBO'
+        ? 'ota_prepaid'
+        : 'hotel_collect');
+    const paymentCollectionMode: OtaPaymentCollectionMode =
+      ev.parsedPaymentCollectionMode || defaultChannelMode;
+
+    const usdRate = params.property.usdExchangeRateNgn;
+    let otaPaidSourceAmount = 0;
+    let otaPaidNgn = 0;
+
+    if (typeof ev.parsedPaidAmount === 'number' && ev.parsedPaidAmount >= 0) {
+      otaPaidSourceAmount = Number(ev.parsedPaidAmount.toFixed(2));
+      otaPaidNgn = convertCurrencyToNgn(otaPaidSourceAmount, pricing.sourceCurrency, usdRate);
+    } else if (ev.parsedPaymentStatus === 'paid' || paymentCollectionMode === 'ota_prepaid') {
+      otaPaidSourceAmount = pricing.sourceTotalAmount;
+      otaPaidNgn = pricing.roomChargesNgn;
+    }
+
+    const existingHotelPaid = Math.max(0, Math.round(existingRes?.hotelPaidNgn ?? 0));
+    const paidNgn = otaPaidNgn + existingHotelPaid;
+    return {
+      paymentCollectionMode,
+      otaPaidSourceAmount,
+      otaPaidNgn,
+      hotelPaidNgn: existingHotelPaid,
+      paidNgn,
+      paymentConfirmed: paidNgn > 0,
     };
   };
 
@@ -3096,7 +3256,7 @@ export async function syncOtaChannelWorkflow(params: {
 
   for (const ev of parsedEvents) {
     // Ignore events exported by this property's own PMS feed to avoid circular duplicates
-    if (ev.uid.endsWith('@richgates-pms')) {
+    if (ev.uid.endsWith('@richgates-pms') || ev.uid.endsWith('@pchpms.com')) {
       skipped += 1;
       continue;
     }
@@ -3167,6 +3327,7 @@ export async function syncOtaChannelWorkflow(params: {
           ? roomList.find((r) => r.id === existing.roomId) || pickRoomForEvent(ev, existing.id)
           : pickRoomForEvent(ev, existing.id);
       const pricing = resolveChannelPricing(ev, assignedRoom);
+      const paymentInfo = resolveChannelPayment(ev, pricing, existing);
       const linkedGuestId = existing.guestId || ensureGuestForEvent(ev, pricing.roomChargesNgn);
       const nextAdults = Math.max(
         1,
@@ -3198,6 +3359,11 @@ export async function syncOtaChannelWorkflow(params: {
         (existing.sourceNightlyRate ?? 0) !== pricing.sourceNightlyRate ||
         (existing.sourceTotalAmount ?? 0) !== pricing.sourceTotalAmount ||
         (existing.fxRateToNgn ?? 1) !== pricing.fxRateToNgn ||
+        existing.paymentCollectionMode !== paymentInfo.paymentCollectionMode ||
+        (existing.otaPaidNgn ?? 0) !== paymentInfo.otaPaidNgn ||
+        (existing.otaPaidSourceAmount ?? 0) !== paymentInfo.otaPaidSourceAmount ||
+        (existing.hotelPaidNgn ?? 0) !== paymentInfo.hotelPaidNgn ||
+        existing.paidNgn !== paymentInfo.paidNgn ||
         existing.status !== targetStatus;
 
       if (needsUpdate) {
@@ -3224,6 +3390,12 @@ export async function syncOtaChannelWorkflow(params: {
             sourceNightlyRate: pricing.sourceNightlyRate,
             sourceTotalAmount: pricing.sourceTotalAmount,
             fxRateToNgn: pricing.fxRateToNgn,
+            paymentCollectionMode: paymentInfo.paymentCollectionMode,
+            otaPaidNgn: paymentInfo.otaPaidNgn,
+            otaPaidSourceAmount: paymentInfo.otaPaidSourceAmount,
+            hotelPaidNgn: paymentInfo.hotelPaidNgn,
+            paidNgn: paymentInfo.paidNgn,
+            paymentConfirmed: paymentInfo.paymentConfirmed,
             status: targetStatus,
             updatedAt: now,
           },
@@ -3236,6 +3408,11 @@ export async function syncOtaChannelWorkflow(params: {
         existing.checkOutDate = ev.checkOutDate;
         existing.nights = ev.nights;
         existing.guestName = safeGuestName;
+        existing.paymentCollectionMode = paymentInfo.paymentCollectionMode;
+        existing.otaPaidNgn = paymentInfo.otaPaidNgn;
+        existing.otaPaidSourceAmount = paymentInfo.otaPaidSourceAmount;
+        existing.hotelPaidNgn = paymentInfo.hotelPaidNgn;
+        existing.paidNgn = paymentInfo.paidNgn;
         existing.status = targetStatus;
         updated += 1;
       } else {
@@ -3252,6 +3429,7 @@ export async function syncOtaChannelWorkflow(params: {
 
     const assignedRoom = pickRoomForEvent(ev);
     const pricing = resolveChannelPricing(ev, assignedRoom);
+    const paymentInfo = resolveChannelPayment(ev, pricing);
     const guestId = ensureGuestForEvent(ev, pricing.roomChargesNgn);
 
     const resRef = doc(db, 'properties', params.property.id, 'reservations', deterministicId);
@@ -3277,11 +3455,16 @@ export async function syncOtaChannelWorkflow(params: {
       nightlyRateNgn: pricing.nightlyRateNgn,
       roomChargesNgn: pricing.roomChargesNgn,
       posChargesNgn: 0,
-      paidNgn: 0,
+      paidNgn: paymentInfo.paidNgn,
       sourceCurrency: pricing.sourceCurrency,
       sourceNightlyRate: pricing.sourceNightlyRate,
       sourceTotalAmount: pricing.sourceTotalAmount,
       fxRateToNgn: pricing.fxRateToNgn,
+      paymentCollectionMode: paymentInfo.paymentCollectionMode,
+      otaPaidNgn: paymentInfo.otaPaidNgn,
+      otaPaidSourceAmount: paymentInfo.otaPaidSourceAmount,
+      hotelPaidNgn: paymentInfo.hotelPaidNgn,
+      paymentConfirmed: paymentInfo.paymentConfirmed,
       status: 'confirmed',
       paymentMethod: 'Online Gateway',
       externalUid: ev.uid.slice(0, 160),
@@ -3384,6 +3567,9 @@ export async function createOtaChannelWithIcal(params: {
   channelName: OtaIntegrationRecord['channelName'];
   propertyListingId: string;
   roomNumber: string;
+  defaultCurrency?: ChannelCurrency;
+  defaultNightlyRate?: number;
+  paymentCollectionMode?: OtaPaymentCollectionMode;
   icalImportUrl: string;
   commissionPct: number;
   autoSync: boolean;
@@ -3399,6 +3585,17 @@ export async function createOtaChannelWithIcal(params: {
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${exportRoom}`;
   const cleanListingId = params.propertyListingId.trim().slice(0, 120) || `ICAL-${id.slice(-5).toUpperCase()}`;
   const cleanImportUrl = params.icalImportUrl.trim().slice(0, 2000);
+  const defaultCurrency: ChannelCurrency =
+    params.defaultCurrency ||
+    (params.channelName === 'Hotels.ng' || params.channelName === 'Direct Website Engine'
+      ? 'NGN'
+      : 'USD');
+  const defaultNightlyRate = Math.max(0, Number(params.defaultNightlyRate || 0));
+  const paymentCollectionMode: OtaPaymentCollectionMode =
+    params.paymentCollectionMode ||
+    (params.channelName === 'Airbnb' || params.channelName === 'Expedia' || params.channelName === 'VRBO'
+      ? 'ota_prepaid'
+      : 'hotel_collect');
 
   try {
     await setDoc(ref, {
@@ -3406,6 +3603,9 @@ export async function createOtaChannelWithIcal(params: {
       channelName: params.channelName,
       propertyListingId: cleanListingId,
       roomNumber: normalizedRoom,
+      defaultCurrency,
+      defaultNightlyRate,
+      paymentCollectionMode,
       icalImportUrl: cleanImportUrl,
       icalExportUrl,
       commissionPct: Math.max(0, Math.min(50, params.commissionPct)),
@@ -3423,7 +3623,7 @@ export async function createOtaChannelWithIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Added ${params.channelName} with iCal Link`,
-      details: `${cleanListingId} · ${normalizedRoom} · ${cleanImportUrl || 'Export-only feed'}`,
+      details: `${cleanListingId} · ${normalizedRoom} · ${defaultCurrency} ${defaultNightlyRate || 'Room Rate'} (${paymentCollectionMode}) · ${cleanImportUrl || 'Export-only feed'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -3437,6 +3637,9 @@ export async function updateOtaChannelIcal(params: {
   icalImportUrl: string;
   roomNumber: string;
   propertyListingId?: string;
+  defaultCurrency?: ChannelCurrency;
+  defaultNightlyRate?: number;
+  paymentCollectionMode?: OtaPaymentCollectionMode;
   commissionPct?: number;
   actorRole: string;
 }) {
@@ -3456,6 +3659,13 @@ export async function updateOtaChannelIcal(params: {
   try {
     await updateDoc(ref, {
       propertyListingId: cleanListingId,
+      ...(params.defaultCurrency ? { defaultCurrency: params.defaultCurrency } : {}),
+      ...(params.defaultNightlyRate !== undefined
+        ? { defaultNightlyRate: Math.max(0, Number(params.defaultNightlyRate || 0)) }
+        : {}),
+      ...(params.paymentCollectionMode
+        ? { paymentCollectionMode: params.paymentCollectionMode }
+        : {}),
       ...(params.commissionPct !== undefined
         ? { commissionPct: Math.max(0, Math.min(50, params.commissionPct)) }
         : {}),
@@ -3470,7 +3680,7 @@ export async function updateOtaChannelIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Updated OTA & iCal Settings on ${params.channel.channelName}`,
-      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${cleanImportUrl || 'No inbound link'}`,
+      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${params.defaultCurrency || params.channel.defaultCurrency || 'NGN'} · ${cleanImportUrl || 'No inbound link'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -3521,7 +3731,7 @@ export function buildPropertyIcalFeed(params: {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Richgates Apartments//Channel Manager iCal//EN',
+    'PRODID:-//PCH PMS//Channel Manager iCal//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     `X-WR-CALNAME:${escapeIcal(params.propertyName)}${target ? ` - ${escapeIcal(target)}` : ''}`,

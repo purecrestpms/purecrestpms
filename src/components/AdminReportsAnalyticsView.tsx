@@ -39,6 +39,7 @@ import {
   LedgerEntryRecord,
   MaintenanceTicketRecord,
   matchesBookingSourceFilter,
+  NavSectionId,
   OtaIntegrationRecord,
   PayrollRunRecord,
   PosOrderRecord,
@@ -73,6 +74,7 @@ interface AdminReportsAnalyticsViewProps {
   housekeepingTasks: HousekeepingTaskRecord[];
   maintenanceTickets: MaintenanceTicketRecord[];
   otaChannels: OtaIntegrationRecord[];
+  onNavigate?: (section: NavSectionId) => void;
   onNotify: (msg: string) => void;
 }
 
@@ -284,6 +286,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
   housekeepingTasks,
   maintenanceTickets,
   otaChannels,
+  onNavigate,
   onNotify,
 }) => {
   const { cms } = useCms();
@@ -1360,7 +1363,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
   // Strict Admin Authorization Gate
   if (!isAuthorizedAdmin) {
     return (
-      <div className="bg-white border border-rose-200 rounded-xl p-8 max-w-xl mx-auto text-center space-y-3">
+      <div className="bg-white border border-rose-200 rounded-xl p-8 max-w-xl mx-auto text-center space-y-4">
         <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center mx-auto">
           <ShieldAlert className="w-6 h-6" />
         </div>
@@ -1368,8 +1371,18 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           Administrator Authorization Required
         </h2>
         <p className="text-xs text-slate-600 leading-relaxed">
-          Management Reports &amp; Analytics (P&amp;L, ADR, RevPAR, Inventory Valuation, and Staff Performance) is restricted exclusively to authorized Property Administrators.
+          All financial &amp; management analytics reports (P&amp;L, ADR, RevPAR, Inventory Valuation, and Staff Performance) are restricted exclusively to Property Administrators. Employees can view and print their operational Shift Daily Report instead.
         </p>
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={() => onNavigate('shift_daily_report')}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold rounded-lg cursor-pointer"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Open My Shift Daily Report</span>
+          </button>
+        )}
       </div>
     );
   }

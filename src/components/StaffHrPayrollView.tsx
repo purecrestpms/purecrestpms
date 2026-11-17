@@ -97,6 +97,7 @@ interface StaffHrPayrollViewProps {
   actorRole: string;
   onNotify: (msg: string) => void;
   onOpenSessionMonitor?: () => void;
+  onOpenShiftDailyReport?: () => void;
   onSendPasswordSetupEmail?: (email: string) => Promise<void>;
 }
 
@@ -131,6 +132,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   actorRole,
   onNotify,
   onOpenSessionMonitor,
+  onOpenShiftDailyReport,
   onSendPasswordSetupEmail,
 }) => {
   const { cms } = useCms();
@@ -905,6 +907,32 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     onNotify('Downloaded Shift Roster & Attendance PDF');
   };
 
+  if (!isAdminManager && (section === 'staff' || section === 'payroll')) {
+    return (
+      <div className="bg-white border border-rose-200 rounded-xl p-8 max-w-xl mx-auto text-center space-y-4">
+        <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center mx-auto">
+          <ShieldAlert className="w-6 h-6" />
+        </div>
+        <h2 className="font-display text-lg font-bold text-slate-900">
+          Administrator Authorization Required
+        </h2>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Staff Payroll disbursements, User Management, and salary schedules are restricted exclusively to Property Administrators. Employees can access and print their Shift Daily Report instead.
+        </p>
+        {onOpenShiftDailyReport && (
+          <button
+            type="button"
+            onClick={onOpenShiftDailyReport}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold rounded-lg cursor-pointer"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Open My Shift Daily Report</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {actionError && (
@@ -1001,13 +1029,23 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
         {section === 'shifts_attendance' && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
+            {onOpenShiftDailyReport && (
+              <button
+                type="button"
+                onClick={onOpenShiftDailyReport}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 font-semibold bg-[#061539] hover:bg-[#0c2b70] text-white rounded-lg cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5 text-amber-300" />
+                <span>Shift Daily Report</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => window.print()}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Print Shift Report</span>
+              <span>Print Roster</span>
             </button>
             <button
               type="button"
@@ -2163,42 +2201,44 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 {shifts.filter((s) => s.status === 'completed').length} closed
               </span>
             </div>
-            <form onSubmit={handleAddShift} className="no-print grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-              <select
-                value={shiftStaffId || staffMembers[0]?.id || ''}
-                onChange={(e) => setShiftStaffId(e.target.value)}
-                className="border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
-              >
-                {staffMembers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.fullName}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="date"
-                value={shiftDate}
-                onChange={(e) => setShiftDate(e.target.value)}
-                className="border border-slate-200 rounded-lg px-2.5 py-2"
-              />
-              <select
-                value={shiftWindow}
-                onChange={(e) =>
-                  setShiftWindow(e.target.value as ShiftScheduleRecord['shiftWindow'])
-                }
-                className="border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
-              >
-                <option value="Morning (07:00 - 15:00)">Morning (07:00 - 15:00)</option>
-                <option value="Afternoon (15:00 - 23:00)">Afternoon (15:00 - 23:00)</option>
-                <option value="Night (23:00 - 07:00)">Night (23:00 - 07:00)</option>
-              </select>
-              <button
-                type="submit"
-                className="sm:col-span-3 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer"
-              >
-                Assign Shift
-              </button>
-            </form>
+            {isAdminManager && (
+              <form onSubmit={handleAddShift} className="no-print grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                <select
+                  value={shiftStaffId || staffMembers[0]?.id || ''}
+                  onChange={(e) => setShiftStaffId(e.target.value)}
+                  className="border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
+                >
+                  {staffMembers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.fullName}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="date"
+                  value={shiftDate}
+                  onChange={(e) => setShiftDate(e.target.value)}
+                  className="border border-slate-200 rounded-lg px-2.5 py-2"
+                />
+                <select
+                  value={shiftWindow}
+                  onChange={(e) =>
+                    setShiftWindow(e.target.value as ShiftScheduleRecord['shiftWindow'])
+                  }
+                  className="border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
+                >
+                  <option value="Morning (07:00 - 15:00)">Morning (07:00 - 15:00)</option>
+                  <option value="Afternoon (15:00 - 23:00)">Afternoon (15:00 - 23:00)</option>
+                  <option value="Night (23:00 - 07:00)">Night (23:00 - 07:00)</option>
+                </select>
+                <button
+                  type="submit"
+                  className="sm:col-span-3 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer"
+                >
+                  Assign Shift
+                </button>
+              </form>
+            )}
 
             <div className="divide-y divide-slate-100 text-xs pt-2">
               {shifts.map((sh) => (

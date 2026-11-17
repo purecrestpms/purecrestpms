@@ -41,6 +41,7 @@ import {
   getReservationRoomDisplay,
   getRoomSection,
   GuestRecord,
+  HousekeepingTaskRecord,
   LedgerEntryRecord,
   LicenseRecord,
   MaintenanceTicketRecord,
@@ -60,6 +61,7 @@ import {
 } from '../types/pms';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
+import { StaffDashboardView } from './StaffDashboardView';
 
 function parseReadableError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
@@ -82,9 +84,11 @@ interface DashboardViewProps {
   userAccounts?: PropertyUserAccountRecord[];
   ledgerEntries?: LedgerEntryRecord[];
   posOrders: PosOrderRecord[];
+  housekeepingTasks?: HousekeepingTaskRecord[];
   maintenanceTickets: MaintenanceTicketRecord[];
   activeLicense?: LicenseRecord;
   canManageRooms: boolean;
+  allowedSections?: NavSectionId[];
   actorRole?: string;
   onNotify?: (msg: string) => void;
   onGuestCheckedIn?: (info: CheckedInConfirmationInfo) => void;
@@ -108,9 +112,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   userAccounts = [],
   ledgerEntries = [],
   posOrders,
+  housekeepingTasks = [],
   maintenanceTickets,
   activeLicense: _activeLicense,
   canManageRooms,
+  allowedSections,
   actorRole = 'Property Admin',
   onNotify,
   onGuestCheckedIn,
@@ -406,6 +412,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const unassignedAccountsCount = userAccounts.filter(
     (a) => a.role === 'unassigned' || !a.active
   ).length;
+
+  if (!canManageRooms) {
+    return (
+      <StaffDashboardView
+        property={property}
+        rooms={rooms}
+        reservations={reservations}
+        posOrders={posOrders}
+        housekeepingTasks={housekeepingTasks}
+        maintenanceTickets={maintenanceTickets}
+        allowedSections={allowedSections}
+        actorRole={actorRole}
+        onNavigate={onNavigate}
+        onOpenReservationFolio={onOpenReservationFolio}
+        onSignOut={onSignOut}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -1019,8 +1043,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
               {filteredDashboardReservations.map((res) => {
-                const { totalAmount, amountPaid, balance, paymentStatus } =
-                  getReservationPaymentSummary(res);
+                const {
+                  totalAmount,
+                  otaPaidAmount,
+                  hotelPaidAmount,
+                  amountPaid,
+                  balance,
+                  paymentStatus,
+                  sourceCurrency,
+                  sourceNightlyRate,
+                  sourceTotalAmount,
+                  otaPaidSourceAmount,
+                } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
                 const bookedDate = getReservationBookedDate(res);
                 const childCount = res.children ?? 0;
                 const sourceLabel = formatBookingSourceLabel(res.channel);
@@ -1129,27 +1163,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                     <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
                       <span className="block">{formatNgn(totalAmount)}</span>
-                      {res.sourceCurrency &&
-                        res.sourceCurrency !== 'NGN' &&
-                        typeof res.sourceTotalAmount === 'number' &&
-                        res.sourceTotalAmount > 0 && (
-                          <span className="block text-[10px] font-medium text-blue-700">
-                            {formatChannelCurrency(res.sourceTotalAmount, res.sourceCurrency)} (
-                            {res.sourceCurrency})
-                          </span>
-                        )}
+                      {sourceCurrency !== 'NGN' && sourceTotalAmount > 0 && (
+                        <span className="block text-[10px] font-medium text-blue-700">
+                          {formatChannelCurrency(sourceTotalAmount, sourceCurrency)} {sourceCurrency}
+                          {sourceNightlyRate > 0
+                            ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
+                            : ''}
+                        </span>
+                      )}
                     </td>
 
                     <td className="py-3 px-3.5 text-right font-mono-tabular font-medium text-emerald-700 whitespace-nowrap">
-                      {formatNgn(amountPaid)}
+                      <span className="block font-semibold">{formatNgn(amountPaid)}</span>
+                      <span className="block text-[10px] text-slate-500">
+                        OTA: {formatNgn(otaPaidAmount)}
+                        {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && otaPaidSourceAmount > 0
+                          ? ` (${formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)})`
+                          : ''}
+                      </span>
+                      <span className="block text-[10px] text-slate-500">
+                        Hotel: {formatNgn(hotelPaidAmount)}
+                      </span>
                     </td>
 
                     <td
                       className={`py-3 px-3.5 text-right font-mono-tabular font-semibold whitespace-nowrap ${
-                        balance > 0 ? 'text-rose-700' : 'text-slate-500'
+                        balance > 0 ? 'text-rose-700' : 'text-slate-600'
                       }`}
                     >
-                      {formatNgn(balance)}
+                      <span className="block">{formatNgn(balance)}</span>
+                      <span className="block text-[10px] font-normal text-slate-500">
+                        {balance > 0 ? 'Guest bal due' : '₦0 guest bal'}
+                      </span>
                     </td>
 
                     <td className="py-3 px-3.5 whitespace-nowrap">

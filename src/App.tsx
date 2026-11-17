@@ -48,6 +48,7 @@ import { RoomsReservationsView } from './components/RoomsReservationsView';
 import { Sidebar } from './components/Sidebar';
 import { StaffHrPayrollView } from './components/StaffHrPayrollView';
 import { StaffSessionsView } from './components/StaffSessionsView';
+import { StaffShiftReportView } from './components/StaffShiftReportView';
 import { mergeCmsWithDefaults, useCms } from './context/CmsContext';
 import { RICHGATES_PROPERTY_ID } from './data/seedData';
 import {
@@ -65,7 +66,6 @@ import {
   recordStaffSessionLogoutWorkflow,
   seedRichgatesIfNeeded,
   syncDefaultMessagesIfNeeded,
-  syncDefaultPosMenuIfNeeded,
   syncOtaChannelWorkflow,
   syncRichgatesLicenseCapIfNeeded,
   syncRichgatesOfficialCatalogIfNeeded,
@@ -73,6 +73,7 @@ import {
   upsertStaffSessionLoginWorkflow,
 } from './services/pmsService';
 import {
+  ADMIN_ONLY_SECTIONS,
   AttendanceRecord,
   AuditLogRecord,
   BlockedDateRecord,
@@ -172,6 +173,7 @@ const VALID_SECTIONS: NavSectionId[] = [
   'user_management',
   'staff_sessions',
   'shifts_attendance',
+  'shift_daily_report',
   'payroll',
   'maintenance',
   'ota_channels',
@@ -309,7 +311,6 @@ export default function App() {
   const autoSeedAttemptedRef = useRef<string | null>(null);
   const catalogSyncedPropsRef = useRef<Set<string>>(new Set());
   const propInfoSyncedRef = useRef<Set<string>>(new Set());
-  const posMenuSyncedRef = useRef<Set<string>>(new Set());
   const msgSyncedRef = useRef<Set<string>>(new Set());
   const licenseCapSyncedRef = useRef<Set<string>>(new Set());
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
@@ -454,9 +455,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    const connTimer = window.setTimeout(() => {
-      void testConnection();
-    }, 2500);
     void getRedirectResult(auth).catch((err) => {
       setAuthError(formatAuthErrorMessage(err));
     });
@@ -474,10 +472,17 @@ export default function App() {
       }
     });
     return () => {
-      window.clearTimeout(connTimer);
       unsub();
     };
   }, []);
+
+  useEffect(() => {
+    if (!authReady || !user || portalMode === 'home') return;
+    const connTimer = window.setTimeout(() => {
+      void testConnection();
+    }, 1500);
+    return () => window.clearTimeout(connTimer);
+  }, [authReady, user, portalMode]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -532,12 +537,22 @@ export default function App() {
         ? matchedUserAccount.privileges
         : ROLE_ALLOWED_SECTIONS[effectiveRole];
 
-  const effectiveAllowedSections: NavSectionId[] =
-    effectiveRole === 'pch_admin' ||
-    effectiveRole === 'property_admin' ||
-    baseAllowedSections.includes('staff')
-      ? Array.from(new Set([...baseAllowedSections, 'user_management', 'staff_sessions']))
-      : baseAllowedSections;
+  const isPrivilegedAdmin =
+    effectiveRole === 'pch_admin' || effectiveRole === 'property_admin';
+
+  const effectiveAllowedSections: NavSectionId[] = isPrivilegedAdmin
+    ? Array.from(
+        new Set([...baseAllowedSections, 'user_management', 'staff_sessions', 'shift_daily_report'])
+      )
+    : Array.from(
+        new Set([
+          'dashboard',
+          ...baseAllowedSections.filter(
+            (s) => !ADMIN_ONLY_SECTIONS.includes(s) && s !== 'ota_channels'
+          ),
+          'shift_daily_report',
+        ])
+      );
 
   useEffect(() => {
     if (!effectiveAllowedSections.includes(activeSection)) {
@@ -778,15 +793,6 @@ export default function App() {
     propInfoSyncedRef.current.add(activeProp.id);
     void syncRichgatesPropertyInfoIfNeeded(activeProp);
   }, [properties, activePropertyId, activeRole]);
-
-  // Ensure existing properties have editable POS menu items seeded in Firestore
-  useEffect(() => {
-    const activeProp = properties.find((p) => p.id === activePropertyId);
-    if (!activeProp || posMenuItems.length > 0) return;
-    if (posMenuSyncedRef.current.has(activeProp.id)) return;
-    posMenuSyncedRef.current.add(activeProp.id);
-    void syncDefaultPosMenuIfNeeded(activeProp);
-  }, [properties, activePropertyId, posMenuItems.length]);
 
   // Enforce Richgates 20-room license cap on legacy Firestore license docs
   useEffect(() => {
@@ -1069,6 +1075,19 @@ export default function App() {
     await signOut(auth);
   };
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (portalMode === 'home') {
+      document.title = 'PCH PMS — Property Management Software';
+    } else if (portalMode === 'pch-admin') {
+      document.title = 'PCH Super Admin — PCH PMS';
+    } else if (activePropertyForRole?.name) {
+      document.title = `${activePropertyForRole.name} — PCH PMS`;
+    } else {
+      document.title = 'PCH PMS — Property Management Software';
+    }
+  }, [portalMode, activePropertyForRole?.name]);
+
   if (!authReady) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-xs font-semibold text-[#061539]">
@@ -1086,7 +1105,15 @@ export default function App() {
           setAuthNotice(null);
           handlePortalSelection(nextPortal);
         }}
-        onReturnToWorkspace={() => handlePortalSelection('pch-admin')}
+        onReturnToWorkspace={() =>
+          handlePortalSelection(
+            isSignedInBootstrapped
+              ? 'pch-admin'
+              : effectiveRole === 'property_admin'
+                ? 'richgates-admin'
+                : 'staff'
+          )
+        }
       />
     );
   }
@@ -1502,6 +1529,8 @@ export default function App() {
                   userAccounts={userAccounts}
                   activeLicense={activeLicense}
                   canManageRooms={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
+                  allowedSections={effectiveAllowedSections}
+                  housekeepingTasks={housekeepingTasks}
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}
@@ -1619,6 +1648,7 @@ export default function App() {
                   housekeepingTasks={housekeepingTasks}
                   maintenanceTickets={maintenanceTickets}
                   otaChannels={otaChannels}
+                  onNavigate={handleSelectSection}
                   onNotify={notify}
                 />
               )}
@@ -1630,11 +1660,38 @@ export default function App() {
                   key={`${activeSection}-${activeProperty.id}`}
                   section={activeSection}
                   property={activeProperty}
+                  activeRole={effectiveRole}
                   ledgerEntries={ledgerEntries}
                   inventoryItems={inventoryItems}
                   purchaseOrders={purchaseOrders}
                   canManageRecords={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
                   actorRole={ROLE_LABELS[effectiveRole]}
+                  onNavigate={handleSelectSection}
+                  onNotify={notify}
+                />
+              )}
+
+              {activeSection === 'shift_daily_report' && (
+                <StaffShiftReportView
+                  key={`shift-daily-${activeProperty.id}`}
+                  property={activeProperty}
+                  activeRole={effectiveRole}
+                  userName={
+                    matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    user.email ||
+                    'Property Operator'
+                  }
+                  userEmail={user.email || ''}
+                  rooms={rooms}
+                  reservations={reservations}
+                  housekeepingTasks={housekeepingTasks}
+                  maintenanceTickets={maintenanceTickets}
+                  posOrders={posOrders}
+                  shifts={shifts}
+                  attendance={attendance}
+                  staffMembers={staffMembers}
                   onNotify={notify}
                 />
               )}
@@ -1667,6 +1724,7 @@ export default function App() {
                     'Property Admin'
                   }
                   onOpenSessionMonitor={() => handleSelectSection('staff_sessions')}
+                  onOpenShiftDailyReport={() => handleSelectSection('shift_daily_report')}
                   onSendPasswordSetupEmail={async (targetEmail) => {
                     await sendPasswordResetEmail(auth, targetEmail);
                     notify(`Password setup email sent to ${targetEmail}`);

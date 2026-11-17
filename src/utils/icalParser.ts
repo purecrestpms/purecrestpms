@@ -1,4 +1,4 @@
-import { BookingSourceOption, ChannelCurrency } from '../types/pms';
+import { BookingSourceOption, ChannelCurrency, OtaPaymentCollectionMode } from '../types/pms';
 
 export interface ParsedIcalEvent {
   uid: string;
@@ -22,6 +22,9 @@ export interface ParsedIcalEvent {
   parsedCurrency?: ChannelCurrency;
   parsedNightlyRate?: number;
   parsedTotalAmount?: number;
+  parsedPaidAmount?: number;
+  parsedPaymentStatus?: 'paid' | 'partial' | 'unpaid';
+  parsedPaymentCollectionMode?: OtaPaymentCollectionMode;
   cancelled: boolean;
 }
 
@@ -334,6 +337,87 @@ function extractPriceAndCurrency(
   return {};
 }
 
+function extractPaymentHint(
+  summary: string,
+  description: string,
+  xPaymentModel: string,
+  xPaymentStatus: string,
+  xAmountPaid: string
+): {
+  parsedPaidAmount?: number;
+  parsedPaymentStatus?: 'paid' | 'partial' | 'unpaid';
+  parsedPaymentCollectionMode?: OtaPaymentCollectionMode;
+} {
+  const combined = `${summary}\n${description}`;
+  let parsedPaymentCollectionMode: OtaPaymentCollectionMode | undefined;
+  let parsedPaymentStatus: 'paid' | 'partial' | 'unpaid' | undefined;
+  let parsedPaidAmount: number | undefined;
+
+  const cleanModel = xPaymentModel.trim().toLowerCase();
+  if (cleanModel) {
+    if (/(ota_prepaid|prepaid|ota_collect|channel_collect|airbnb|virtual_card)/i.test(cleanModel)) {
+      parsedPaymentCollectionMode = 'ota_prepaid';
+    } else if (/(hotel_collect|property_collect|pay_at_hotel|pay_at_property)/i.test(cleanModel)) {
+      parsedPaymentCollectionMode = 'hotel_collect';
+    }
+  }
+
+  if (!parsedPaymentCollectionMode) {
+    if (
+      /(?:OTA\s*Prepaid|Prepaid\s*(?:via|to|by)\s*(?:Airbnb|Booking\.com|Expedia|VRBO|Hotels\.ng|OTA|Channel)|Collected\s*by\s*(?:Airbnb|Booking\.com|Expedia|VRBO|OTA)|Payment\s*Model\s*[:=-]\s*OTA\s*Prepaid|Channel\s*Collect)/i.test(
+        combined
+      )
+    ) {
+      parsedPaymentCollectionMode = 'ota_prepaid';
+    } else if (
+      /(?:Collect\s*at\s*(?:Hotel|Property)|Pay\s*at\s*(?:Hotel|Property|Check-?in)|Hotel\s*Collect|Cash\s*at\s*Property)/i.test(
+        combined
+      )
+    ) {
+      parsedPaymentCollectionMode = 'hotel_collect';
+    }
+  }
+
+  const cleanStatus = xPaymentStatus.trim().toLowerCase();
+  if (cleanStatus === 'paid' || cleanStatus === 'prepaid') parsedPaymentStatus = 'paid';
+  else if (cleanStatus === 'partial') parsedPaymentStatus = 'partial';
+  else if (cleanStatus === 'unpaid' || cleanStatus === 'pending') parsedPaymentStatus = 'unpaid';
+
+  if (xAmountPaid.trim()) {
+    const val = Number(xAmountPaid.replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(val) && val >= 0) {
+      parsedPaidAmount = Number(val.toFixed(2));
+    }
+  }
+
+  if (parsedPaidAmount === undefined) {
+    const paidMatch = combined.match(
+      /(?:OTA\s*Payment\s*Received|Prepaid\s*Amount|Amount\s*Paid|Guest\s*Paid|Total\s*Paid|Paid\s*Amount|Payout)\s*[:=-]?\s*(?:(?:USD|EUR|GBP|NGN|US\$|\$|€|£|₦)\s*([0-9][0-9,]*(?:\.\d{1,2})?)|([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:USD|EUR|GBP|NGN))/i
+    );
+    if (paidMatch) {
+      const amt = Number((paidMatch[1] || paidMatch[2] || '').replace(/,/g, ''));
+      if (Number.isFinite(amt) && amt >= 0) {
+        parsedPaidAmount = Number(amt.toFixed(2));
+      }
+    }
+  }
+
+  if (!parsedPaymentStatus) {
+    if (
+      /(?:Payment\s*Status\s*[:=-]?\s*(?:Paid|Prepaid|Settled)|Fully\s*Paid|Prepaid\s*in\s*Full)/i.test(
+        combined
+      )
+    ) {
+      parsedPaymentStatus = 'paid';
+      if (!parsedPaymentCollectionMode) parsedPaymentCollectionMode = 'ota_prepaid';
+    } else if (/(?:Payment\s*Status\s*[:=-]?\s*Unpaid|Balance\s*Due\s*at\s*(?:Hotel|Check-?in))/i.test(combined)) {
+      parsedPaymentStatus = 'unpaid';
+    }
+  }
+
+  return { parsedPaidAmount, parsedPaymentStatus, parsedPaymentCollectionMode };
+}
+
 function isNonPersonSummaryLabel(candidate: string): boolean {
   const clean = candidate.trim();
   if (clean.length < 2) return true;
@@ -480,6 +564,9 @@ export function parseIcalEvents(
   let xEmail = '';
   let xBookingRef = '';
   let xListingId = '';
+  let xPaymentModel = '';
+  let xPaymentStatus = '';
+  let xAmountPaid = '';
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -507,6 +594,9 @@ export function parseIcalEvents(
       xEmail = '';
       xBookingRef = '';
       xListingId = '';
+      xPaymentModel = '';
+      xPaymentStatus = '';
+      xAmountPaid = '';
       continue;
     }
 
@@ -537,6 +627,13 @@ export function parseIcalEvents(
             xCurrency,
             nights
           );
+          const paymentHint = extractPaymentHint(
+            cleanSummary,
+            cleanDesc,
+            xPaymentModel,
+            xPaymentStatus,
+            xAmountPaid
+          );
           const guestNames = extractGuestNames(cleanSummary, cleanDesc, attendeeCn, channelName);
           const combinedText = `${cleanSummary}\n${cleanDesc}`;
           const occupancy = extractAdultsAndChildren(combinedText, xAdults, xChildren);
@@ -565,6 +662,7 @@ export function parseIcalEvents(
             calendarName: cleanCalName || undefined,
             roomHint: extractRoomHint(cleanSummary, cleanDesc, cleanLocation, cleanCalName, xRoomType),
             ...priceInfo,
+            ...paymentHint,
             cancelled: isCancelled,
           });
         }
@@ -626,6 +724,12 @@ export function parseIcalEvents(
       xBookingRef = valuePart;
     } else if (propName === 'X-LISTING-ID') {
       xListingId = valuePart;
+    } else if (propName === 'X-PAYMENT-MODEL' || propName === 'X-PAYMENT-COLLECTION') {
+      xPaymentModel = valuePart;
+    } else if (propName === 'X-PAYMENT-STATUS') {
+      xPaymentStatus = valuePart;
+    } else if (propName === 'X-AMOUNT-PAID' || propName === 'X-PAID-AMOUNT') {
+      xAmountPaid = valuePart;
     }
   }
 

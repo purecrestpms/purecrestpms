@@ -27,13 +27,10 @@ import {
   InventoryItemRecord,
   LedgerEntryRecord,
   POS_DEFAULT_CATEGORIES,
-  POS_MENU_ITEMS,
-  PosMenuItem,
   PosMenuItemRecord,
   PosOrderRecord,
   PropertyRecord,
   ReservationRecord,
-  RICHGATES_PROPERTY_INFO,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
@@ -73,19 +70,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 }) => {
   const { cms } = useCms();
 
-  // Live menu items from Firestore (falls back cleanly while loading if empty)
+  // Live menu items from Firestore (no hardcoded demo dishes)
   const effectiveMenu: PosMenuItemRecord[] = useMemo(() => {
-    if (posMenuItems.length > 0) {
-      return [...posMenuItems].sort((a, b) => a.name.localeCompare(b.name));
-    }
-    return POS_MENU_ITEMS.map((m) => ({
-      ...m,
-      available: m.available ?? true,
-      propertyId: property.id,
-      authorizedEmails: property.authorizedEmails,
-      ownerUid: property.ownerUid,
-    }));
-  }, [posMenuItems, property.id, property.authorizedEmails, property.ownerUid]);
+    return [...posMenuItems].sort((a, b) => a.name.localeCompare(b.name));
+  }, [posMenuItems]);
 
   const categories = useMemo(() => {
     const present = Array.from(new Set(effectiveMenu.map((m) => m.category))).filter(Boolean);
@@ -172,7 +160,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     [ledgerEntries]
   );
 
-  const addToCart = (item: PosMenuItem) => {
+  const addToCart = (item: PosMenuItemRecord) => {
     if (item.available === false) return;
     setCart((prev) => {
       const existing = prev.find((c) => c.id === item.id);
@@ -398,9 +386,9 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
   const handleDownloadReceiptPdf = (ord: PosOrderRecord) => {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [80, 175] });
-    const propAddress = property.address || RICHGATES_PROPERTY_INFO.address;
-    const propPhone = property.phone || RICHGATES_PROPERTY_INFO.phone;
-    const propEmail = property.email || RICHGATES_PROPERTY_INFO.email;
+    const propAddress = property.address || '';
+    const propPhone = property.phone || '';
+    const propEmail = property.email || '';
     const dateStr = ord.orderDate || new Date().toISOString().slice(0, 10);
 
     let y = 10;
@@ -488,7 +476,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
     doc.setFontSize(7.5);
     const footerLines = doc.splitTextToSize(
-      cms.brand.folioFooterNote || 'Thank you for dining with Richgates Apartments, Enugu.',
+      cms.brand.folioFooterNote || `Thank you for dining with ${property.name}.`,
       70
     );
     doc.text(footerLines, 40, y, { align: 'center' });
@@ -563,9 +551,30 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               />
             </div>
 
-            {visibleMenu.length === 0 ? (
+            {effectiveMenu.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-2.5">
+                <p className="font-display text-sm font-bold text-slate-900">
+                  No restaurant menu items created yet
+                </p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  {canManageMenu
+                    ? 'Add your actual kitchen dishes, grill plates, or bar drinks using "+ Menu Item", or use "Custom / Misc Item" on the right ticket to ring up an order.'
+                    : 'Your administrator has not published restaurant menu items yet. Use "Custom / Misc Item" on the right ticket to ring up an item.'}
+                </p>
+                {canManageMenu && (
+                  <button
+                    type="button"
+                    onClick={openAddMenuModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#1c46be] hover:bg-blue-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add First Menu Item</span>
+                  </button>
+                )}
+              </div>
+            ) : visibleMenu.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-xs text-slate-500">
-                No POS items match your filter. {canManageMenu ? 'Click "+ Menu Item" to add a dish or drink.' : ''}
+                No menu items match your current search or category filter.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1368,12 +1377,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     />
                   )}
                   <p className="font-display font-bold text-sm text-slate-900">{property.name}</p>
-                  <p className="text-[11px] text-slate-600">
-                    {property.address || RICHGATES_PROPERTY_INFO.address}
-                  </p>
-                  <p className="text-[11px] font-mono-tabular text-slate-500">
-                    {property.phone || RICHGATES_PROPERTY_INFO.phone}
-                  </p>
+                  {property.address && (
+                    <p className="text-[11px] text-slate-600">{property.address}</p>
+                  )}
+                  {property.phone && (
+                    <p className="text-[11px] font-mono-tabular text-slate-500">{property.phone}</p>
+                  )}
                 </div>
 
                 <div className="space-y-1 text-[11px]">
@@ -1465,11 +1474,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               />
             )}
             <p className="font-bold text-sm">{property.name}</p>
-            <p className="text-[10px]">{property.address || RICHGATES_PROPERTY_INFO.address}</p>
-            <p className="text-[10px] font-mono">
-              {property.phone || RICHGATES_PROPERTY_INFO.phone} ·{' '}
-              {property.email || RICHGATES_PROPERTY_INFO.email}
-            </p>
+            {property.address && <p className="text-[10px]">{property.address}</p>}
+            {(property.phone || property.email) && (
+              <p className="text-[10px] font-mono">
+                {[property.phone, property.email].filter(Boolean).join(' · ')}
+              </p>
+            )}
           </div>
           <div className="space-y-1 text-[11px] mb-2">
             <p>
@@ -1514,8 +1524,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
             </p>
           </div>
           <p className="text-center text-[10px] mt-4">
-            {cms.brand.folioFooterNote ||
-              'Thank you for choosing Richgates Apartments, Enugu.'}
+            {cms.brand.folioFooterNote || `Thank you for choosing ${property.name}.`}
           </p>
         </div>
       )}

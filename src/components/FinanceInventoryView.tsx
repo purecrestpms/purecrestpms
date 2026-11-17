@@ -7,6 +7,7 @@ import {
   Pencil,
   Plus,
   Printer,
+  ShieldAlert,
   ShoppingCart,
   Trash2,
   X,
@@ -32,6 +33,7 @@ import {
   PropertyRecord,
   PurchaseOrderRecord,
   RICHGATES_PROPERTY_INFO,
+  StaffRole,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
@@ -42,25 +44,33 @@ function formatPdfNgn(amount: number): string {
 interface FinanceInventoryViewProps {
   section: Extract<NavSectionId, 'accounting' | 'reports' | 'inventory' | 'procurement'>;
   property: PropertyRecord;
+  activeRole?: StaffRole;
   ledgerEntries: LedgerEntryRecord[];
   inventoryItems: InventoryItemRecord[];
   purchaseOrders: PurchaseOrderRecord[];
   canManageRecords?: boolean;
   actorRole: string;
+  onNavigate?: (section: NavSectionId) => void;
   onNotify: (msg: string) => void;
 }
 
 export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
   section,
   property,
+  activeRole,
   ledgerEntries,
   inventoryItems,
   purchaseOrders,
   canManageRecords = false,
   actorRole,
+  onNavigate,
   onNotify,
 }) => {
   const { cms } = useCms();
+  const isAdmin =
+    activeRole === 'pch_admin' ||
+    activeRole === 'property_admin' ||
+    (!activeRole && canManageRecords);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyRecordId, setBusyRecordId] = useState<string | null>(null);
   const [showLedgerForm, setShowLedgerForm] = useState(false);
@@ -439,6 +449,32 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       setActionError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  if (!isAdmin && (section === 'accounting' || section === 'reports')) {
+    return (
+      <div className="bg-white border border-rose-200 rounded-xl p-8 max-w-xl mx-auto text-center space-y-4">
+        <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center mx-auto">
+          <ShieldAlert className="w-6 h-6" />
+        </div>
+        <h2 className="font-display text-lg font-bold text-slate-900">
+          Administrator Authorization Required
+        </h2>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Financial Accounting Ledgers, P&amp;L statements, and Revenue Reports are restricted to Property Administrators only. Employees can view and print their operational Shift Daily Report.
+        </p>
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={() => onNavigate('shift_daily_report')}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold rounded-lg cursor-pointer"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Open My Shift Daily Report</span>
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

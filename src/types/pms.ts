@@ -39,6 +39,7 @@ export type NavSectionId =
   | 'rbac_audit'
   | 'messages'
   | 'training_help'
+  | 'shift_daily_report'
   | 'deployment'
   | 'profile'
   | 'cms';
@@ -422,6 +423,10 @@ export interface ReservationRecord {
   sourceNightlyRate?: number;
   sourceTotalAmount?: number;
   fxRateToNgn?: number;
+  paymentCollectionMode?: OtaPaymentCollectionMode;
+  otaPaidNgn?: number;
+  otaPaidSourceAmount?: number;
+  hotelPaidNgn?: number;
   status: ReservationStatus;
   paymentMethod: 'Bank Transfer' | 'Card POS' | 'Cash NGN' | 'Corporate Invoice' | 'Online Gateway';
   paymentConfirmed?: boolean;
@@ -460,14 +465,38 @@ export function getReservationPaymentSummary(
     Partial<
       Pick<
         ReservationRecord,
-        'status' | 'cancellationType' | 'cancellationFeeNgn' | 'lateCheckoutFeeNgn'
+        | 'channel'
+        | 'nightlyRateNgn'
+        | 'status'
+        | 'cancellationType'
+        | 'cancellationFeeNgn'
+        | 'lateCheckoutFeeNgn'
+        | 'paymentCollectionMode'
+        | 'otaPaidNgn'
+        | 'otaPaidSourceAmount'
+        | 'hotelPaidNgn'
+        | 'sourceCurrency'
+        | 'sourceNightlyRate'
+        | 'sourceTotalAmount'
+        | 'fxRateToNgn'
       >
-    >
+    >,
+  usdExchangeRateNgn?: number
 ): {
   totalAmount: number;
+  otaPaidAmount: number;
+  hotelPaidAmount: number;
   amountPaid: number;
   balance: number;
   paymentStatus: PaymentStatusLabel;
+  paymentCollectionMode: OtaPaymentCollectionMode;
+  sourceCurrency: ChannelCurrency;
+  sourceNightlyRate: number;
+  sourceTotalAmount: number;
+  fxRateToNgn: number;
+  otaPaidSourceAmount: number;
+  hotelPaidSourceAmount: number;
+  sourceBalanceAmount: number;
 } {
   const lateFee = Math.max(0, res.lateCheckoutFeeNgn || 0);
   const cancelFee = Math.max(0, res.cancellationFeeNgn || 0);
@@ -477,7 +506,44 @@ export function getReservationPaymentSummary(
         ? Math.max(0, cancelFee + (res.posChargesNgn || 0))
         : 0
       : Math.max(0, (res.roomChargesNgn || 0) + (res.posChargesNgn || 0) + lateFee);
-  const amountPaid = Math.max(0, res.paidNgn || 0);
+
+  const channelStr = String(res.channel || '');
+  const isOtaChannel =
+    channelStr === 'Airbnb' ||
+    channelStr === 'Booking.com' ||
+    channelStr === 'Expedia' ||
+    channelStr === 'Hotels.ng' ||
+    channelStr === 'VRBO' ||
+    channelStr === 'Custom iCal';
+  const defaultMode: OtaPaymentCollectionMode =
+    channelStr === 'Airbnb' || channelStr === 'Expedia' || channelStr === 'VRBO'
+      ? 'ota_prepaid'
+      : 'hotel_collect';
+  const paymentCollectionMode: OtaPaymentCollectionMode =
+    res.paymentCollectionMode || defaultMode;
+
+  const rawPaidNgn = Math.max(0, res.paidNgn || 0);
+  let otaPaidAmount = 0;
+  let hotelPaidAmount = 0;
+
+  if (typeof res.otaPaidNgn === 'number' && typeof res.hotelPaidNgn === 'number') {
+    otaPaidAmount = Math.max(0, res.otaPaidNgn);
+    hotelPaidAmount = Math.max(0, res.hotelPaidNgn);
+  } else if (typeof res.otaPaidNgn === 'number') {
+    otaPaidAmount = Math.max(0, res.otaPaidNgn);
+    hotelPaidAmount = Math.max(0, rawPaidNgn - otaPaidAmount);
+  } else if (typeof res.hotelPaidNgn === 'number') {
+    hotelPaidAmount = Math.max(0, res.hotelPaidNgn);
+    otaPaidAmount = isOtaChannel ? Math.max(0, rawPaidNgn - hotelPaidAmount) : 0;
+  } else if (isOtaChannel && paymentCollectionMode === 'ota_prepaid') {
+    otaPaidAmount = Math.min(rawPaidNgn, Math.max(0, res.roomChargesNgn || rawPaidNgn));
+    hotelPaidAmount = Math.max(0, rawPaidNgn - otaPaidAmount);
+  } else {
+    otaPaidAmount = 0;
+    hotelPaidAmount = rawPaidNgn;
+  }
+
+  const amountPaid = Math.max(rawPaidNgn, otaPaidAmount + hotelPaidAmount);
   const balance = Math.max(0, totalAmount - amountPaid);
   let paymentStatus: PaymentStatusLabel = 'Unpaid';
   if (balance <= 0 && (totalAmount > 0 || amountPaid > 0)) {
@@ -487,7 +553,55 @@ export function getReservationPaymentSummary(
   } else if (amountPaid > 0) {
     paymentStatus = 'Partial';
   }
-  return { totalAmount, amountPaid, balance, paymentStatus };
+
+  const sourceCurrency: ChannelCurrency = res.sourceCurrency || 'NGN';
+  const fxRate =
+    res.fxRateToNgn && res.fxRateToNgn > 0
+      ? res.fxRateToNgn
+      : getFxRateToNgn(sourceCurrency, usdExchangeRateNgn);
+  const sourceNightlyRate =
+    typeof res.sourceNightlyRate === 'number' && res.sourceNightlyRate > 0
+      ? res.sourceNightlyRate
+      : sourceCurrency === 'NGN'
+        ? res.nightlyRateNgn || 0
+        : Number(((res.nightlyRateNgn || 0) / fxRate).toFixed(2));
+  const sourceTotalAmount =
+    typeof res.sourceTotalAmount === 'number' && res.sourceTotalAmount > 0
+      ? res.sourceTotalAmount
+      : sourceCurrency === 'NGN'
+        ? totalAmount
+        : Number((totalAmount / fxRate).toFixed(2));
+  const otaPaidSourceAmount =
+    typeof res.otaPaidSourceAmount === 'number' && res.otaPaidSourceAmount >= 0
+      ? res.otaPaidSourceAmount
+      : sourceCurrency === 'NGN'
+        ? otaPaidAmount
+        : Number((otaPaidAmount / fxRate).toFixed(2));
+  const hotelPaidSourceAmount =
+    sourceCurrency === 'NGN'
+      ? hotelPaidAmount
+      : Number((hotelPaidAmount / fxRate).toFixed(2));
+  const sourceBalanceAmount =
+    sourceCurrency === 'NGN'
+      ? balance
+      : Number((balance / fxRate).toFixed(2));
+
+  return {
+    totalAmount,
+    otaPaidAmount,
+    hotelPaidAmount,
+    amountPaid,
+    balance,
+    paymentStatus,
+    paymentCollectionMode,
+    sourceCurrency,
+    sourceNightlyRate,
+    sourceTotalAmount,
+    fxRateToNgn: fxRate,
+    otaPaidSourceAmount,
+    hotelPaidSourceAmount,
+    sourceBalanceAmount,
+  };
 }
 
 export function getReservationBookedDate(
@@ -745,6 +859,8 @@ export interface MaintenanceTicketRecord {
 
 export type ChannelCurrency = 'NGN' | 'USD' | 'GBP' | 'EUR';
 
+export type OtaPaymentCollectionMode = 'ota_prepaid' | 'hotel_collect';
+
 export const SUPPORTED_CHANNEL_CURRENCIES: ChannelCurrency[] = ['NGN', 'USD', 'GBP', 'EUR'];
 
 export interface OtaIntegrationRecord {
@@ -755,6 +871,7 @@ export interface OtaIntegrationRecord {
   roomNumber?: string;
   defaultCurrency?: ChannelCurrency;
   defaultNightlyRate?: number;
+  paymentCollectionMode?: OtaPaymentCollectionMode;
   icalImportUrl?: string;
   icalExportUrl?: string;
   commissionPct: number;
@@ -814,17 +931,7 @@ export interface PosMenuItemRecord extends PosMenuItem {
   ownerUid: string;
 }
 
-export const POS_MENU_ITEMS: PosMenuItem[] = [
-  { id: 'menu-1', name: 'Smoky Party Jollof & Grilled Croaker', category: 'Nigerian Kitchen', priceNgn: 18500, costNgn: 9200, prepMinutes: 22, available: true },
-  { id: 'menu-2', name: 'Ofe Onugbu (Bitterleaf) & Pounded Yam', category: 'Nigerian Kitchen', priceNgn: 16000, costNgn: 7800, prepMinutes: 18, available: true },
-  { id: 'menu-3', name: 'Enugu Goat Meat Pepper Soup', category: 'Nigerian Kitchen', priceNgn: 12500, costNgn: 6000, prepMinutes: 15, available: true },
-  { id: 'menu-4', name: 'Richgates Signature Suya Platter', category: 'Grill & Continental', priceNgn: 14500, costNgn: 7200, prepMinutes: 16, available: true },
-  { id: 'menu-5', name: 'Herb-Crusted Ribeye & Garlic Mash', category: 'Grill & Continental', priceNgn: 29000, costNgn: 15500, prepMinutes: 25, available: true },
-  { id: 'menu-6', name: 'Executive Continental Breakfast Tray', category: 'Breakfast', priceNgn: 13500, costNgn: 6200, prepMinutes: 14, available: true },
-  { id: 'menu-7', name: 'Zobo Chapman Pitchers (Non-Alcoholic)', category: 'Bar & Cocktails', priceNgn: 6500, costNgn: 2200, prepMinutes: 5, available: true },
-  { id: 'menu-8', name: 'Hennessy VS Glass / Lounge Pour', category: 'Bar & Cocktails', priceNgn: 19000, costNgn: 11500, prepMinutes: 3, available: true },
-  { id: 'menu-9', name: 'Fresh Pineapple & Ginger Cold Press', category: 'Bar & Cocktails', priceNgn: 5000, costNgn: 1800, prepMinutes: 4, available: true },
-];
+export const POS_MENU_ITEMS: PosMenuItem[] = [];
 
 export const ROLE_LABELS: Record<StaffRole, string> = {
   pch_admin: 'PCH Super Admin',
@@ -869,6 +976,7 @@ export const PROPERTY_PRIVILEGE_OPTIONS: Array<{
   { id: 'reports', label: 'Financial Reports', group: 'Finance & HR' },
   { id: 'staff', label: 'Staff, Users & Performance', group: 'Finance & HR' },
   { id: 'shifts_attendance', label: 'Shifts & Attendance', group: 'Finance & HR' },
+  { id: 'shift_daily_report', label: 'Shift Daily Report', group: 'Operations' },
   { id: 'payroll', label: 'Monthly Payroll', group: 'Finance & HR' },
   { id: 'maintenance', label: 'Maintenance', group: 'Finance & HR' },
   { id: 'user_management', label: 'User Management', group: 'Admin' },
@@ -877,6 +985,20 @@ export const PROPERTY_PRIVILEGE_OPTIONS: Array<{
   { id: 'licensing', label: 'Software Licensing', group: 'Admin' },
   { id: 'profile', label: 'Property Profile', group: 'Admin' },
   { id: 'training_help', label: 'Docs & Help', group: 'Support' },
+];
+
+export const ADMIN_ONLY_SECTIONS: NavSectionId[] = [
+  'accounting',
+  'reports',
+  'payroll',
+  'staff',
+  'user_management',
+  'staff_sessions',
+  'licensing',
+  'properties_admin',
+  'rbac_audit',
+  'cms',
+  'deployment',
 ];
 
 export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
@@ -894,6 +1016,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'pos_kitchen',
     'accounting',
     'reports',
+    'shift_daily_report',
     'inventory',
     'procurement',
     'staff',
@@ -926,6 +1049,7 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'pos_kitchen',
     'accounting',
     'reports',
+    'shift_daily_report',
     'inventory',
     'procurement',
     'staff',
@@ -940,11 +1064,11 @@ export const ROLE_ALLOWED_SECTIONS: Record<StaffRole, NavSectionId[]> = {
     'licensing',
     'profile',
   ],
-  front_desk: ['dashboard', 'rooms', 'calendar', 'reservations', 'arrivals', 'in_house', 'walk_in', 'front_desk', 'guests', 'housekeeping', 'pos_kitchen', 'ota_channels', 'messages', 'training_help', 'profile'],
-  housekeeping: ['dashboard', 'rooms', 'calendar', 'housekeeping', 'maintenance', 'inventory', 'shifts_attendance', 'messages', 'training_help', 'profile'],
-  fnb_kitchen: ['dashboard', 'pos_kitchen', 'inventory', 'procurement', 'shifts_attendance', 'messages', 'training_help', 'profile'],
-  accountant: ['dashboard', 'accounting', 'inventory', 'procurement', 'payroll', 'messages', 'training_help', 'profile'],
-  maintenance: ['dashboard', 'rooms', 'calendar', 'maintenance', 'inventory', 'shifts_attendance', 'messages', 'training_help', 'profile'],
+  front_desk: ['dashboard', 'rooms', 'calendar', 'reservations', 'arrivals', 'in_house', 'walk_in', 'front_desk', 'guests', 'housekeeping', 'pos_kitchen', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
+  housekeeping: ['dashboard', 'rooms', 'calendar', 'housekeeping', 'maintenance', 'inventory', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
+  fnb_kitchen: ['dashboard', 'pos_kitchen', 'inventory', 'procurement', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
+  accountant: ['dashboard', 'inventory', 'procurement', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
+  maintenance: ['dashboard', 'rooms', 'calendar', 'maintenance', 'inventory', 'shifts_attendance', 'shift_daily_report', 'messages', 'training_help', 'profile'],
 };
 
 export function getRoomSection(room: Pick<RoomRecord, 'section' | 'roomNumber' | 'roomType'>): RoomSection {
@@ -1482,6 +1606,12 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       title: 'Shift Roster & Daily Attendance',
       subtitle: 'Assign morning/afternoon/night duty rosters and record real-time clock-ins',
       ctaLabel: 'Export Shift PDF',
+    },
+    shift_daily_report: {
+      navLabel: 'Shift Daily Report',
+      title: 'Employee Shift Daily Report',
+      subtitle: 'Printable daily operational shift handover summary for check-ins, departures, housekeeping, kitchen tickets, and attendance',
+      ctaLabel: 'Print Shift Report',
     },
     payroll: {
       navLabel: 'Monthly Payroll',

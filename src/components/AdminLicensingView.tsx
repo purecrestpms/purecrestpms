@@ -34,14 +34,19 @@ import {
   AuditLogRecord,
   BlockedDateRecord,
   buildAllSubdomainLinks,
+  ChannelCurrency,
+  convertCurrencyToNgn,
+  formatChannelCurrency,
   formatNgn,
   formatUsd,
   getConnectedRootDomain,
+  getFxRateToNgn,
   getPortalUrl,
   getPropertySubdomainSlug,
   LicenseRecord,
   NavSectionId,
   OtaIntegrationRecord,
+  OtaPaymentCollectionMode,
   PlanInquiryRecord,
   PortalMode,
   PosMenuItemRecord,
@@ -54,6 +59,7 @@ import {
   saveConnectedRootDomain,
   sortRoomsByNumber,
   StaffRole,
+  SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
@@ -145,10 +151,24 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [newListingId, setNewListingId] = useState('');
   const [newIcalUrl, setNewIcalUrl] = useState('');
   const [newCommissionPct, setNewCommissionPct] = useState(15);
+  const [newCurrency, setNewCurrency] = useState<ChannelCurrency>('USD');
+  const [newNightlyRate, setNewNightlyRate] = useState<number>(0);
+  const [newCollectionMode, setNewCollectionMode] =
+    useState<OtaPaymentCollectionMode>('ota_prepaid');
   const [newAutoSync, setNewAutoSync] = useState(true);
   const [exportSuiteFilter, setExportSuiteFilter] = useState('ALL');
   const [icalDrafts, setIcalDrafts] = useState<
-    Record<string, { url: string; room: string; listingId: string }>
+    Record<
+      string,
+      {
+        url: string;
+        room: string;
+        listingId: string;
+        defaultCurrency: ChannelCurrency;
+        defaultNightlyRate: number;
+        paymentCollectionMode: OtaPaymentCollectionMode;
+      }
+    >
   >({});
 
   const [busy, setBusy] = useState(false);
@@ -388,6 +408,18 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     return raw;
   };
 
+  const getDefaultModeForChannel = (
+    name: OtaIntegrationRecord['channelName']
+  ): OtaPaymentCollectionMode =>
+    name === 'Airbnb' || name === 'Expedia' || name === 'VRBO'
+      ? 'ota_prepaid'
+      : 'hotel_collect';
+
+  const getDefaultCurrencyForChannel = (
+    name: OtaIntegrationRecord['channelName']
+  ): ChannelCurrency =>
+    name === 'Hotels.ng' || name === 'Direct Website Engine' ? 'NGN' : 'USD';
+
   const persistDraftIfDirty = async (
     channel: OtaIntegrationRecord
   ): Promise<OtaIntegrationRecord> => {
@@ -396,11 +428,18 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     const nextUrl = draft.url.trim();
     const nextRoom = normalizeChannelRoom(draft.room);
     const nextListingId = draft.listingId.trim() || channel.propertyListingId;
+    const baseCurrency = channel.defaultCurrency || getDefaultCurrencyForChannel(channel.channelName);
+    const baseRate = Math.max(0, Number(channel.defaultNightlyRate || 0));
+    const baseMode =
+      channel.paymentCollectionMode || getDefaultModeForChannel(channel.channelName);
 
     const isDirty =
       nextUrl !== (channel.icalImportUrl || '').trim() ||
       nextRoom !== normalizeChannelRoom(channel.roomNumber) ||
-      nextListingId !== (channel.propertyListingId || '').trim();
+      nextListingId !== (channel.propertyListingId || '').trim() ||
+      draft.defaultCurrency !== baseCurrency ||
+      draft.defaultNightlyRate !== baseRate ||
+      draft.paymentCollectionMode !== baseMode;
 
     if (!isDirty) return channel;
 
@@ -410,6 +449,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
+      defaultCurrency: draft.defaultCurrency,
+      defaultNightlyRate: draft.defaultNightlyRate,
+      paymentCollectionMode: draft.paymentCollectionMode,
       actorRole: ROLE_LABELS[activeRole],
     });
     setIcalDrafts((prev) => {
@@ -422,6 +464,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
+      defaultCurrency: draft.defaultCurrency,
+      defaultNightlyRate: draft.defaultNightlyRate,
+      paymentCollectionMode: draft.paymentCollectionMode,
     };
   };
 
@@ -527,6 +572,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         channelName: newChannelName,
         propertyListingId: newListingId,
         roomNumber: newChannelSuite,
+        defaultCurrency: newCurrency,
+        defaultNightlyRate: Math.max(0, Number(newNightlyRate || 0)),
+        paymentCollectionMode: newCollectionMode,
         icalImportUrl: newIcalUrl,
         commissionPct: newCommissionPct,
         autoSync: newAutoSync,
@@ -536,6 +584,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       setShowChannelForm(false);
       setNewListingId('');
       setNewIcalUrl('');
+      setNewNightlyRate(0);
     } catch (err) {
       onNotify(err instanceof Error ? err.message : `Unable to add ${newChannelName}`);
     } finally {
@@ -647,6 +696,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       } else {
                         setNewCommissionPct(15);
                       }
+                      setNewCurrency(getDefaultCurrencyForChannel(val));
+                      setNewCollectionMode(getDefaultModeForChannel(val));
                     }}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                   >
@@ -698,6 +749,61 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     onChange={(e) => setNewIcalUrl(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Default Currency</label>
+                  <select
+                    value={newCurrency}
+                    onChange={(e) => setNewCurrency(e.target.value as ChannelCurrency)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-semibold"
+                  >
+                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                      <option key={cur} value={cur}>
+                        {cur} (₦{getFxRateToNgn(cur, property.usdExchangeRateNgn).toLocaleString('en-NG')}/{cur})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Default Nightly Rate ({newCurrency})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={newCurrency === 'NGN' ? 500 : 1}
+                    placeholder="0 = Use mapped room NGN rate"
+                    value={newNightlyRate}
+                    onChange={(e) => setNewNightlyRate(Math.max(0, Number(e.target.value)))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-0.5 font-mono-tabular">
+                    {newNightlyRate > 0
+                      ? `≈ ${formatNgn(
+                          convertCurrencyToNgn(newNightlyRate, newCurrency, property.usdExchangeRateNgn)
+                        )} / night`
+                      : 'Uses assigned room rate if left at 0'}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Payment Collection Model
+                  </label>
+                  <select
+                    value={newCollectionMode}
+                    onChange={(e) =>
+                      setNewCollectionMode(e.target.value as OtaPaymentCollectionMode)
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="ota_prepaid">OTA Collects (Prepaid via Channel)</option>
+                    <option value="hotel_collect">Hotel Collects at Property</option>
+                  </select>
                 </div>
               </div>
 
@@ -799,6 +905,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 url: ch.icalImportUrl || '',
                 room: normalizeChannelRoom(ch.roomNumber),
                 listingId: ch.propertyListingId || '',
+                defaultCurrency:
+                  ch.defaultCurrency || getDefaultCurrencyForChannel(ch.channelName),
+                defaultNightlyRate: Math.max(0, Number(ch.defaultNightlyRate || 0)),
+                paymentCollectionMode:
+                  ch.paymentCollectionMode || getDefaultModeForChannel(ch.channelName),
               };
               const suiteParam = encodeURIComponent(
                 !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
@@ -817,6 +928,14 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               const mappedLabel = mappedRoomObj
                 ? `${mappedRoomObj.roomNumber} · ${mappedRoomObj.roomType}`
                 : draft.room || 'All Rooms';
+              const previewNgnRate =
+                draft.defaultNightlyRate > 0
+                  ? convertCurrencyToNgn(
+                      draft.defaultNightlyRate,
+                      draft.defaultCurrency,
+                      property.usdExchangeRateNgn
+                    )
+                  : 0;
 
               return (
                 <div
@@ -837,6 +956,26 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                         }`}
                       >
                         {ch.connected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold">
+                      <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 font-mono-tabular">
+                        {draft.defaultCurrency}
+                        {draft.defaultNightlyRate > 0
+                          ? ` · ${formatChannelCurrency(draft.defaultNightlyRate, draft.defaultCurrency)}/nt`
+                          : ' · Room Rate'}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded border ${
+                          draft.paymentCollectionMode === 'ota_prepaid'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                      >
+                        {draft.paymentCollectionMode === 'ota_prepaid'
+                          ? 'OTA Collects (Prepaid)'
+                          : 'Hotel Collects'}
                       </span>
                     </div>
 
@@ -862,6 +1001,84 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                         }
                         className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
                       />
+                    </div>
+
+                    {/* Currency, Rate & Collection Model */}
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Currency
+                        </label>
+                        <select
+                          value={draft.defaultCurrency}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: {
+                                ...draft,
+                                defaultCurrency: e.target.value as ChannelCurrency,
+                              },
+                            }))
+                          }
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-semibold bg-white"
+                        >
+                          {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                            <option key={cur} value={cur}>
+                              {cur}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Rate ({draft.defaultCurrency}/nt)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={draft.defaultCurrency === 'NGN' ? 500 : 1}
+                          placeholder="0 = Room rate"
+                          value={draft.defaultNightlyRate}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: {
+                                ...draft,
+                                defaultNightlyRate: Math.max(0, Number(e.target.value)),
+                              },
+                            }))
+                          }
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
+                        />
+                        {previewNgnRate > 0 && (
+                          <p className="text-[10px] text-slate-500 font-mono-tabular mt-0.5">
+                            ≈ {formatNgn(previewNgnRate)}/nt
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Payment Collection Model
+                        </label>
+                        <select
+                          value={draft.paymentCollectionMode}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: {
+                                ...draft,
+                                paymentCollectionMode: e.target.value as OtaPaymentCollectionMode,
+                              },
+                            }))
+                          }
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] bg-white"
+                        >
+                          <option value="ota_prepaid">OTA Collects (Prepaid via Channel)</option>
+                          <option value="hotel_collect">Hotel Collects at Property</option>
+                        </select>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 pt-2 text-xs border-t border-slate-100">
@@ -931,6 +1148,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 icalImportUrl: draft.url,
                                 roomNumber: draft.room,
                                 propertyListingId: draft.listingId,
+                                defaultCurrency: draft.defaultCurrency,
+                                defaultNightlyRate: draft.defaultNightlyRate,
+                                paymentCollectionMode: draft.paymentCollectionMode,
                                 actorRole: ROLE_LABELS[activeRole],
                               });
                               setIcalDrafts((prev) => {
@@ -938,7 +1158,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 delete next[ch.id];
                                 return next;
                               });
-                              onNotify(`Saved listing & iCal settings for ${ch.channelName}`);
+                              onNotify(
+                                `Saved listing, currency (${draft.defaultCurrency}) & iCal settings for ${ch.channelName}`
+                              );
                             } catch (err) {
                               onNotify(
                                 err instanceof Error

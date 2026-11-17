@@ -1,5 +1,5 @@
 import { BOOTSTRAPPED_ADMIN_EMAILS } from '../firebase';
-import { POS_MENU_ITEMS, RICHGATES_OFFICIAL_ROOMS, RICHGATES_PROPERTY_INFO } from '../types/pms';
+import { RICHGATES_OFFICIAL_ROOMS, RICHGATES_PROPERTY_INFO } from '../types/pms';
 
 export const RICHGATES_PROPERTY_ID = 'richgates-enugu';
 
@@ -82,20 +82,16 @@ export function buildRichgatesSeedPayload(
     ownerUid,
   }));
 
-  const posMenuItems = POS_MENU_ITEMS.map((item) => ({
-    ...item,
-    costNgn: item.costNgn ?? 0,
-    available: item.available ?? true,
-    propertyId: targetPropertyId,
-    authorizedEmails,
-    ownerUid,
-  }));
+  const posMenuItems: Array<{ id: string } & Record<string, unknown>> = [];
 
   const otaChannels = [
     {
       id: 'ota-booking',
       channelName: 'Booking.com' as const,
       propertyListingId: 'BKG-ENUGU-88412',
+      defaultCurrency: 'USD' as const,
+      defaultNightlyRate: 0,
+      paymentCollectionMode: 'hotel_collect' as const,
       commissionPct: 15,
       autoSync: true,
       connected: true,
@@ -106,6 +102,9 @@ export function buildRichgatesSeedPayload(
       id: 'ota-airbnb',
       channelName: 'Airbnb' as const,
       propertyListingId: 'AIR-RICHGATES-08',
+      defaultCurrency: 'USD' as const,
+      defaultNightlyRate: 0,
+      paymentCollectionMode: 'ota_prepaid' as const,
       commissionPct: 14,
       autoSync: true,
       connected: true,
@@ -116,6 +115,9 @@ export function buildRichgatesSeedPayload(
       id: 'ota-hotelsng',
       channelName: 'Hotels.ng' as const,
       propertyListingId: 'HNG-ENU-2291',
+      defaultCurrency: 'NGN' as const,
+      defaultNightlyRate: 0,
+      paymentCollectionMode: 'hotel_collect' as const,
       commissionPct: 12,
       autoSync: true,
       connected: true,
@@ -126,6 +128,9 @@ export function buildRichgatesSeedPayload(
       id: 'ota-expedia',
       channelName: 'Expedia' as const,
       propertyListingId: 'EXP-RG-5501',
+      defaultCurrency: 'USD' as const,
+      defaultNightlyRate: 0,
+      paymentCollectionMode: 'ota_prepaid' as const,
       commissionPct: 18,
       autoSync: false,
       connected: false,
@@ -136,6 +141,9 @@ export function buildRichgatesSeedPayload(
       id: 'ota-direct',
       channelName: 'Direct Website Engine' as const,
       propertyListingId: 'WEB-RICHGATES-DIRECT',
+      defaultCurrency: 'NGN' as const,
+      defaultNightlyRate: 0,
+      paymentCollectionMode: 'hotel_collect' as const,
       commissionPct: 0,
       autoSync: true,
       connected: true,
