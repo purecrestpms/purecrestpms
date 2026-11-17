@@ -1730,7 +1730,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               <p className="text-xs text-slate-600 leading-relaxed">
                 PCH PMS is configured with <code className="font-mono-tabular">wrangler.toml</code>{' '}
                 and <code className="font-mono-tabular">public/_redirects</code> for zero-server
-                Cloudflare Pages global edge hosting connected to Firebase Firestore.
+                Cloudflare Pages global edge hosting connected to the PCH PMS Cloud Database.
               </p>
               <pre className="bg-slate-900 text-slate-100 p-4 rounded-lg text-xs font-mono-tabular overflow-x-auto">
 {`npm install
@@ -1738,8 +1738,8 @@ npm run build
 npx wrangler pages deploy dist --project-name=pch-pms`}
               </pre>
               <p className="text-xs text-slate-500">
-                After deploying to Cloudflare Pages, add your <code className="font-mono-tabular">*.pages.dev</code> domain
-                under Firebase Console → Authentication → Authorized Domains.
+                After deploying to Cloudflare Pages, register your <code className="font-mono-tabular">*.pages.dev</code> domain
+                under Authentication → Authorized Domains.
               </p>
             </div>
 
@@ -1895,7 +1895,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
                 <strong>CNAME</strong> pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (orange cloud ON, SSL mode <strong>Full (strict)</strong>). No separate DNS record is needed for <code className="font-mono-tabular">/staff</code>.
               </li>
               <li>
-                In <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, add{' '}
+                In <strong>Authentication Settings → Authorized domains</strong>, register{' '}
                 <code className="font-mono-tabular">app.{savedRootDomain}</code>,{' '}
                 <code className="font-mono-tabular">admin.{savedRootDomain}</code>, and each property subdomain so Google Sign-In works everywhere.
               </li>
@@ -1938,7 +1938,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
 
               <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-3">
                 <p className="text-xs font-bold text-slate-900">
-                  2. Remove Demo Guests from Live Firestore DB
+                  2. Remove Demo Guests from Live Cloud Database
                 </p>
                 <p className="text-xs text-slate-600 leading-relaxed">
                   Resets all {sortedRooms.length} rooms to Vacant &amp; Clean and permanently clears existing demo guests, sample reservations, date blocks, POS orders, and sample ledger entries before go-live.

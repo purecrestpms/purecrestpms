@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Building2,
   CheckCircle2,
-  ImagePlus,
   KeyRound,
   Mail,
   MapPin,
@@ -10,7 +9,6 @@ import {
   Phone,
   Save,
   ShieldCheck,
-  Trash2,
   UserCircle2,
 } from 'lucide-react';
 import { saveMyUserProfile, updatePropertyProfile } from '../services/pmsService';
@@ -35,48 +33,6 @@ interface ProfileViewProps {
   onNotify: (msg: string) => void;
 }
 
-async function compressLogoToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Failed to read selected logo file.'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Unsupported or corrupted image file.'));
-      img.onload = () => {
-        const maxWidth = 420;
-        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
-        const targetW = Math.max(1, Math.round(img.width * scale));
-        const targetH = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Canvas context unavailable.'));
-          return;
-        }
-        ctx.clearRect(0, 0, targetW, targetH);
-        ctx.drawImage(img, 0, 0, targetW, targetH);
-
-        let result =
-          file.type === 'image/png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.86);
-        let quality = 0.82;
-        while (result.length > 320000 && quality > 0.35) {
-          result = canvas.toDataURL('image/jpeg', quality);
-          quality -= 0.12;
-        }
-        if (result.length > 340000) {
-          reject(new Error('Logo image is still too large after compression. Choose a smaller file.'));
-          return;
-        }
-        resolve(result);
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 export const ProfileView: React.FC<ProfileViewProps> = ({
   property,
   activeLicense,
@@ -89,7 +45,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 }) => {
   const { cms } = useCms();
   const canManageProperty = activeRole === 'pch_admin' || activeRole === 'property_admin';
-  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Personal Admin / Staff Profile state
   const initialNameParts = (
@@ -110,7 +65,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [notes, setNotes] = useState(userProfile?.notes || '');
   const [savingPersonal, setSavingPersonal] = useState(false);
 
-  // Property Info & Contact + Logo state
+  // Property Info & Contact state
   const [propName, setPropName] = useState(property.name || RICHGATES_PROPERTY_INFO.name);
   const [propAddress, setPropAddress] = useState(property.address || RICHGATES_PROPERTY_INFO.address);
   const [propPhone, setPropPhone] = useState(property.phone || RICHGATES_PROPERTY_INFO.phone);
@@ -118,8 +73,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     property.whatsapp || RICHGATES_PROPERTY_INFO.whatsapp
   );
   const [propEmail, setPropEmail] = useState(property.email || RICHGATES_PROPERTY_INFO.email);
-  const [propLogoUrl, setPropLogoUrl] = useState(property.logoUrl || '');
-  const [logoError, setLogoError] = useState<string | null>(null);
   const [savingProp, setSavingProp] = useState(false);
 
   useEffect(() => {
@@ -145,7 +98,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setPropPhone(property.phone || RICHGATES_PROPERTY_INFO.phone);
     setPropWhatsapp(property.whatsapp || RICHGATES_PROPERTY_INFO.whatsapp);
     setPropEmail(property.email || RICHGATES_PROPERTY_INFO.email);
-    setPropLogoUrl(property.logoUrl || '');
   }, [property]);
 
   const handleSavePersonal = async (e: React.FormEvent) => {
@@ -170,30 +122,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   };
 
-  const handleLogoFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLogoError(null);
-    try {
-      const dataUrl = await compressLogoToDataUrl(file);
-      setPropLogoUrl(dataUrl);
-      if (canManageProperty) {
-        await updatePropertyProfile({
-          property,
-          updates: { logoUrl: dataUrl },
-          actorRole: ROLE_LABELS[activeRole],
-        });
-        onNotify('Property logo uploaded and updated beside sidebar name');
-      } else {
-        onNotify('Logo loaded — click Update Property Info to save');
-      }
-    } catch (err) {
-      setLogoError(err instanceof Error ? err.message : 'Unable to load logo image.');
-    } finally {
-      e.target.value = '';
-    }
-  };
-
   const handleSaveProperty = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canManageProperty) return;
@@ -207,11 +135,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           phone: propPhone.trim(),
           whatsapp: propWhatsapp.trim(),
           email: propEmail.trim(),
-          logoUrl: propLogoUrl.trim(),
         },
         actorRole: ROLE_LABELS[activeRole],
       });
-      onNotify('Updated property contact, address & logo profile');
+      onNotify('Updated property contact & address profile');
     } finally {
       setSavingProp(false);
     }
@@ -233,26 +160,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       {/* Header Banner */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          {activeRole !== 'pch_admin' && propLogoUrl ? (
-            <img
-              src={propLogoUrl}
-              alt={propName}
-              referrerPolicy="no-referrer"
-              className="w-12 h-12 rounded-xl object-contain border border-slate-200 bg-white p-1 shrink-0"
-            />
-          ) : (
-            <div
-              className={`w-12 h-12 rounded-xl text-white font-display font-bold text-base flex items-center justify-center shrink-0 ${
-                activeRole === 'pch_admin' ? 'bg-[#1c46be]' : 'bg-slate-900'
-              }`}
-            >
-              {activeRole === 'pch_admin' ? (
-                <ShieldCheck className="w-5 h-5" />
-              ) : (
-                initials || 'PA'
-              )}
-            </div>
-          )}
+          <div
+            className={`w-12 h-12 rounded-xl text-white font-display font-bold text-base flex items-center justify-center shrink-0 ${
+              activeRole === 'pch_admin' ? 'bg-[#1c46be]' : 'bg-[#0B245B]'
+            }`}
+          >
+            {activeRole === 'pch_admin' ? (
+              <ShieldCheck className="w-5 h-5" />
+            ) : (
+              initials || 'PA'
+            )}
+          </div>
           <div>
             <h1 className="font-display text-xl font-bold text-slate-900">
               {cms.pages.profile.title}
@@ -376,7 +294,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </form>
 
-        {/* Property Contact, Logo & Address Profile */}
+        {/* Property Contact & Address Profile */}
         <form
           onSubmit={handleSaveProperty}
           className="bg-white border border-slate-200 rounded-xl p-6 space-y-5"
@@ -385,97 +303,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-slate-700" />
               <h2 className="font-display text-sm font-bold text-slate-900">
-                Property Address, Logo &amp; Official Contact
+                Property Address &amp; Official Contact
               </h2>
             </div>
             <span className="font-mono-tabular text-[11px] font-semibold text-slate-500">
               {property.code}
             </span>
-          </div>
-
-          {/* Property Logo Upload */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-slate-800">Property Brand Logo</span>
-              <span className="text-[11px] text-slate-500 text-right">
-                Shown on Property Portal, Sidebar, Receipts &amp; Reports
-              </span>
-            </div>
-
-            {logoError && (
-              <p className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-[11px]">
-                {logoError}
-              </p>
-            )}
-
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="w-16 h-16 rounded-xl border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0">
-                {propLogoUrl ? (
-                  <img
-                    src={propLogoUrl}
-                    alt="Property logo preview"
-                    referrerPolicy="no-referrer"
-                    onError={() => setLogoError('Logo image could not be loaded.')}
-                    className="w-full h-full object-contain p-1"
-                  />
-                ) : (
-                  <Building2 className="w-6 h-6 text-slate-400" />
-                )}
-              </div>
-
-              <div className="flex-1 min-w-[200px] space-y-2">
-                <input
-                  ref={logoInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLogoFileSelect}
-                  className="hidden"
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={!canManageProperty}
-                    onClick={() => logoInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50 text-slate-800 font-semibold rounded-lg cursor-pointer"
-                  >
-                    <ImagePlus className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>Upload Logo</span>
-                  </button>
-                  {propLogoUrl && canManageProperty && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setPropLogoUrl('');
-                        setLogoError(null);
-                        await updatePropertyProfile({
-                          property,
-                          updates: { logoUrl: '' },
-                          actorRole: ROLE_LABELS[activeRole],
-                        });
-                        onNotify('Removed property logo from sidebar and reports');
-                      }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-rose-200 text-rose-700 hover:bg-rose-50 font-medium rounded-lg cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Remove</span>
-                    </button>
-                  )}
-                </div>
-                <label className="block text-[11px] font-medium text-slate-600">
-                  Logo Image URL
-                </label>
-                <input
-                  type="text"
-                  disabled={!canManageProperty}
-                  value={propLogoUrl.startsWith('data:') ? '[Uploaded Logo Image]' : propLogoUrl}
-                  onChange={(e) => {
-                    setPropLogoUrl(e.target.value);
-                    setLogoError(null);
-                  }}
-                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-[11px] font-mono-tabular disabled:bg-slate-100"
-                />
-              </div>
-            </div>
           </div>
 
           {/* Live Contact Card Preview */}

@@ -258,13 +258,13 @@ const TRAINING_MODULES: TrainingModule[] = [
       },
       {
         title: 'Export Executive PDF & Multi-Sheet Excel',
-        caption: 'Step 2: Export formatted Excel spreadsheets (.xls) or print clean executive PDF packs connected directly to Firestore.',
+        caption: 'Step 2: Export formatted Excel spreadsheets (.xls) or print clean executive PDF packs connected directly to your live database.',
         uiBanner: 'Export Boardroom Pack (.xls / PDF)',
         highlightBox: 'Zero Dummy Data · 100% Live PMS Records',
         actionButton: 'Export Excel / PDF',
         metrics: [
           { label: 'Charts', value: 'Bar / Line / Pie' },
-          { label: 'Data Source', value: 'Firestore Live' },
+          { label: 'Data Source', value: 'Live Database' },
           { label: 'Access', value: 'Admin Only' },
         ],
       },

@@ -1163,7 +1163,9 @@ export function getPortalUrl(
 ): string {
   if (typeof window === 'undefined') {
     if (portal === 'home') return '/home';
-    return portal === 'staff' ? '/staff' : `/?portal=${portal}`;
+    if (portal === 'staff') return '/login';
+    if (portal === 'pch-admin') return '/pch-admin';
+    return '/admin';
   }
   const host = window.location.hostname.toLowerCase();
   const slug = getPropertySubdomainSlug(property);
@@ -1174,25 +1176,32 @@ export function getPortalUrl(
     if (portal === 'home') {
       return `${proto}//app.${apex}`;
     }
-    if (portal === 'pch-admin' || portal === 'admin') {
+    if (portal === 'pch-admin') {
       return `${proto}//admin.${apex}`;
     }
     if (portal === 'staff') {
-      return `${proto}//${slug}.${apex}/staff`;
+      const targetHost = extractPropertySubdomainSlug(host) ? `${slug}.${apex}` : apex;
+      return `${proto}//${targetHost}/login`;
     }
-    return `${proto}//${slug}.${apex}`;
+    if (portal === 'admin' || portal === 'richgates-admin' || portal === 'richgates') {
+      if (extractPropertySubdomainSlug(host)) {
+        return `${proto}//${slug}.${apex}/admin`;
+      }
+      return `${proto}//${apex}/admin`;
+    }
+    return `${proto}//${slug}.${apex}/admin`;
   }
 
   if (portal === 'home') {
     return `${window.location.origin}/home`;
   }
   if (portal === 'staff') {
-    return `${window.location.origin}/staff`;
+    return `${window.location.origin}/login`;
   }
-  if (portal === 'pch-admin' || portal === 'admin') {
-    return `${window.location.origin}/?portal=pch-admin`;
+  if (portal === 'pch-admin') {
+    return `${window.location.origin}/pch-admin`;
   }
-  return `${window.location.origin}/?portal=richgates-admin`;
+  return `${window.location.origin}/admin`;
 }
 
 export interface PlanInquiryRecord {
@@ -1506,7 +1515,7 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
     profile: {
       navLabel: 'Admin & Property Profile',
       title: 'Admin & Property Profile',
-      subtitle: 'Manage your signed-in operator details, property logo, and official Richgates Apartments contact profile',
+      subtitle: 'Manage your signed-in operator details and official Richgates Apartments contact profile',
       ctaLabel: 'Update Property Info',
     },
     cms: {

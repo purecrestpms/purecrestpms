@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   BedDouble,
   BookOpenCheck,
@@ -21,6 +21,8 @@ import {
   LogOut,
   Mail,
   Package,
+  PanelLeftClose,
+  PanelLeftOpen,
   PlaneLanding,
   Shield,
   ShieldCheck,
@@ -48,7 +50,7 @@ interface SidebarProps {
   onSelectSection: (section: NavSectionId) => void;
   properties: PropertyRecord[];
   activePropertyId: string;
-  onSelectProperty: (id: string) => void;
+  onSelectProperty?: (id: string) => void;
   portalMode: PortalMode;
   activeRole: StaffRole;
   allowedSections?: NavSectionId[];
@@ -120,9 +122,7 @@ const NAV_GROUPS: Array<{
   },
   {
     group: 'Support & Training',
-    items: [
-      { id: 'training_help', label: 'Docs, Training & Help', icon: LifeBuoy },
-    ],
+    items: [{ id: 'training_help', label: 'Docs, Training & Help', icon: LifeBuoy }],
   },
 ];
 
@@ -131,7 +131,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectSection,
   properties,
   activePropertyId,
-  onSelectProperty,
   portalMode,
   activeRole,
   allowedSections,
@@ -145,90 +144,88 @@ export const Sidebar: React.FC<SidebarProps> = ({
   unreadMessageCount = 0,
 }) => {
   const { cms } = useCms();
+  const [collapsed, setCollapsed] = useState(false);
+
   const allowed =
     allowedSections && allowedSections.length > 0
       ? allowedSections
       : ROLE_ALLOWED_SECTIONS[activeRole];
   const activeProp = properties.find((p) => p.id === activePropertyId) || properties[0];
-  const [logoError, setLogoError] = useState(false);
-  const [pchLogoError, setPchLogoError] = useState(false);
-
-  useEffect(() => {
-    setLogoError(false);
-  }, [activeProp?.logoUrl]);
+  const propertyName = activeProp?.name || 'Richgates Apartments, Enugu';
 
   const handleNavClick = (sectionId: NavSectionId) => {
     onSelectSection(sectionId);
     onCloseMobile();
   };
 
-  const sidebarBody = (
-    <div className="w-64 bg-slate-900 text-slate-200 flex flex-col shrink-0 border-r border-slate-800 h-full">
-      {/* Brand Lockup — Property logo updates NEVER alter PCH Super Admin emblem */}
-      <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5 min-w-0">
-          {portalMode === 'pch-admin' ? (
-            !pchLogoError ? (
-              <div className="w-9 h-9 rounded-lg overflow-hidden bg-white shrink-0">
-                <img
-                  src="/assets/aistudio/4A541DC4-8B5B-4592-9C9E-752D5AE470AD_3f72a29d.png"
-                  alt="PCH Emblem"
-                  referrerPolicy="no-referrer"
-                  onError={() => setPchLogoError(true)}
-                  className="w-full h-full object-cover scale-[1.06]"
-                />
-              </div>
-            ) : (
-              <div className="w-9 h-9 rounded-lg bg-[#0B245B] border border-amber-400/50 flex items-center justify-center shrink-0">
-                <ShieldCheck className="w-4 h-4 text-white" />
-              </div>
-            )
-          ) : activeProp?.logoUrl && !logoError ? (
-            <img
-              key={activeProp.logoUrl}
-              src={activeProp.logoUrl}
-              alt={activeProp.name}
-              referrerPolicy="no-referrer"
-              onError={() => setLogoError(true)}
-              className="w-9 h-9 rounded-lg object-contain bg-white p-0.5 shrink-0"
-            />
-          ) : (
-            <div className="w-9 h-9 rounded-lg bg-emerald-800 border border-emerald-600/50 flex items-center justify-center shrink-0">
-              <Building2 className="w-4 h-4 text-white" />
+  const renderSidebarBody = (isCollapsed: boolean) => (
+    <div
+      className={`${
+        isCollapsed ? 'w-[76px]' : 'w-64'
+      } bg-white text-[#0B245B] flex flex-col shrink-0 border-r border-slate-200 h-full transition-all duration-200`}
+    >
+      {/* Top Header: Brand / Property Name + Collapse Toggle */}
+      <div
+        className={`px-3.5 py-3.5 border-b border-slate-200 flex items-center ${
+          isCollapsed ? 'justify-center' : 'justify-between gap-2'
+        }`}
+      >
+        {!isCollapsed && (
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-[#0B245B] text-white flex items-center justify-center shrink-0">
+              {portalMode === 'pch-admin' ? (
+                <ShieldCheck className="w-4 h-4 text-amber-300" />
+              ) : (
+                <Building2 className="w-4 h-4 text-amber-300" />
+              )}
             </div>
-          )}
-          <div className="min-w-0">
-            <span
-              className={`${
-                portalMode === 'pch-admin' ? 'font-site-title text-lg' : 'font-display text-lg'
-              } font-bold tracking-tight text-white block truncate`}
-            >
-              {portalMode === 'pch-admin' ? cms.brand.pchPortalName : cms.brand.richgatesPortalName}
-            </span>
-            <p className="text-[11px] text-slate-400 truncate">
-              {portalMode === 'pch-admin'
-                ? cms.brand.pchRoleSubtitle
-                : portalMode === 'richgates-admin'
-                  ? cms.brand.richgatesAdminSubtitle
-                  : cms.brand.richgatesStaffSubtitle}
-            </p>
+            <div className="min-w-0">
+              <span className="font-display text-sm font-bold tracking-tight text-[#0B245B] block truncate">
+                {portalMode === 'pch-admin' ? cms.brand.pchPortalName : propertyName}
+              </span>
+              <p className="text-[11px] font-medium text-[#1c46be]/80 truncate">
+                {portalMode === 'pch-admin'
+                  ? cms.brand.pchRoleSubtitle
+                  : portalMode === 'richgates-admin'
+                    ? cms.brand.richgatesAdminSubtitle
+                    : cms.brand.richgatesStaffSubtitle}
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-1">
-          {portalMode === 'pch-admin' && (
+        )}
+
+        <div className="flex items-center gap-1 shrink-0">
+          {!isCollapsed && portalMode === 'pch-admin' && (
             <button
               type="button"
               onClick={onOpenPortalLinksModal}
               title="Portal Login Links & Switcher"
-              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1.5 rounded-lg text-[#1c46be] hover:bg-blue-50 transition-colors cursor-pointer"
             >
               <Link2 className="w-4 h-4" />
             </button>
           )}
+
+          {/* Desktop Collapse / Expand Toggle */}
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="hidden lg:inline-flex p-1.5 rounded-lg text-[#0B245B] hover:bg-blue-50 hover:text-[#1c46be] transition-colors cursor-pointer"
+          >
+            {isCollapsed ? (
+              <PanelLeftOpen className="w-4 h-4" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4" />
+            )}
+          </button>
+
+          {/* Mobile Close Button */}
           <button
             type="button"
             onClick={onCloseMobile}
-            className="lg:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+            className="lg:hidden p-1.5 rounded-lg text-[#0B245B] hover:bg-blue-50"
             aria-label="Close navigation menu"
           >
             <X className="w-4 h-4" />
@@ -236,69 +233,59 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Active Property Selector */}
-      <div className="px-4 py-3 border-b border-slate-800">
-        <label className="block text-[11px] font-medium text-slate-400 mb-1.5">
-          Active Property
-        </label>
-        <select
-          value={activePropertyId}
-          onChange={(e) => onSelectProperty(e.target.value)}
-          disabled={properties.length <= 1}
-          className="w-full bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2 focus:outline-none focus:border-emerald-500"
-        >
-          {properties.length === 0 ? (
-            <option value={activePropertyId}>Richgates Apartments, Enugu</option>
-          ) : (
-            properties.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))
-          )}
-        </select>
-      </div>
-
       {/* Navigation Links */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+      <nav className="flex-1 overflow-y-auto px-2.5 py-3 space-y-4">
         {NAV_GROUPS.map((group) => {
           const visibleItems = group.items.filter((item) => allowed.includes(item.id));
           if (visibleItems.length === 0) return null;
           return (
             <div key={group.group} className="space-y-1">
-              <p className="px-2.5 text-[11px] font-semibold text-slate-500 tracking-wide">
-                {group.group}
-              </p>
+              {!isCollapsed ? (
+                <p className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-[#1c46be]/60">
+                  {group.group}
+                </p>
+              ) : (
+                <div className="mx-2 border-t border-slate-100 my-1.5" />
+              )}
+
               {visibleItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeSection === item.id;
                 const navLabel = cms.pages[item.id]?.navLabel || item.label;
                 const showUnread = item.id === 'messages' && unreadMessageCount > 0;
+
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => handleNavClick(item.id)}
-                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                    title={isCollapsed ? navLabel : undefined}
+                    aria-label={navLabel}
+                    className={`relative w-full flex items-center ${
+                      isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2 px-2.5 py-2'
+                    } rounded-lg text-xs transition-colors whitespace-nowrap cursor-pointer ${
                       isActive
-                        ? 'bg-emerald-600 text-white'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        ? 'bg-[#0B245B] text-white font-semibold'
+                        : 'text-[#0B245B] hover:bg-blue-50 hover:text-[#1c46be] font-medium'
                     }`}
                   >
-                    <span className="flex items-center gap-2.5 min-w-0">
+                    <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
                       <Icon className="w-4 h-4 shrink-0" />
-                      <span className="truncate">{navLabel}</span>
+                      {!isCollapsed && <span className="truncate">{navLabel}</span>}
                     </span>
-                    {showUnread && (
+
+                    {showUnread && !isCollapsed && (
                       <span
                         className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
-                          isActive
-                            ? 'bg-white text-emerald-700'
-                            : 'bg-emerald-500 text-white'
+                          isActive ? 'bg-white text-[#0B245B]' : 'bg-[#1c46be] text-white'
                         }`}
                       >
                         {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
                       </span>
+                    )}
+
+                    {showUnread && isCollapsed && (
+                      <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-rose-600" />
                     )}
                   </button>
                 );
@@ -308,61 +295,84 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
       </nav>
 
-      {/* Bottom Portal Switcher & Clickable User Profile Card */}
-      <div className="p-3.5 border-t border-slate-800 space-y-2.5 bg-slate-950/40">
+      {/* Bottom Workspace Switcher & User Profile + Sign Out */}
+      <div className="p-3 border-t border-slate-200 space-y-2.5 bg-slate-50/70">
         {portalMode === 'pch-admin' ? (
           <button
             type="button"
+            title={isCollapsed ? 'Portal Links & Switch' : undefined}
             onClick={() => {
               onOpenPortalLinksModal();
               onCloseMobile();
             }}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+            className={`w-full flex items-center justify-center gap-2 ${
+              isCollapsed ? 'p-2' : 'px-3 py-2'
+            } rounded-lg border border-blue-200 bg-white hover:bg-blue-50 text-xs font-semibold text-[#1c46be] transition-colors cursor-pointer`}
           >
-            <ClipboardList className="w-3.5 h-3.5" />
-            <span>Portal Links &amp; Switch</span>
+            <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+            {!isCollapsed && <span>Portal Links &amp; Switch</span>}
           </button>
         ) : (
           <button
             type="button"
+            title={
+              isCollapsed
+                ? portalMode === 'staff'
+                  ? 'Switch to Property Admin'
+                  : 'Switch to Staff View'
+                : undefined
+            }
             onClick={() => {
               onSwitchPropertyPortal(portalMode === 'staff' ? 'richgates-admin' : 'staff');
               onCloseMobile();
             }}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+            className={`w-full flex items-center justify-center gap-2 ${
+              isCollapsed ? 'p-2' : 'px-3 py-2'
+            } rounded-lg border border-blue-200 bg-white hover:bg-blue-50 text-xs font-semibold text-[#1c46be] transition-colors cursor-pointer`}
           >
-            <ClipboardList className="w-3.5 h-3.5" />
-            <span>
-              {portalMode === 'staff' ? 'Switch to Property Admin' : 'Switch to Staff View'}
-            </span>
+            <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+            {!isCollapsed && (
+              <span>
+                {portalMode === 'staff' ? 'Switch to Property Admin' : 'Switch to Staff View'}
+              </span>
+            )}
           </button>
         )}
 
-        <div className="flex items-center justify-between gap-2 pt-1">
+        <div
+          className={`flex items-center ${
+            isCollapsed ? 'flex-col gap-2' : 'justify-between gap-2'
+          } pt-1`}
+        >
           <button
             type="button"
             onClick={() => handleNavClick('profile')}
-            title="Open Admin & Property Profile"
-            className="flex items-center gap-2.5 min-w-0 flex-1 text-left rounded-lg p-1 -m-1 hover:bg-slate-800/80 transition-colors cursor-pointer"
+            title={`Open Profile (${userName})`}
+            className={`flex items-center gap-2.5 min-w-0 ${
+              isCollapsed ? 'justify-center' : 'flex-1 text-left'
+            } rounded-lg p-1 -m-1 hover:bg-blue-50 transition-colors cursor-pointer`}
           >
-            <img
-              src="/src/assets/images/avatar_pch_admin_1794795996224.jpg"
-              alt={userName}
-              referrerPolicy="no-referrer"
-              className="w-8 h-8 rounded-lg object-cover shrink-0 bg-slate-800"
-            />
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{userName}</p>
-              <p className="text-[11px] text-slate-400 truncate">
-                {ROLE_LABELS[activeRole]}
-              </p>
-            </div>
+            <span className="w-8 h-8 rounded-lg bg-[#0B245B] text-white font-mono-tabular text-[11px] font-bold flex items-center justify-center shrink-0">
+              {userName
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((p) => p[0]?.toUpperCase() || '')
+                .join('') || 'RG'}
+            </span>
+            {!isCollapsed && (
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-[#0B245B] truncate">{userName}</p>
+                <p className="text-[11px] text-[#1c46be]/80 truncate">{ROLE_LABELS[activeRole]}</p>
+              </div>
+            )}
           </button>
+
           <button
             type="button"
             onClick={onSignOut}
             title={`Sign out (${userEmail})`}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            aria-label="Sign out"
+            className="p-2 rounded-lg text-[#1c46be] hover:text-rose-700 hover:bg-rose-50 transition-colors shrink-0 cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
           </button>
@@ -373,9 +383,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Desktop Sticky Sidebar */}
-      <aside className="no-print hidden lg:block w-64 shrink-0 h-screen sticky top-0">
-        {sidebarBody}
+      {/* Desktop Sticky Collapsible Sidebar */}
+      <aside
+        className={`no-print hidden lg:block ${
+          collapsed ? 'w-[76px]' : 'w-64'
+        } shrink-0 h-screen sticky top-0 transition-all duration-200`}
+      >
+        {renderSidebarBody(collapsed)}
       </aside>
 
       {/* Mobile Drawer Sidebar */}
@@ -386,7 +400,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={onCloseMobile}
             aria-hidden="true"
           />
-          <div className="relative z-10 h-full">{sidebarBody}</div>
+          <div className="relative z-10 h-full">{renderSidebarBody(false)}</div>
         </div>
       )}
     </>

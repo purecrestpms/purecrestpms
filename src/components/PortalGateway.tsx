@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
 import {
+  AlertTriangle,
   ArrowRight,
   Building2,
+  CheckCircle2,
   Eye,
   EyeOff,
   Lock,
   LogIn,
   Mail,
+  Shield,
   ShieldCheck,
-  User,
+  UserCheck,
 } from 'lucide-react';
 import { useCms } from '../context/CmsContext';
 import {
@@ -36,8 +39,8 @@ interface PortalGatewayProps {
   isSigningIn: boolean;
 }
 
-const RICHGATES_ATTACHED_ICON =
-  '/assets/aistudio/001890be-a02f-4bfe-9e94-a4c86e183844_b9376f70.jpeg';
+const RICHGATES_CREST_IMAGE =
+  '/assets/aistudio/F4CFBE9B-2B7C-4025-95EE-42FC3CADC245_b5a4d143.png';
 
 const PCH_ATTACHED_ICON =
   '/assets/aistudio/4A541DC4-8B5B-4592-9C9E-752D5AE470AD_3f72a29d.png';
@@ -49,38 +52,6 @@ const STAFF_ROLES: StaffRole[] = [
   'accountant',
   'maintenance',
 ];
-
-const RichgatesEmblem: React.FC = () => {
-  const [iconError, setIconError] = useState(false);
-
-  return (
-    <div className="inline-flex flex-col sm:flex-row items-center gap-4 select-none">
-      {!iconError ? (
-        <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-black border border-yellow-400/50 shadow-[0_18px_40px_-10px_rgba(0,0,0,0.65)] shrink-0">
-          <img
-            src={RICHGATES_ATTACHED_ICON}
-            alt="Richgates Apartments Emblem"
-            referrerPolicy="no-referrer"
-            onError={() => setIconError(true)}
-            className="w-full h-full object-contain"
-          />
-        </div>
-      ) : (
-        <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-black border border-yellow-400/60 flex items-center justify-center shadow-2xl shrink-0">
-          <Building2 className="w-9 h-9 text-yellow-400" />
-        </div>
-      )}
-      <div className="text-center sm:text-left">
-        <span className="block font-site-title text-3xl sm:text-4xl font-bold tracking-tight text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]">
-          Richgates Apartments
-        </span>
-        <span className="block text-[11px] sm:text-xs font-semibold tracking-[0.26em] text-yellow-300/95 uppercase mt-1 drop-shadow">
-          Property Management System
-        </span>
-      </div>
-    </div>
-  );
-};
 
 export const PortalGateway: React.FC<PortalGatewayProps> = ({
   selectedPortal,
@@ -98,234 +69,212 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
   const [workEmailHint, setWorkEmailHint] = useState('');
   const [passwordHint, setPasswordHint] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [imgError, setImgError] = useState(false);
+  const [bgImgError, setBgImgError] = useState(false);
+  const [crestError, setCrestError] = useState(false);
   const [pchIconError, setPchIconError] = useState(false);
 
   const isStaffPage = selectedPortal === 'staff';
   const isPchPage = selectedPortal === 'pch-admin';
 
-  // =========================================================================
-  // 1. DEDICATED PCH SUPER ADMIN PORTAL (Independent Branding & Navy/Gold Theme)
-  // =========================================================================
-  if (isPchPage) {
-    return (
-      <div className="min-h-screen bg-white text-slate-900 flex flex-col lg:flex-row">
-        <div className="lg:w-1/2 relative bg-[#0B245B] text-white flex flex-col justify-between min-h-[280px] lg:min-h-screen overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-br from-[#081A44] via-[#0B245B] to-[#13347D]" />
-          <div className="relative z-10 p-8 lg:p-12 flex items-center gap-3.5">
-            {!pchIconError ? (
-              <div className="w-12 h-12 rounded-xl overflow-hidden bg-white shadow-md shrink-0">
-                <img
-                  src={PCH_ATTACHED_ICON}
-                  alt="PCH Emblem"
-                  referrerPolicy="no-referrer"
-                  onError={() => setPchIconError(true)}
-                  className="w-full h-full object-cover scale-[1.06]"
-                />
-              </div>
-            ) : (
-              <div className="w-12 h-12 rounded-xl bg-white/15 border border-white/25 flex items-center justify-center shrink-0">
-                <ShieldCheck className="w-5 h-5 text-white" />
-              </div>
-            )}
-            <div>
-              <span className="font-site-title text-2xl font-bold text-white block leading-tight">
-                {cms.brand.pchPortalName}
-              </span>
-              <p className="text-xs text-amber-200/90 mt-0.5">Multi-Property Administration</p>
-            </div>
-          </div>
-
-          <div className="relative z-10 p-8 lg:p-12 space-y-4 max-w-lg">
-            <p className="text-xs font-medium tracking-wide text-amber-300">
-              {cms.login.pchHeroKicker}
-            </p>
-            <h1 className="font-site-title text-3xl lg:text-4xl font-bold text-white [text-wrap:balance]">
-              {cms.login.pchHeroTitle}
-            </h1>
-            <p className="text-sm text-blue-100/90 leading-relaxed">
-              {cms.login.pchHeroDesc}
-            </p>
-          </div>
-        </div>
-
-        <div className="lg:w-1/2 flex flex-col justify-center px-6 py-10 sm:px-12 lg:px-16 bg-white">
-          <div className="max-w-md w-full mx-auto space-y-7">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1c46be]">
-                <ShieldCheck className="w-4 h-4" />
-                <span>PCH Super Admin Portal</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => onSelectPortal('richgates-admin')}
-                className="text-xs font-semibold text-slate-600 hover:text-[#1c46be] cursor-pointer"
-              >
-                Open Richgates Login →
-              </button>
-            </div>
-
-            <div className="space-y-1.5">
-              <h2 className="font-display text-2xl font-bold tracking-tight text-slate-900">
-                {cms.login.pchSignInTitle}
-              </h2>
-              <p className="text-sm text-slate-500">{cms.login.pchSignInSubtitle}</p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Administrator Email
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    value={workEmailHint}
-                    onChange={(e) => setWorkEmailHint(e.target.value)}
-                    className="w-full pl-10 pr-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-[#1c46be]"
-                  />
-                </div>
-              </div>
-
-              {authNotice && (
-                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-                  {authNotice}
-                </div>
-              )}
-
-              {authError && (
-                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
-                  {authError}
-                </div>
-              )}
-
-              <button
-                type="button"
-                disabled={isSigningIn}
-                onClick={() => onGoogleSignIn('pch-admin')}
-                className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#1c46be] hover:bg-[#163aa3] disabled:opacity-60 text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>{isSigningIn ? 'Signing in...' : 'Sign in to PCH Super Admin'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // =========================================================================
-  // 2. RICHGATES APARTMENTS PROPERTY PMS LOGIN
-  // =========================================================================
-  const handleRichgatesFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (workEmailHint.trim() || passwordHint) {
-      void onEmailPasswordSignIn(selectedPortal, workEmailHint, passwordHint, selectedStaffRole);
+      void onEmailPasswordSignIn(
+        selectedPortal,
+        workEmailHint,
+        passwordHint,
+        isStaffPage ? selectedStaffRole : undefined
+      );
       return;
     }
-    void onGoogleSignIn(selectedPortal, selectedStaffRole);
+    void onGoogleSignIn(selectedPortal, isStaffPage ? selectedStaffRole : undefined);
   };
 
+  const cardHeading = isPchPage
+    ? cms.login.pchSignInTitle || 'Super Admin Login'
+    : isStaffPage
+      ? 'Employee & Staff Login'
+      : 'Administrator Login';
+
+  const cardSubtitle = isPchPage
+    ? cms.login.pchSignInSubtitle || 'Multi-property licensing & platform administration'
+    : isStaffPage
+      ? 'Sign in to your daily shift workspace'
+      : 'Manage your property with ease';
+
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-slate-900 flex flex-col justify-center">
-      {/* Blurred Architectural Backdrop Photo */}
-      {!imgError ? (
+    <div className="relative min-h-screen w-full overflow-x-hidden bg-[#03153a] flex flex-col justify-between">
+      {/* Architectural Exterior Photo Backdrop */}
+      {!bgImgError ? (
         <img
           src={RICHGATES_EXTERIOR_IMAGE}
           alt="Richgates Apartments exterior"
           referrerPolicy="no-referrer"
-          onError={() => setImgError(true)}
-          className="absolute inset-0 w-full h-full object-cover object-center blur-[4px] scale-[1.04]"
+          onError={() => setBgImgError(true)}
+          className="absolute inset-0 w-full h-full object-cover object-center scale-[1.02]"
         />
       ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-emerald-950 to-slate-950" />
+        <div className="absolute inset-0 bg-gradient-to-br from-[#020d26] via-[#08245e] to-[#03153a]" />
       )}
 
-      {/* Measured Scrim for Crisp Icon & Typography Contrast */}
+      {/* Deep Royal Navy Gradient Scrim */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            'linear-gradient(125deg, rgba(6,22,12,0.58) 0%, rgba(10,30,18,0.42) 48%, rgba(5,20,10,0.68) 100%)',
+            'linear-gradient(135deg, rgba(3, 21, 58, 0.90) 0%, rgba(10, 42, 108, 0.78) 50%, rgba(3, 18, 51, 0.92) 100%)',
         }}
       />
 
-      {/* Subtle Layered Architectural Waves Along Lower Edge */}
+      {/* Bottom Gold & Navy Architectural Corner Swoosh */}
       <svg
-        viewBox="0 0 1440 900"
+        viewBox="0 0 1440 240"
         preserveAspectRatio="none"
         aria-hidden="true"
-        className="absolute inset-0 w-full h-full pointer-events-none"
+        className="absolute bottom-0 left-0 right-0 w-full h-24 sm:h-32 pointer-events-none z-10"
       >
         <path
-          d="M0 790 C380 885 780 835 1120 620 C1270 525 1370 435 1440 370 L1440 900 L0 900 Z"
-          fill="rgba(8, 70, 31, 0.34)"
+          d="M0 155 Q190 215 410 240 L0 240 Z"
+          fill="#f5b800"
         />
         <path
-          d="M0 820 C410 910 830 870 1180 680 C1310 610 1390 545 1440 505 L1440 900 L0 900 Z"
-          fill="rgba(5, 46, 20, 0.86)"
+          d="M0 185 Q180 225 380 240 L0 240 Z"
+          fill="#041945"
+        />
+        <path
+          d="M1440 155 Q1250 215 1030 240 L1440 240 Z"
+          fill="#f5b800"
+        />
+        <path
+          d="M1440 185 Q1260 225 1060 240 L1440 240 Z"
+          fill="#041945"
         />
       </svg>
 
-      {/* Main Layout */}
-      <div className="relative z-10 w-full max-w-[1280px] mx-auto px-5 sm:px-10 lg:px-14 py-8 lg:py-12 flex flex-col lg:flex-row items-center justify-between gap-10">
-        {/* Left Brand Zone — Attached Richgates Emblem Only (No phone/email/WhatsApp) */}
-        <div className="w-full lg:w-[48%] flex flex-col items-center lg:items-start justify-center space-y-6">
-          <RichgatesEmblem />
-          <p className="hidden lg:block text-sm text-slate-100/90 max-w-md leading-relaxed drop-shadow">
-            Unified reservations, front desk folios, housekeeping dispatch, restaurant POS, and revenue analytics for Richgates Apartments.
-          </p>
+      {/* Top Spacer */}
+      <div className="relative z-20 flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-8 sm:py-10">
+        {/* Centered Emblem & Brand Lockup */}
+        <div className="text-center mb-6 sm:mb-7 select-none">
+          {isPchPage ? (
+            <div className="flex flex-col items-center">
+              {!pchIconError ? (
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-white p-1.5 border-2 border-[#f5b800] shadow-2xl mb-3">
+                  <img
+                    src={PCH_ATTACHED_ICON}
+                    alt="PCH PMS Emblem"
+                    referrerPolicy="no-referrer"
+                    onError={() => setPchIconError(true)}
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#071f52] border-2 border-[#f5b800] flex items-center justify-center shadow-2xl mb-3">
+                  <ShieldCheck className="w-8 h-8 text-[#f5b800]" />
+                </div>
+              )}
+              <h1 className="font-site-title text-3xl sm:text-4xl font-bold tracking-[0.14em] text-white uppercase drop-shadow">
+                {cms.brand.pchPortalName || 'PCH PMS'}
+              </h1>
+              <p className="text-xs sm:text-sm font-semibold tracking-[0.28em] text-white/90 uppercase mt-1">
+                Multi-Property Platform
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center">
+              {!crestError ? (
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-white p-1 border-2 border-[#f5b800] shadow-2xl mb-3">
+                  <img
+                    src={RICHGATES_CREST_IMAGE}
+                    alt="Richgates Apartments Crest"
+                    referrerPolicy="no-referrer"
+                    onError={() => setCrestError(true)}
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#071f52] border-2 border-[#f5b800] flex items-center justify-center shadow-2xl mb-3">
+                  <Building2 className="w-8 h-8 text-[#f5b800]" />
+                </div>
+              )}
+              <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-[0.12em] text-white uppercase drop-shadow-md leading-none">
+                RICHGATES
+              </h1>
+              <p className="text-xs sm:text-sm font-semibold tracking-[0.38em] text-white/95 uppercase mt-1.5">
+                APARTMENTS
+              </p>
+              <div className="flex items-center justify-center gap-3 mt-2.5">
+                <span className="h-[1.5px] w-10 sm:w-14 bg-[#f5b800] rounded-full" />
+                <span className="text-xs sm:text-sm italic font-medium text-white/95 tracking-wide">
+                  Property Management System
+                </span>
+                <span className="h-[1.5px] w-10 sm:w-14 bg-[#f5b800] rounded-full" />
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Right Elevated White Login Card */}
-        <div className="w-full max-w-[445px] flex flex-col justify-center">
-          <div className="bg-white rounded-[24px] shadow-[0_24px_64px_-14px_rgba(0,0,0,0.45)] border border-slate-200/70 px-6 sm:px-9 py-8 sm:py-9 space-y-5">
+        {/* Floating Elevated White Login Card */}
+        <div className="w-full max-w-[430px] bg-white rounded-2xl shadow-[0_28px_70px_-12px_rgba(2,12,36,0.72)] border border-white/40 overflow-hidden">
+          {/* Thin Royal Gold Top Accent Bar */}
+          <div className="h-1.5 bg-gradient-to-r from-[#062052] via-[#f5b800] to-[#062052]" />
+
+          <div className="p-6 sm:p-8 space-y-5">
+            {/* Shield Icon + Title + Subtitle */}
             <div className="text-center space-y-2">
-              <h1 className="font-display text-3xl sm:text-[34px] font-bold tracking-tight text-[#08461f]">
-                Welcome Back
-              </h1>
-              <p className="text-sm text-slate-600 font-medium">Sign in to Continue</p>
-              <div className="w-16 h-[2px] bg-[#08461f] mx-auto rounded-full" />
+              <div className="relative w-12 h-12 mx-auto rounded-2xl bg-[#062052]/5 border border-[#062052]/15 flex items-center justify-center">
+                {isStaffPage ? (
+                  <UserCheck className="w-6 h-6 text-[#062052]" />
+                ) : (
+                  <>
+                    <Shield className="w-7 h-7 text-[#062052]" />
+                    <Lock className="w-3.5 h-3.5 text-[#e5a400] absolute" />
+                  </>
+                )}
+              </div>
+
+              <div>
+                <h2 className="font-display text-2xl font-bold text-[#062052] tracking-tight">
+                  {cardHeading}
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600 mt-0.5">{cardSubtitle}</p>
+              </div>
             </div>
 
-            {/* Admin / Staff Segmented Selector */}
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl text-xs">
-              <button
-                type="button"
-                onClick={() => onSelectPortal('richgates-admin')}
-                className={`py-2 px-3 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  !isStaffPage
-                    ? 'bg-[#08461f] text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
+            {/* Alert / Error Messages */}
+            {authNotice && (
+              <div
+                role="status"
+                className="flex items-start gap-2.5 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 leading-relaxed"
               >
-                Property Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => onSelectPortal('staff')}
-                className={`py-2 px-3 rounded-lg font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  isStaffPage
-                    ? 'bg-[#08461f] text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Staff Login
-              </button>
-            </div>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>{authNotice}</span>
+              </div>
+            )}
 
-            <form onSubmit={handleRichgatesFormSubmit} className="space-y-3.5">
+            {authError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2.5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 leading-relaxed"
+              >
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleFormSubmit} className="space-y-3.5">
               {isStaffPage && (
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  <label
+                    htmlFor="staff-role-select"
+                    className="block text-[11px] font-semibold text-[#062052] mb-1"
+                  >
                     Department Workspace
                   </label>
                   <select
+                    id="staff-role-select"
                     value={selectedStaffRole}
                     onChange={(e) => onSelectStaffRole(e.target.value as StaffRole)}
-                    className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:border-[#08461f]"
+                    className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:border-[#062052] focus:ring-2 focus:ring-[#062052]/10"
                   >
                     {STAFF_ROLES.map((role) => (
                       <option key={role} value={role}>
@@ -344,13 +293,15 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
                   Email Address
                 </label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     id="login-email-input"
                     type="email"
+                    autoComplete="email"
+                    placeholder="Email Address"
                     value={workEmailHint}
                     onChange={(e) => setWorkEmailHint(e.target.value)}
-                    className="w-full pl-10 pr-3.5 py-3 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:border-[#08461f] focus:ring-2 focus:ring-emerald-900/10"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#062052] focus:ring-2 focus:ring-[#062052]/10"
                   />
                 </div>
               </div>
@@ -363,19 +314,21 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
                   Password
                 </label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     id="login-password-input"
                     type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="Password"
                     value={passwordHint}
                     onChange={(e) => setPasswordHint(e.target.value)}
-                    className="w-full pl-10 pr-10 py-3 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:border-[#08461f] focus:ring-2 focus:ring-emerald-900/10"
+                    className="w-full pl-10 pr-10 py-2.5 text-sm border border-slate-300 rounded-xl bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#062052] focus:ring-2 focus:ring-[#062052]/10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-800 p-1 cursor-pointer"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
                   >
                     {showPassword ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                   </button>
@@ -385,59 +338,92 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
                   <button
                     type="button"
                     disabled={isSigningIn}
-                    onClick={() => onPasswordReset(workEmailHint)}
-                    className="text-xs font-semibold text-[#08461f] hover:underline cursor-pointer disabled:opacity-50"
+                    onClick={() => void onPasswordReset(workEmailHint)}
+                    className="text-xs font-semibold text-[#1c46be] hover:underline cursor-pointer disabled:opacity-50"
                   >
                     Forgot password?
                   </button>
                 </div>
               </div>
 
-              {authNotice && (
-                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-                  {authNotice}
-                </div>
-              )}
-
-              {authError && (
-                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
-                  {authError}
-                </div>
-              )}
-
               <button
                 type="submit"
                 disabled={isSigningIn}
-                className="w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-[#08461f] hover:bg-[#063818] disabled:opacity-60 text-white text-sm font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap shrink-0"
+                className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#062052] hover:bg-[#082c70] disabled:opacity-60 text-white text-sm font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap"
               >
                 <span>{isSigningIn ? 'Signing in...' : 'Sign In'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
+              <div className="relative flex items-center justify-center py-1">
+                <div className="border-t border-slate-200 w-full" />
+                <span className="bg-white px-2.5 text-[11px] font-medium text-slate-400 whitespace-nowrap relative">
+                  or
+                </span>
+              </div>
+
               <button
                 type="button"
                 disabled={isSigningIn}
-                onClick={() => onGoogleSignIn(selectedPortal, selectedStaffRole)}
-                className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-800 text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                onClick={() =>
+                  void onGoogleSignIn(selectedPortal, isStaffPage ? selectedStaffRole : undefined)
+                }
+                className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-[#062052] text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
               >
-                <LogIn className="w-4 h-4 text-[#08461f]" />
+                <LogIn className="w-4 h-4 text-[#1c46be]" />
                 <span>Continue with Google</span>
               </button>
             </form>
 
-            {/* Divider & Powered By PCHPMS */}
-            <div className="pt-1">
-              <div className="relative flex items-center justify-center">
-                <div className="border-t border-slate-200 w-full" />
-                <span className="bg-white px-3 text-xs text-slate-500 whitespace-nowrap relative">
-                  Powered by{' '}
-                  <strong className="text-[#08461f] font-bold tracking-tight">PCHPMS</strong>
-                </span>
-              </div>
+            {/* Clean Route Link Between Employee Login (/login) and Administrator Login (/admin) */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+              {isPchPage ? (
+                <>
+                  <span className="text-slate-500">Property workspace:</span>
+                  <button
+                    type="button"
+                    onClick={() => onSelectPortal('richgates-admin')}
+                    className="font-semibold text-[#1c46be] hover:underline cursor-pointer"
+                  >
+                    Administrator Login →
+                  </button>
+                </>
+              ) : isStaffPage ? (
+                <>
+                  <span className="text-slate-500">Property manager?</span>
+                  <button
+                    type="button"
+                    onClick={() => onSelectPortal('richgates-admin')}
+                    className="font-semibold text-[#1c46be] hover:underline cursor-pointer"
+                  >
+                    Administrator Login →
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-slate-500">Front desk or staff?</span>
+                  <button
+                    type="button"
+                    onClick={() => onSelectPortal('staff')}
+                    className="font-semibold text-[#1c46be] hover:underline cursor-pointer"
+                  >
+                    Employee Login →
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Bottom Legal & Platform Credit Bar */}
+      <footer className="relative z-20 pb-5 pt-2 px-4 text-center">
+        <p className="text-[11px] sm:text-xs text-white/90 tracking-wide">
+          © {new Date().getFullYear()} {isPchPage ? 'PCH PMS' : 'Richgates Apartments'}. All rights
+          reserved. <span className="text-[#f5b800] px-1.5">|</span> Powered by{' '}
+          <strong className="font-semibold text-white">PCH PMS</strong>
+        </p>
+      </footer>
     </div>
   );
 };

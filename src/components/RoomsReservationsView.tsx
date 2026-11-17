@@ -7,6 +7,7 @@ function splitFullName(full: string): [string, string] {
   return [parts[0], parts.slice(1).join(' ')];
 }
 import {
+  AlertTriangle,
   ArrowLeftRight,
   ArrowRight,
   Ban,
@@ -15,6 +16,7 @@ import {
   CalendarPlus,
   CheckCircle2,
   ChefHat,
+  Clock,
   CreditCard,
   DoorOpen,
   Eye,
@@ -31,6 +33,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   UserCheck,
   UserCircle2,
   UserPlus,
@@ -39,10 +42,14 @@ import {
 import { useCms } from '../context/CmsContext';
 import {
   addMiscFolioCharge,
+  applyLateCheckoutWorkflow,
   changeInHouseRoomWorkflow,
   createGuestRecord,
   createReservationWorkflow,
   createRoomWorkflow,
+  deleteGuestRecordWorkflow,
+  deleteReservationWorkflow,
+  deleteRoomWorkflow,
   extendReservationStay,
   recordReservationFolioPayment,
   syncRichgatesOfficialCatalogIfNeeded,
@@ -107,6 +114,19 @@ interface RoomsReservationsViewProps {
 
 const DEFAULT_SUITE_IMAGE =
   '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png';
+
+function parseReadableError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (raw.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as { error?: string };
+      if (parsed.error) return parsed.error;
+    } catch {
+      // fallback below
+    }
+  }
+  return raw;
+}
 
 async function compressImageToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -208,6 +228,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [showGuestForm, setShowGuestForm] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [bookingError, setBookingError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmDeleteRoomId, setConfirmDeleteRoomId] = useState<string | null>(null);
+  const [confirmDeleteResId, setConfirmDeleteResId] = useState<string | null>(null);
+  const [confirmDeleteGuestId, setConfirmDeleteGuestId] = useState<string | null>(null);
 
   // Quick inline rate edit
   const [editingRateRoomId, setEditingRateRoomId] = useState<string | null>(null);
@@ -320,6 +344,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   // Check-In Process Modal, Change Room Modal, Cancel Confirm Modal & Checkout settlement modal state
   const [checkInTarget, setCheckInTarget] = useState<ReservationRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<ReservationRecord | null>(null);
+  const [cancelMode, setCancelMode] = useState<'free' | 'paid'>('free');
+  const [cancelFeeNgn, setCancelFeeNgn] = useState<number>(0);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelPayMethod, setCancelPayMethod] =
+    useState<ReservationRecord['paymentMethod']>('Bank Transfer');
+  const [collectCancelFeeNow, setCollectCancelFeeNow] = useState(true);
   const [changeRoomTarget, setChangeRoomTarget] = useState<ReservationRecord | null>(null);
   const [changeRoomNewId, setChangeRoomNewId] = useState('');
   const [changeRoomAdjustRate, setChangeRoomAdjustRate] = useState(true);
@@ -328,6 +358,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [checkoutTarget, setCheckoutTarget] = useState<ReservationRecord | null>(null);
   const [settlementMethod, setSettlementMethod] =
     useState<ReservationRecord['paymentMethod']>('Card POS');
+  const [lateCheckoutTime, setLateCheckoutTime] = useState('14:00');
+  const [lateCheckoutFeeDraft, setLateCheckoutFeeDraft] = useState<number>(0);
 
   // Guest Folio Flow & Reservation Editor modal state
   const [folioPayAmount, setFolioPayAmount] = useState<number>(0);
@@ -361,14 +393,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   useEffect(() => {
     if (activeFolioReservation) {
-      const due = Math.max(
-        0,
-        activeFolioReservation.roomChargesNgn +
-          activeFolioReservation.posChargesNgn -
-          activeFolioReservation.paidNgn
-      );
-      setFolioPayAmount(due);
+      const { balance } = getReservationPaymentSummary(activeFolioReservation);
+      setFolioPayAmount(balance);
       setFolioPayMethod(activeFolioReservation.paymentMethod || 'Bank Transfer');
+      setLateCheckoutTime(activeFolioReservation.checkOutTime || '14:00');
+      setLateCheckoutFeeDraft(activeFolioReservation.lateCheckoutFeeNgn || 0);
       setEditingStayDetails(initialReservationIntent === 'edit');
       const [stayFirst, stayLast] = splitFullName(activeFolioReservation.guestName);
       setEditGuestFirstNameRes(stayFirst);
@@ -391,6 +420,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       }
     }
   }, [activeFolioReservation?.id, initialReservationIntent]);
+
+  useEffect(() => {
+    if (checkoutTarget) {
+      setLateCheckoutTime(checkoutTarget.checkOutTime || '14:00');
+      setLateCheckoutFeeDraft(checkoutTarget.lateCheckoutFeeNgn || 0);
+    }
+  }, [checkoutTarget?.id]);
 
   const sortedRooms = sortRoomsByNumber(rooms);
   const bookableRooms = sortedRooms.filter((r) => r.occupancyStatus === 'vacant');
@@ -925,8 +961,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   const handleConfirmCheckout = async () => {
     if (!checkoutTarget) return;
-    const totalFolio = checkoutTarget.roomChargesNgn + checkoutTarget.posChargesNgn;
+    const lateFee = Math.max(0, checkoutTarget.lateCheckoutFeeNgn || 0);
+    const totalFolio =
+      checkoutTarget.roomChargesNgn + checkoutTarget.posChargesNgn + lateFee;
     const balanceDue = Math.max(0, totalFolio - checkoutTarget.paidNgn);
+    setActionError(null);
     setBusyId(checkoutTarget.id);
     try {
       await transitionReservationStatus({
@@ -935,12 +974,158 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         nextStatus: 'checked_out',
         settlementAmountNgn: balanceDue,
         paymentMethod: settlementMethod,
+        checkOutTime: checkoutTarget.checkOutTime,
+        lateCheckoutFeeNgn: lateFee,
         actorRole,
       });
       onNotify(
         `Checked out ${checkoutTarget.roomNumber} · Settled ${formatNgn(balanceDue)} & dispatched Housekeeping`
       );
       setCheckoutTarget(null);
+    } catch (err) {
+      setActionError(parseReadableError(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleApplyLateCheckout = async (target: ReservationRecord) => {
+    setActionError(null);
+    const cleanTime = lateCheckoutTime.trim() || '14:00';
+    const cleanFee = Math.max(0, Math.round(lateCheckoutFeeDraft || 0));
+    setBusyId(`late-${target.id}`);
+    try {
+      await applyLateCheckoutWorkflow({
+        property,
+        reservation: target,
+        checkOutTime: cleanTime,
+        lateCheckoutFeeNgn: cleanFee,
+        actorRole,
+      });
+      if (checkoutTarget && checkoutTarget.id === target.id) {
+        setCheckoutTarget({
+          ...checkoutTarget,
+          checkOutTime: cleanTime,
+          lateCheckoutFeeNgn: cleanFee,
+          lateCheckoutApplied: cleanFee > 0,
+        });
+      }
+      onNotify(
+        `Applied late check-out (${cleanTime}${cleanFee > 0 ? ` · +${formatNgn(cleanFee)}` : ''}) to ${target.bookingRef}`
+      );
+    } catch (err) {
+      setActionError(parseReadableError(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const openCancelDialog = (res: ReservationRecord) => {
+    setActionError(null);
+    setCancelTarget(res);
+    setCancelMode('free');
+    setCancelFeeNgn(Math.max(10000, Math.round(res.nightlyRateNgn || 50000)));
+    setCancelReason('');
+    setCancelPayMethod(res.paymentMethod || 'Bank Transfer');
+    setCollectCancelFeeNow(true);
+  };
+
+  const handleConfirmCancelOrNoShow = async (nextStatus: 'cancelled' | 'no_show') => {
+    if (!cancelTarget) return;
+    if (nextStatus === 'cancelled' && cancelMode === 'paid' && cancelFeeNgn <= 0) {
+      setActionError('Enter a cancellation fee greater than ₦0 or select Free Cancellation.');
+      return;
+    }
+    setActionError(null);
+    setBusyId(cancelTarget.id);
+    try {
+      const targetRoom = rooms.find((rm) => rm.id === cancelTarget.roomId);
+      await transitionReservationStatus({
+        property,
+        reservation: cancelTarget,
+        room: targetRoom,
+        nextStatus,
+        cancellationType: nextStatus === 'cancelled' ? cancelMode : undefined,
+        cancellationFeeNgn:
+          nextStatus === 'cancelled' && cancelMode === 'paid' ? cancelFeeNgn : 0,
+        cancellationReason: cancelReason.trim(),
+        paymentMethod: cancelPayMethod,
+        collectCancellationFeeNow:
+          nextStatus === 'cancelled' && cancelMode === 'paid' && collectCancelFeeNow,
+        actorRole,
+      });
+      onNotify(
+        nextStatus === 'no_show'
+          ? `Marked ${cancelTarget.bookingRef} (${cancelTarget.guestName}) as No-show`
+          : cancelMode === 'paid'
+            ? `Cancelled ${cancelTarget.bookingRef} with ${formatNgn(cancelFeeNgn)} cancellation fee`
+            : `Cancelled ${cancelTarget.bookingRef} (${cancelTarget.guestName}) — Free cancellation`
+      );
+      setCancelTarget(null);
+    } catch (err) {
+      setActionError(parseReadableError(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDeleteRoom = async (room: RoomRecord) => {
+    setActionError(null);
+    setBusyId(room.id);
+    try {
+      await deleteRoomWorkflow({
+        property,
+        room,
+        currentRoomCount: rooms.length,
+        actorRole,
+      });
+      onNotify(`Deleted suite ${room.roomNumber} from inventory`);
+      setConfirmDeleteRoomId(null);
+    } catch (err) {
+      setActionError(parseReadableError(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDeleteReservation = async (res: ReservationRecord) => {
+    setActionError(null);
+    setBusyId(res.id);
+    try {
+      await deleteReservationWorkflow({
+        property,
+        reservation: res,
+        room: rooms.find((rm) => rm.id === res.roomId),
+        actorRole,
+      });
+      onNotify(`Deleted reservation ${res.bookingRef} (${res.guestName})`);
+      setConfirmDeleteResId(null);
+      if (selectedReservationId === res.id) {
+        onSelectReservation?.(null);
+      }
+    } catch (err) {
+      setActionError(parseReadableError(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDeleteGuest = async (guest: GuestRecord) => {
+    setActionError(null);
+    setBusyId(guest.id);
+    try {
+      await deleteGuestRecordWorkflow({
+        property,
+        guest,
+        actorRole,
+      });
+      onNotify(`Deleted guest profile (${guest.fullName})`);
+      setConfirmDeleteGuestId(null);
+      if (selectedGuestId === guest.id) {
+        setSelectedGuestId(null);
+      }
+    } catch (err) {
+      setActionError(parseReadableError(err));
     } finally {
       setBusyId(null);
     }
@@ -1337,6 +1522,25 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           )}
         </div>
       </div>
+
+      {actionError && (
+        <div
+          role="alert"
+          className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-900 flex items-center justify-between gap-3 shadow-xs"
+        >
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-rose-700 hover:text-rose-950 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Expandable Advanced Search Filter Panel */}
       {isStayTableSection && showAdvancedSearch && (
@@ -2468,7 +2672,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             HK:{' '}
                             <strong className="text-slate-900">{room.housekeepingStatus}</strong>
                           </span>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
                             {canManageRooms && (
                               <button
                                 type="button"
@@ -2498,6 +2702,36 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             >
                               {room.housekeepingStatus === 'dirty' ? 'Mark Clean' : 'Mark Dirty'}
                             </button>
+                            {canManageRooms && confirmDeleteRoomId !== room.id && (
+                              <button
+                                type="button"
+                                disabled={busyId === room.id}
+                                onClick={() => setConfirmDeleteRoomId(room.id)}
+                                title={`Delete ${room.roomNumber}`}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                            {canManageRooms && confirmDeleteRoomId === room.id && (
+                              <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteRoomId(null)}
+                                  className="px-1.5 py-0.5 text-[10px] text-slate-600 cursor-pointer"
+                                >
+                                  No
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyId === room.id}
+                                  onClick={() => void handleDeleteRoom(room)}
+                                  className="px-2 py-0.5 text-[10px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                                >
+                                  {busyId === room.id ? '...' : 'Delete'}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -2820,6 +3054,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               Due Out
                             </span>
                           )}
+                          {(res.checkOutTime || (res.lateCheckoutFeeNgn || 0) > 0) && (
+                            <span className="block text-[10px] font-semibold text-amber-700">
+                              {res.checkOutTime ? `Out ${res.checkOutTime}` : 'Late Out'}
+                              {(res.lateCheckoutFeeNgn || 0) > 0
+                                ? ` · +${formatNgn(res.lateCheckoutFeeNgn || 0)}`
+                                : ''}
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3 px-3.5 text-center font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
@@ -2877,6 +3119,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           <span className={`font-semibold ${resStatusColor}`}>
                             {RESERVATION_STATUS_LABELS[res.status] || res.status}
                           </span>
+                          {res.status === 'cancelled' && res.cancellationType && (
+                            <span className="block text-[10px] font-medium text-rose-700 mt-0.5">
+                              {res.cancellationType === 'paid'
+                                ? `Fee: ${formatNgn(res.cancellationFeeNgn || 0)}`
+                                : 'Free Cancellation'}
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3 px-3.5 font-mono-tabular text-slate-600 whitespace-nowrap">
@@ -2941,11 +3190,42 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               <button
                                 type="button"
                                 disabled={busyId === res.id}
-                                onClick={() => setCancelTarget(res)}
+                                onClick={() => openCancelDialog(res)}
                                 className="px-2.5 py-1 rounded-md border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
                               >
                                 Cancel
                               </button>
+                            )}
+                            {canManageRooms && confirmDeleteResId !== res.id && (
+                              <button
+                                type="button"
+                                disabled={busyId === res.id}
+                                onClick={() => setConfirmDeleteResId(res.id)}
+                                title="Delete reservation"
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Delete</span>
+                              </button>
+                            )}
+                            {canManageRooms && confirmDeleteResId === res.id && (
+                              <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteResId(null)}
+                                  className="px-1.5 py-0.5 text-[10px] text-slate-600 cursor-pointer"
+                                >
+                                  No
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyId === res.id}
+                                  onClick={() => void handleDeleteReservation(res)}
+                                  className="px-2 py-0.5 text-[10px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                                >
+                                  {busyId === res.id ? '...' : 'Confirm'}
+                                </button>
+                              </div>
                             )}
                           </div>
                         </td>
@@ -3013,17 +3293,50 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     <td className="py-3 px-4 text-right font-mono-tabular font-semibold text-slate-900">
                       {formatNgn(g.lifetimeSpendNgn)}
                     </td>
-                    <td className="py-3 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openGuestProfileModal(g);
-                        }}
-                        className="px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700 cursor-pointer"
-                      >
-                        View Profile
-                      </button>
+                    <td
+                      className="py-3 px-4 text-right whitespace-nowrap"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="inline-flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => openGuestProfileModal(g)}
+                          className="px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          View Profile
+                        </button>
+                        {canManageRooms && confirmDeleteGuestId !== g.id && (
+                          <button
+                            type="button"
+                            disabled={busyId === g.id}
+                            onClick={() => setConfirmDeleteGuestId(g.id)}
+                            title="Delete guest record"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Delete</span>
+                          </button>
+                        )}
+                        {canManageRooms && confirmDeleteGuestId === g.id && (
+                          <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteGuestId(null)}
+                              className="px-1.5 py-0.5 text-[10px] text-slate-600 cursor-pointer"
+                            >
+                              No
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyId === g.id}
+                              onClick={() => void handleDeleteGuest(g)}
+                              className="px-2 py-0.5 text-[10px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                            >
+                              {busyId === g.id ? '...' : 'Confirm'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -3070,6 +3383,36 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <Pencil className="w-3 h-3" />
                   <span>{editingGuestMode ? 'Cancel Edit' : 'Edit Profile'}</span>
                 </button>
+                {canManageRooms && confirmDeleteGuestId !== selectedGuest.id && (
+                  <button
+                    type="button"
+                    disabled={busyId === selectedGuest.id}
+                    onClick={() => setConfirmDeleteGuestId(selectedGuest.id)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-semibold text-rose-700 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Delete</span>
+                  </button>
+                )}
+                {canManageRooms && confirmDeleteGuestId === selectedGuest.id && (
+                  <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteGuestId(null)}
+                      className="px-1.5 py-0.5 text-slate-600 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === selectedGuest.id}
+                      onClick={() => void handleDeleteGuest(selectedGuest)}
+                      className="px-2 py-0.5 font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                    >
+                      {busyId === selectedGuest.id ? 'Deleting...' : 'Confirm Delete'}
+                    </button>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setSelectedGuestId(null)}
@@ -4166,6 +4509,25 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   {formatNgn(activeFolioReservation.posChargesNgn)}
                 </span>
               </div>
+              {(activeFolioReservation.lateCheckoutFeeNgn || 0) > 0 && (
+                <div className="flex justify-between text-amber-800">
+                  <span>
+                    Late Check-Out Fee ({activeFolioReservation.checkOutTime || '14:00'})
+                  </span>
+                  <span className="font-mono-tabular font-semibold">
+                    {formatNgn(activeFolioReservation.lateCheckoutFeeNgn || 0)}
+                  </span>
+                </div>
+              )}
+              {activeFolioReservation.status === 'cancelled' &&
+                activeFolioReservation.cancellationType === 'paid' && (
+                  <div className="flex justify-between text-rose-700">
+                    <span>Cancellation Fee Applied</span>
+                    <span className="font-mono-tabular font-semibold">
+                      {formatNgn(activeFolioReservation.cancellationFeeNgn || 0)}
+                    </span>
+                  </div>
+                )}
               <div className="flex justify-between">
                 <span className="text-slate-600">Total Amount</span>
                 <span className="font-mono-tabular font-bold text-slate-900">
@@ -4196,100 +4558,153 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             {activeFolioReservation.status !== 'checked_out' &&
               activeFolioReservation.status !== 'cancelled' &&
               activeFolioReservation.status !== 'no_show' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                  <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-                    <p className="font-semibold text-slate-900">Post Payment to Folio (₦)</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="number"
-                        min={500}
-                        step={500}
-                        value={folioPayAmount}
-                        onChange={(e) => setFolioPayAmount(Number(e.target.value))}
-                        className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                      />
-                      <select
-                        value={folioPayMethod}
-                        onChange={(e) =>
-                          setFolioPayMethod(e.target.value as ReservationRecord['paymentMethod'])
-                        }
-                        className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                <div className="space-y-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                      <p className="font-semibold text-slate-900">Post Payment to Folio (₦)</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="number"
+                          min={500}
+                          step={500}
+                          value={folioPayAmount}
+                          onChange={(e) => setFolioPayAmount(Number(e.target.value))}
+                          className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                        />
+                        <select
+                          value={folioPayMethod}
+                          onChange={(e) =>
+                            setFolioPayMethod(e.target.value as ReservationRecord['paymentMethod'])
+                          }
+                          className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                        >
+                          <option value="Bank Transfer">Bank Transfer</option>
+                          <option value="Card POS">Card POS</option>
+                          <option value="Cash NGN">Cash NGN</option>
+                          <option value="Corporate Invoice">Corporate Invoice</option>
+                          <option value="Online Gateway">Online Gateway</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busyId === activeFolioReservation.id || folioPayAmount <= 0}
+                        onClick={async () => {
+                          setActionError(null);
+                          setBusyId(activeFolioReservation.id);
+                          try {
+                            await recordReservationFolioPayment({
+                              property,
+                              reservation: activeFolioReservation,
+                              amountNgn: folioPayAmount,
+                              paymentMethod: folioPayMethod,
+                              actorRole,
+                            });
+                            onNotify(
+                              `Posted ${formatNgn(folioPayAmount)} to ${activeFolioReservation.bookingRef}`
+                            );
+                          } catch (err) {
+                            setActionError(parseReadableError(err));
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                        className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
                       >
-                        <option value="Bank Transfer">Bank Transfer</option>
-                        <option value="Card POS">Card POS</option>
-                        <option value="Cash NGN">Cash NGN</option>
-                        <option value="Corporate Invoice">Corporate Invoice</option>
-                        <option value="Online Gateway">Online Gateway</option>
-                      </select>
+                        Post Payment
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busyId === activeFolioReservation.id || folioPayAmount <= 0}
-                      onClick={async () => {
-                        setBusyId(activeFolioReservation.id);
-                        try {
-                          await recordReservationFolioPayment({
-                            property,
-                            reservation: activeFolioReservation,
-                            amountNgn: folioPayAmount,
-                            paymentMethod: folioPayMethod,
-                            actorRole,
-                          });
-                          onNotify(
-                            `Posted ${formatNgn(folioPayAmount)} to ${activeFolioReservation.bookingRef}`
-                          );
-                        } finally {
-                          setBusyId(null);
-                        }
-                      }}
-                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
-                    >
-                      Post Payment
-                    </button>
+
+                    <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                      <p className="font-semibold text-slate-900">Add Folio / Extra Service Charge</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={miscChargeDesc}
+                          onChange={(e) => setMiscChargeDesc(e.target.value)}
+                          placeholder="Service label"
+                          className="border border-slate-200 rounded-lg px-2.5 py-1.5"
+                        />
+                        <input
+                          type="number"
+                          min={500}
+                          step={500}
+                          value={miscChargeAmount}
+                          onChange={(e) => setMiscChargeAmount(Number(e.target.value))}
+                          className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busyId === activeFolioReservation.id || miscChargeAmount <= 0}
+                        onClick={async () => {
+                          setActionError(null);
+                          setBusyId(activeFolioReservation.id);
+                          try {
+                            await addMiscFolioCharge({
+                              property,
+                              reservation: activeFolioReservation,
+                              amountNgn: miscChargeAmount,
+                              description: miscChargeDesc.trim() || 'Extra Service Charge',
+                              actorRole,
+                            });
+                            onNotify(
+                              `Added ${formatNgn(miscChargeAmount)} charge to ${activeFolioReservation.bookingRef}`
+                            );
+                          } catch (err) {
+                            setActionError(parseReadableError(err));
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                        className="w-full py-1.5 border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-semibold rounded-lg cursor-pointer"
+                      >
+                        Add Charge to Folio
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-                    <p className="font-semibold text-slate-900">Add Folio / Extra Service Charge</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        value={miscChargeDesc}
-                        onChange={(e) => setMiscChargeDesc(e.target.value)}
-                        placeholder="Service label"
-                        className="border border-slate-200 rounded-lg px-2.5 py-1.5"
-                      />
-                      <input
-                        type="number"
-                        min={500}
-                        step={500}
-                        value={miscChargeAmount}
-                        onChange={(e) => setMiscChargeAmount(Number(e.target.value))}
-                        className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                      />
+                  {/* Late Check-Out Fee & Checkout Time Card */}
+                  <div className="border border-amber-200 bg-amber-50/50 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                    <div className="grid grid-cols-2 gap-3 flex-1">
+                      <div>
+                        <label className="block font-semibold text-slate-800 mb-1">
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Check-Out Time</span>
+                          </span>
+                        </label>
+                        <input
+                          type="time"
+                          value={lateCheckoutTime}
+                          onChange={(e) => setLateCheckoutTime(e.target.value)}
+                          className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-800 mb-1">
+                          Late Check-Out Fee (₦)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={500}
+                          value={lateCheckoutFeeDraft}
+                          onChange={(e) =>
+                            setLateCheckoutFeeDraft(Math.max(0, Number(e.target.value)))
+                          }
+                          className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                        />
+                      </div>
                     </div>
                     <button
                       type="button"
-                      disabled={busyId === activeFolioReservation.id || miscChargeAmount <= 0}
-                      onClick={async () => {
-                        setBusyId(activeFolioReservation.id);
-                        try {
-                          await addMiscFolioCharge({
-                            property,
-                            reservation: activeFolioReservation,
-                            amountNgn: miscChargeAmount,
-                            description: miscChargeDesc.trim() || 'Extra Service Charge',
-                            actorRole,
-                          });
-                          onNotify(
-                            `Added ${formatNgn(miscChargeAmount)} charge to ${activeFolioReservation.bookingRef}`
-                          );
-                        } finally {
-                          setBusyId(null);
-                        }
-                      }}
-                      className="w-full py-1.5 border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-semibold rounded-lg cursor-pointer"
+                      disabled={busyId === `late-${activeFolioReservation.id}`}
+                      onClick={() => void handleApplyLateCheckout(activeFolioReservation)}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
                     >
-                      Add Charge to Folio
+                      {busyId === `late-${activeFolioReservation.id}`
+                        ? 'Applying...'
+                        : 'Apply Late Fee to Bill'}
                     </button>
                   </div>
                 </div>
@@ -4350,7 +4765,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       onClick={() => {
                         const target = activeFolioReservation;
                         onSelectReservation?.(null);
-                        setCancelTarget(target);
+                        openCancelDialog(target);
                       }}
                       className="px-3 py-2 border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg cursor-pointer"
                     >
@@ -4452,6 +4867,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 <span className="text-slate-600">Restaurant / Bar POS Charges</span>
                 <span className="font-mono-tabular">{formatNgn(checkoutTarget.posChargesNgn)}</span>
               </div>
+              {(checkoutTarget.lateCheckoutFeeNgn || 0) > 0 && (
+                <div className="flex justify-between text-amber-800">
+                  <span>
+                    Late Check-Out Fee ({checkoutTarget.checkOutTime || '14:00'})
+                  </span>
+                  <span className="font-mono-tabular font-semibold">
+                    {formatNgn(checkoutTarget.lateCheckoutFeeNgn || 0)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-600">Previously Paid</span>
                 <span className="font-mono-tabular text-emerald-700">
@@ -4465,12 +4890,57 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     Math.max(
                       0,
                       checkoutTarget.roomChargesNgn +
-                        checkoutTarget.posChargesNgn -
+                        checkoutTarget.posChargesNgn +
+                        (checkoutTarget.lateCheckoutFeeNgn || 0) -
                         checkoutTarget.paidNgn
                     )
                   )}
                 </span>
               </div>
+            </div>
+
+            {/* Quick Late Check-Out Fee & Check-Out Time Adjuster */}
+            <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 space-y-2.5 text-xs">
+              <p className="font-semibold text-slate-900 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-700" />
+                <span>Late Check-Out Time &amp; Fee</span>
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Check-Out Time
+                  </label>
+                  <input
+                    type="time"
+                    value={lateCheckoutTime}
+                    onChange={(e) => setLateCheckoutTime(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-mono-tabular"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Late Fee (₦)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={500}
+                    value={lateCheckoutFeeDraft}
+                    onChange={(e) => setLateCheckoutFeeDraft(Math.max(0, Number(e.target.value)))}
+                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-mono-tabular"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={busyId === `late-${checkoutTarget.id}`}
+                onClick={() => void handleApplyLateCheckout(checkoutTarget)}
+                className="w-full py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+              >
+                {busyId === `late-${checkoutTarget.id}`
+                  ? 'Applying...'
+                  : 'Apply Late Check-Out to Bill'}
+              </button>
             </div>
 
             <div className="text-xs">
@@ -4637,14 +5107,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       )}
 
       {cancelTarget && (
-        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 space-y-4 text-xs">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-6 space-y-4 shadow-xl text-xs">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <Ban className="w-4 h-4 text-rose-600" />
-                <h3 className="font-display text-base font-bold text-slate-900">
-                  Cancel or Mark No-Show
-                </h3>
+                <div>
+                  <h3 className="font-display text-base font-bold text-slate-900">
+                    Cancel or Mark No-Show
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {cancelTarget.bookingRef} · {cancelTarget.guestName} (Suite{' '}
+                    {getReservationRoomDisplay(cancelTarget, rooms).roomNumberLabel})
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
@@ -4654,18 +5130,105 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
+
             <p className="text-slate-600 leading-relaxed">
-              Update reservation{' '}
+              Choose free cancellation or apply a cancellation fee before releasing{' '}
               <strong className="font-mono-tabular text-slate-900">
-                {cancelTarget.bookingRef}
-              </strong>{' '}
-              for <strong className="text-slate-900">{cancelTarget.guestName}</strong> (Suite{' '}
-              <strong className="font-mono-tabular">
                 {getReservationRoomDisplay(cancelTarget, rooms).roomNumberLabel}
-              </strong>
-              , {cancelTarget.checkInDate} → {cancelTarget.checkOutDate}). This will release the
-              suite back to available inventory.
+              </strong>{' '}
+              ({cancelTarget.checkInDate} → {cancelTarget.checkOutDate}) back to available inventory.
             </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCancelMode('free')}
+                className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
+                  cancelMode === 'free'
+                    ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="block font-bold">Free Cancellation</span>
+                <span className="block text-[11px] opacity-80 mt-0.5">
+                  ₦0 fee · Waive room cancellation charges
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCancelMode('paid')}
+                className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
+                  cancelMode === 'paid'
+                    ? 'border-rose-600 bg-rose-50 text-rose-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="block font-bold">Cancellation with Cost</span>
+                <span className="block text-[11px] opacity-80 mt-0.5">
+                  Apply cancellation fee in ₦ to reservation bill
+                </span>
+              </button>
+            </div>
+
+            {cancelMode === 'paid' && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Cancellation Cost (₦ NGN) *
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={500}
+                      value={cancelFeeNgn}
+                      onChange={(e) => setCancelFeeNgn(Math.max(0, Number(e.target.value)))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 bg-white font-mono-tabular font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Payment Method
+                    </label>
+                    <select
+                      value={cancelPayMethod}
+                      onChange={(e) =>
+                        setCancelPayMethod(e.target.value as ReservationRecord['paymentMethod'])
+                      }
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 bg-white"
+                    >
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Card POS">Card POS</option>
+                      <option value="Cash NGN">Cash NGN</option>
+                      <option value="Corporate Invoice">Corporate Invoice</option>
+                      <option value="Online Gateway">Online Gateway</option>
+                    </select>
+                  </div>
+                </div>
+                <label className="inline-flex items-center gap-2 font-medium text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={collectCancelFeeNow}
+                    onChange={(e) => setCollectCancelFeeNow(e.target.checked)}
+                    className="rounded border-slate-300 text-emerald-600"
+                  />
+                  <span>Collect cancellation fee now &amp; post to Revenue Ledger</span>
+                </label>
+              </div>
+            )}
+
+            <div>
+              <label className="block font-medium text-slate-700 mb-1">
+                Cancellation Reason / Note (Optional)
+              </label>
+              <input
+                type="text"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-1.5"
+              />
+            </div>
+
             <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
@@ -4677,50 +5240,22 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <button
                 type="button"
                 disabled={busyId === cancelTarget.id}
-                onClick={async () => {
-                  const target = cancelTarget;
-                  setBusyId(target.id);
-                  try {
-                    await transitionReservationStatus({
-                      property,
-                      reservation: target,
-                      room: rooms.find((r) => r.id === target.roomId),
-                      nextStatus: 'no_show',
-                      actorRole,
-                    });
-                    onNotify(`Marked ${target.bookingRef} as No-show`);
-                    setCancelTarget(null);
-                  } finally {
-                    setBusyId(null);
-                  }
-                }}
-                className="px-3.5 py-2 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold rounded-lg cursor-pointer"
+                onClick={() => void handleConfirmCancelOrNoShow('no_show')}
+                className="px-3.5 py-2 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
               >
                 Mark No-show
               </button>
               <button
                 type="button"
                 disabled={busyId === cancelTarget.id}
-                onClick={async () => {
-                  const target = cancelTarget;
-                  setBusyId(target.id);
-                  try {
-                    await transitionReservationStatus({
-                      property,
-                      reservation: target,
-                      room: rooms.find((r) => r.id === target.roomId),
-                      nextStatus: 'cancelled',
-                      actorRole,
-                    });
-                    onNotify(`Cancelled ${target.bookingRef}`);
-                    setCancelTarget(null);
-                  } finally {
-                    setBusyId(null);
-                  }
-                }}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg cursor-pointer"
+                onClick={() => void handleConfirmCancelOrNoShow('cancelled')}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
               >
-                Confirm Cancellation
+                {busyId === cancelTarget.id
+                  ? 'Updating...'
+                  : cancelMode === 'paid'
+                    ? `Cancel (${formatNgn(cancelFeeNgn)})`
+                    : 'Confirm Free Cancel'}
               </button>
             </div>
           </div>

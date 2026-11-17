@@ -2,6 +2,7 @@ import { getApps, initializeApp } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
   getAuth,
+  sendEmailVerification,
   signOut,
   updateProfile,
 } from 'firebase/auth';
@@ -1604,7 +1605,7 @@ export async function updateHousekeepingTaskWorkflow(params: {
       taskType: params.updates.taskType,
       assignedTo: params.updates.assignedTo.trim().slice(0, 80),
       priority: params.updates.priority,
-      notes: params.updates.notes.trim().slice(0, 300),
+      notes: (params.updates.notes || '').trim().slice(0, 300),
       updatedAt: serverTimestamp(),
     });
     await writeAuditLog({
@@ -3721,10 +3722,11 @@ async function provisionStaffAuthAccount(
     if (fullName.trim()) {
       await updateProfile(cred.user, { displayName: fullName.trim() }).catch(() => undefined);
     }
+    await sendEmailVerification(cred.user).catch(() => undefined);
     await signOut(secAuth).catch(() => undefined);
     return {
       provisioned: true,
-      note: 'Firebase Email/Password credentials created.',
+      note: 'Email/Password login credentials created and verification link sent.',
     };
   } catch (err) {
     const code = (err as { code?: string })?.code || '';
@@ -3732,7 +3734,7 @@ async function provisionStaffAuthAccount(
       await signOut(secAuth).catch(() => undefined);
       return {
         provisioned: true,
-        note: 'Existing Firebase account linked to this property role.',
+        note: 'Existing login account linked to this property role.',
       };
     }
     await signOut(secAuth).catch(() => undefined);

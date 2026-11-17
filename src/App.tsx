@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from 'react';
 import {
+  getRedirectResult,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -13,12 +14,14 @@ import { collection, doc, enableNetwork, onSnapshot, orderBy, query, where } fro
 import {
   AlertTriangle,
   Bell,
+  Calendar,
   Check,
   CheckCircle2,
   Copy,
   DoorOpen,
   ExternalLink,
   KeyRound,
+  LogOut,
   Mail,
   Megaphone,
   Menu,
@@ -178,21 +181,47 @@ const VALID_SECTIONS: NavSectionId[] = [
 function detectInitialPortal(): PortalMode {
   if (typeof window === 'undefined') return 'richgates-admin';
   const params = new URLSearchParams(window.location.search);
-  const p = params.get('portal');
+  const p = params.get('portal')?.toLowerCase();
   if (p === 'home' || p === 'marketing' || p === 'app') return 'home';
-  if (p === 'pch-admin' || p === 'richgates-admin' || p === 'staff') return p;
-  if (p === 'admin' || p === 'richgates' || p === 'richgates-login') return 'richgates-admin';
-  if (p === 'richgates-staff') return 'staff';
+  if (p === 'pch-admin') return 'pch-admin';
+  if (p === 'richgates-admin' || p === 'admin' || p === 'richgates' || p === 'richgates-login') {
+    return 'richgates-admin';
+  }
+  if (p === 'staff' || p === 'richgates-staff' || p === 'employee' || p === 'login') {
+    return 'staff';
+  }
+
   const path = window.location.pathname.toLowerCase();
   if (path === '/home' || path.startsWith('/home/')) {
     return 'home';
   }
-  if (path === '/staff' || path.startsWith('/staff/') || path.includes('/login/staff')) {
+  if (
+    path === '/login' ||
+    path.startsWith('/login/') ||
+    path === '/staff' ||
+    path.startsWith('/staff/') ||
+    path === '/employee' ||
+    path.startsWith('/employee/')
+  ) {
     return 'staff';
   }
-  if (path.includes('pch-admin')) return 'pch-admin';
+  if (
+    path === '/pch-admin' ||
+    path.startsWith('/pch-admin/') ||
+    path === '/superadmin' ||
+    path.startsWith('/superadmin/')
+  ) {
+    return 'pch-admin';
+  }
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    return 'richgates-admin';
+  }
+
   const host = window.location.hostname.toLowerCase();
   const apex = extractApexDomain(host);
+  if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
+    return 'pch-admin';
+  }
   if (
     host === 'app.pchpms.com' ||
     host === 'www.pchpms.com' ||
@@ -200,9 +229,6 @@ function detectInitialPortal(): PortalMode {
     (apex && (host === apex || host === `app.${apex}` || host === `www.${apex}`))
   ) {
     return 'home';
-  }
-  if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
-    return 'pch-admin';
   }
   if (extractPropertySubdomainSlug(host)) {
     return 'richgates-admin';
@@ -223,25 +249,43 @@ function formatAuthErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   if (code === 'auth/unauthorized-domain' || raw.includes('auth/unauthorized-domain')) {
     const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
-    return `Domain "${host}" is not authorized in Firebase Authentication. Add "${host}" under Firebase Console -> Authentication -> Settings -> Authorized domains.`;
+    return `Domain "${host}" is not authorized for sign-in yet. Add "${host}" under Authorized Domains in your authentication settings.`;
   }
   if (code === 'auth/operation-not-allowed') {
-    return 'Email/Password sign-in is not yet enabled in Firebase Console -> Authentication -> Sign-in method. Enable Email/Password there or use Continue with Google.';
+    return 'Email and password sign-in is not currently enabled. Please sign in with Google or contact your administrator.';
   }
   if (
     code === 'auth/invalid-credential' ||
     code === 'auth/wrong-password' ||
     code === 'auth/user-not-found'
   ) {
-    return 'Invalid email or password. Use "Forgot password?" to reset, or sign in with Google.';
+    return 'Invalid email or password. Use "Forgot password?" to reset it, or click "Continue with Google".';
   }
   if (code === 'auth/invalid-email') {
     return 'Please enter a valid email address.';
   }
   if (code === 'auth/too-many-requests') {
-    return 'Too many login attempts. Wait a moment or reset your password.';
+    return 'Too many login attempts. Please wait a minute or reset your password.';
   }
-  return raw;
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return 'The sign-in window was closed before completing. Please try again or enter your email and password.';
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'Popup window was blocked by your browser. Please allow popups or enter your email and password.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Network error while signing in. Check your internet connection and try again.';
+  }
+  if (code === 'auth/user-disabled') {
+    return 'This account has been disabled. Contact your administrator for assistance.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return 'An account with this email address already exists.';
+  }
+  return raw
+    .replace(/^Firebase:\s*/i, '')
+    .replace(/\s*\(auth\/[^)]+\)\.?$/i, '')
+    .trim() || 'Unable to sign in right now. Please try again.';
 }
 
 export default function App() {
@@ -304,6 +348,7 @@ export default function App() {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRecord[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMemberRecord[]>([]);
   const [userAccounts, setUserAccounts] = useState<PropertyUserAccountRecord[]>([]);
+  const [userAccountsLoaded, setUserAccountsLoaded] = useState(false);
   const [shifts, setShifts] = useState<ShiftScheduleRecord[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>([]);
@@ -333,8 +378,14 @@ export default function App() {
     const isAdminSubdomain =
       host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.');
 
+    params.delete('portal');
+    if (nextSection === 'dashboard') {
+      params.delete('page');
+    } else {
+      params.set('page', nextSection);
+    }
+
     if (nextPortal === 'home') {
-      params.delete('portal');
       params.delete('page');
       const qs = params.toString();
       const basePath = isAppDomain ? '/' : '/home';
@@ -342,37 +393,17 @@ export default function App() {
       return;
     }
 
+    const qs = params.toString();
+    let targetPath = '/';
     if (nextPortal === 'staff') {
-      params.delete('portal');
-      if (nextSection === 'dashboard') {
-        params.delete('page');
-      } else {
-        params.set('page', nextSection);
-      }
-      const qs = params.toString();
-      window.history.replaceState({}, '', qs ? `/staff?${qs}` : '/staff');
-      return;
+      targetPath = '/login';
+    } else if (nextPortal === 'richgates-admin') {
+      targetPath = isPropSubdomain ? '/' : '/admin';
+    } else if (nextPortal === 'pch-admin') {
+      targetPath = isAdminSubdomain ? '/' : '/pch-admin';
     }
 
-    if (
-      (nextPortal === 'richgates-admin' && isPropSubdomain) ||
-      (nextPortal === 'pch-admin' && isAdminSubdomain)
-    ) {
-      params.delete('portal');
-      if (nextSection === 'dashboard') {
-        params.delete('page');
-      } else {
-        params.set('page', nextSection);
-      }
-      const qs = params.toString();
-      window.history.replaceState({}, '', qs ? `/?${qs}` : '/');
-      return;
-    }
-
-    params.set('portal', nextPortal);
-    params.set('page', nextSection);
-    const nextUrl = `/?${params.toString()}`;
-    window.history.replaceState({}, '', nextUrl);
+    window.history.replaceState({}, '', qs ? `${targetPath}?${qs}` : targetPath);
   };
 
   const handleSelectSection = (section: NavSectionId) => {
@@ -403,7 +434,7 @@ export default function App() {
     } catch (err) {
       if (isFirestoreOfflineError(err)) {
         setDbError(
-          'Unable to reach Cloud Firestore right now. Check your internet connection and click Retry Connection.'
+          'Unable to reach the cloud database right now. Check your internet connection and click Retry Connection.'
         );
       } else {
         const msg = err instanceof Error ? err.message : String(err);
@@ -417,13 +448,19 @@ export default function App() {
 
   useEffect(() => {
     void testConnection();
+    void getRedirectResult(auth).catch((err) => {
+      setAuthError(formatAuthErrorMessage(err));
+    });
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setAuthReady(true);
       setDbError(null);
       setPropsLoaded(false);
+      setUserAccountsLoaded(false);
       if (!u) {
         autoSeedAttemptedRef.current = null;
+        setProperties([]);
+        setUserAccounts([]);
       }
     });
     return () => unsub();
@@ -447,6 +484,16 @@ export default function App() {
 
   const isSignedInBootstrapped = Boolean(user && isBootstrappedAdminEmail(user.email));
   const signedInEmailLower = (user?.email || '').trim().toLowerCase();
+  const activePropertyForRole =
+    properties.find((p) => p.id === activePropertyId) || properties[0] || null;
+  const isExplicitPropertyOwnerOrAdmin =
+    isSignedInBootstrapped ||
+    Boolean(
+      activePropertyForRole &&
+        (activePropertyForRole.ownerUid === user?.uid ||
+          activePropertyForRole.adminEmail.trim().toLowerCase() === signedInEmailLower)
+    );
+
   const matchedUserAccount =
     !isSignedInBootstrapped && portalMode !== 'pch-admin' && signedInEmailLower
       ? userAccounts.find((a) => a.email.trim().toLowerCase() === signedInEmailLower)
@@ -454,13 +501,19 @@ export default function App() {
 
   const effectiveRole: StaffRole =
     portalMode === 'pch-admin'
-      ? 'pch_admin'
+      ? isSignedInBootstrapped
+        ? 'pch_admin'
+        : staffRole
       : matchedUserAccount && matchedUserAccount.role !== 'unassigned'
         ? matchedUserAccount.role
-        : activeRole;
+        : isExplicitPropertyOwnerOrAdmin
+          ? portalMode === 'staff'
+            ? staffRole
+            : 'property_admin'
+          : staffRole;
 
   const baseAllowedSections: NavSectionId[] =
-    portalMode === 'pch-admin'
+    portalMode === 'pch-admin' && isSignedInBootstrapped
       ? ROLE_ALLOWED_SECTIONS.pch_admin
       : matchedUserAccount && matchedUserAccount.privileges.length > 0
         ? matchedUserAccount.privileges
@@ -509,13 +562,13 @@ export default function App() {
     const onSnapshotErr = (path: string) => (err: unknown) => {
       if (isFirestoreOfflineError(err)) {
         setDbError(
-          'Reconnecting to Cloud Firestore... Check your internet connection or click Retry Connection.'
+          'Reconnecting to the cloud database... Check your internet connection or click Retry Connection.'
         );
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Firestore snapshot error [${path}]:`, msg);
-      setDbError(`Firestore (${path}): ${msg}`);
+      console.error(`Data sync error [${path}]:`, msg);
+      setDbError(`Data sync issue (${path.replace(/_/g, ' ')}): ${msg}`);
     };
 
     const unsubProps = onSnapshot(
@@ -543,12 +596,11 @@ export default function App() {
           }
           return !list.some((p) => p.id === curr) ? list[0].id : curr;
         });
-        const needsBootstrapSeed = isAdmin
-          ? !list.some((p) => p.id === RICHGATES_PROPERTY_ID)
-          : list.length === 0;
+        const needsBootstrapSeed =
+          isAdmin && !list.some((p) => p.id === RICHGATES_PROPERTY_ID);
         if (!snap.metadata.fromCache && needsBootstrapSeed && autoSeedAttemptedRef.current !== user.uid) {
           autoSeedAttemptedRef.current = user.uid;
-          void runBootstrapSeed(isAdmin ? RICHGATES_PROPERTY_ID : `rg-${user.uid.slice(0, 10)}`);
+          void runBootstrapSeed(RICHGATES_PROPERTY_ID);
         }
       },
       onSnapshotErr('properties')
@@ -622,18 +674,27 @@ export default function App() {
     if (!authReady || !user || !user.email || !activePropertyId) return;
     const userEmail = user.email.toLowerCase();
     const isAdmin = isBootstrappedAdminEmail(userEmail);
+    setUserAccountsLoaded(false);
 
-    const sub = <T,>(subName: string, setter: React.Dispatch<React.SetStateAction<T[]>>) => {
+    const sub = <T,>(
+      subName: string,
+      setter: React.Dispatch<React.SetStateAction<T[]>>,
+      onLoaded?: () => void
+    ) => {
       const colRef = collection(db, 'properties', activePropertyId, subName);
       const q = isAdmin
         ? colRef
         : query(colRef, where('authorizedEmails', 'array-contains', userEmail));
       return onSnapshot(
         q,
-        (snap) => setter(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as T)),
+        (snap) => {
+          setter(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as T));
+          onLoaded?.();
+        },
         (err) => {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`Firestore subcollection error [${subName}]:`, msg);
+          console.error(`Collection sync error [${subName}]:`, msg);
+          onLoaded?.();
         }
       );
     };
@@ -650,7 +711,9 @@ export default function App() {
       sub<InventoryItemRecord>('inventory_items', setInventoryItems),
       sub<PurchaseOrderRecord>('purchase_orders', setPurchaseOrders),
       sub<StaffMemberRecord>('staff_members', setStaffMembers),
-      sub<PropertyUserAccountRecord>('user_accounts', setUserAccounts),
+      sub<PropertyUserAccountRecord>('user_accounts', setUserAccounts, () =>
+        setUserAccountsLoaded(true)
+      ),
       sub<ShiftScheduleRecord>('shifts', setShifts),
       sub<AttendanceRecord>('attendance', setAttendance),
       sub<PayrollRunRecord>('payroll_runs', setPayrollRuns),
@@ -901,11 +964,13 @@ export default function App() {
       handlePortalSelection(portal);
       if (chosenStaffRole) setStaffRole(chosenStaffRole);
       const cred = await signInWithEmailAndPassword(auth, trimmedEmail, password);
+      await cred.user.reload().catch(() => undefined);
+      await cred.user.getIdToken(true).catch(() => undefined);
       if (!cred.user.emailVerified) {
-        await sendEmailVerification(cred.user);
+        await sendEmailVerification(cred.user).catch(() => undefined);
         await signOut(auth);
         setAuthNotice(
-          `Verification email sent to ${cred.user.email}. Click the link in your inbox to verify your account, then sign in again.`
+          `Please verify your email address (${cred.user.email}). We sent a verification link to your inbox (and spam folder) — click it and sign in again, or use "Continue with Google".`
         );
       }
     } catch (err) {
@@ -995,8 +1060,10 @@ export default function App() {
         !matchedUserAccount.active ||
         matchedUserAccount.privileges.length === 0)
   );
+  const isUnassignedExternalUser =
+    !seeding && propsLoaded && properties.length === 0 && !isBootstrappedAdmin;
 
-  if (isAccountAccessRevoked) {
+  if (isAccountAccessRevoked || isUnassignedExternalUser) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4 text-center shadow-sm">
@@ -1004,8 +1071,10 @@ export default function App() {
             <AlertTriangle className="w-6 h-6" />
           </div>
           <div className="space-y-1.5">
-            <h1 className="font-display text-lg font-bold text-slate-900">
-              Role Unassigned / Access Paused
+            <h1 className="font-display text-lg font-bold text-[#0B245B]">
+              {isAccountAccessRevoked
+                ? 'Role Unassigned / Access Paused'
+                : 'Property Access Pending Assignment'}
             </h1>
             <p className="text-xs text-slate-600 leading-relaxed">
               Your account (<span className="font-mono-tabular font-semibold">{user.email}</span>) does
@@ -1013,15 +1082,16 @@ export default function App() {
               <span className="font-semibold text-slate-900">
                 {activeProperty?.name || 'Richgates Apartments, Enugu'}
               </span>
-              . Please contact your Property Administrator to assign a role.
+              . Ask your Property Administrator to invite or authorize this email under User Management.
             </p>
           </div>
           <button
             type="button"
             onClick={handleSignOut}
-            className="w-full px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg cursor-pointer"
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0B245B] hover:bg-[#082c70] text-white text-xs font-semibold rounded-lg cursor-pointer"
           >
-            Sign Out
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign Out</span>
           </button>
         </div>
       </div>
@@ -1031,6 +1101,13 @@ export default function App() {
   const unreadMessages = messages
     .filter((m) => isMessageUnreadForUser(m, effectiveRole, user.email || ''))
     .sort((a, b) => b.createdAtIso.localeCompare(a.createdAtIso));
+
+  const headerFormattedDate = new Date().toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
@@ -1066,31 +1143,37 @@ export default function App() {
       />
 
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Top Bar Contract: Breadcrumb on Left, Notification Bell + Admin Profile & Portal Action on Right */}
+        {/* Top Bar Contract: Breadcrumb on Left, Today's Date + Notification Bell + Admin Profile on Right */}
         <header className="no-print h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 sm:gap-8 sticky top-0 z-20">
           <div className="flex items-center gap-2.5 text-xs text-slate-600 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-1.5 -ml-1 rounded-lg text-slate-700 hover:bg-slate-100"
+              className="lg:hidden p-1.5 -ml-1 rounded-lg text-[#0B245B] hover:bg-blue-50"
               aria-label="Open navigation menu"
             >
               <Menu className="w-4 h-4" />
             </button>
             {portalMode === 'pch-admin' && (
               <>
-                <span className="font-semibold text-slate-900 whitespace-nowrap">
+                <span className="font-semibold text-[#0B245B] whitespace-nowrap">
                   {cms.brand.pchPortalName}
                 </span>
                 <span aria-hidden="true">/</span>
               </>
             )}
-            <span className="font-semibold text-slate-900 whitespace-nowrap">
+            <span className="font-semibold text-[#0B245B] whitespace-nowrap">
               {cms.pages[activeSection]?.navLabel || activeSection.replace(/_/g, ' ')}
             </span>
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
+            {/* Current Date moved from Dashboard to Header */}
+            <div className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50/70 border border-blue-200/80 text-xs font-semibold text-[#0B245B]">
+              <Calendar className="w-3.5 h-3.5 text-[#1c46be]" />
+              <span className="font-mono-tabular whitespace-nowrap">{headerFormattedDate}</span>
+            </div>
+
             {/* Real-Time Message Alert Bell & Dropdown */}
             <div className="relative">
               <button
@@ -1111,7 +1194,7 @@ export default function App() {
                 <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-xl shadow-xl z-40 overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <div className="flex items-center gap-2">
-                      <Mail className="w-4 h-4 text-emerald-700" />
+                      <Mail className="w-4 h-4 text-[#1c46be]" />
                       <span className="text-xs font-bold text-slate-900">
                         Department Message Alerts ({unreadMessages.length})
                       </span>
@@ -1122,7 +1205,7 @@ export default function App() {
                         setShowNotifications(false);
                         handleSelectSection('messages');
                       }}
-                      className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                      className="text-[11px] font-semibold text-[#1c46be] hover:underline cursor-pointer"
                     >
                       Open Inbox
                     </button>
@@ -1178,8 +1261,8 @@ export default function App() {
               onClick={() => handleSelectSection('profile')}
               className="hidden sm:inline-flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-colors text-left cursor-pointer"
             >
-              <span className="w-7 h-7 rounded-lg bg-blue-50 text-blue-700 font-mono-tabular text-[11px] font-bold flex items-center justify-center">
-                {(userProfile?.displayName || user.displayName || 'PA')
+              <span className="w-7 h-7 rounded-lg bg-blue-50 text-[#1c46be] font-mono-tabular text-[11px] font-bold flex items-center justify-center">
+                {(matchedUserAccount?.fullName || userProfile?.displayName || user.displayName || 'PA')
                   .split(/\s+/)
                   .slice(0, 2)
                   .map((p) => p[0]?.toUpperCase() || '')
@@ -1197,11 +1280,11 @@ export default function App() {
                 </span>
               </span>
             </button>
-            {portalMode === 'pch-admin' && (
+            {portalMode === 'pch-admin' && isSignedInBootstrapped && (
               <button
                 type="button"
                 onClick={() => setShowPortalModal(true)}
-                className="px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="px-3.5 py-1.5 text-xs font-semibold bg-[#0B245B] hover:bg-[#082c70] text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {cms.brand.portalLinksButton || 'Portal Links'}
               </button>
@@ -1210,24 +1293,32 @@ export default function App() {
         </header>
 
         {cms.brand.announcementBanner.trim() && (
-          <div className="no-print mx-4 sm:mx-6 mt-4 px-4 py-2.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-medium text-blue-900 flex items-center gap-2">
+          <div className="no-print mx-4 sm:mx-6 mt-4 px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-200 text-xs font-medium text-[#0B245B] flex items-center gap-2.5 shadow-xs">
             <Megaphone className="w-4 h-4 text-[#1c46be] shrink-0" />
             <span>{cms.brand.announcementBanner}</span>
           </div>
         )}
 
         {dbError && (
-          <div className="mx-6 mt-4 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800 flex flex-wrap items-center justify-between gap-3">
-            <span className="font-mono-tabular break-all">{dbError}</span>
+          <div
+            role="alert"
+            className="mx-4 sm:mx-6 mt-4 px-4 py-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex flex-wrap items-center justify-between gap-3 shadow-xs"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span className="break-words">{dbError}</span>
+            </div>
             <button
               type="button"
               onClick={() => {
                 autoSeedAttemptedRef.current = null;
-                void runBootstrapSeed(
-                  isBootstrappedAdmin ? RICHGATES_PROPERTY_ID : `rg-${user.uid.slice(0, 10)}`
-                );
+                if (isBootstrappedAdmin) {
+                  void runBootstrapSeed(RICHGATES_PROPERTY_ID);
+                } else {
+                  void enableNetwork(db).then(() => setDbError(null));
+                }
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-700 text-white rounded font-semibold shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg font-semibold shrink-0 cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Retry Connection</span>
@@ -1236,9 +1327,19 @@ export default function App() {
         )}
 
         {toast && (
-          <div className="no-print mx-6 mt-4 px-4 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800 flex items-center justify-between">
-            <span>{toast}</span>
-            <button type="button" onClick={() => setToast(null)} className="text-emerald-700">
+          <div
+            role="status"
+            className="no-print mx-4 sm:mx-6 mt-4 px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-900 flex items-center justify-between gap-3 shadow-xs"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{toast}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="text-emerald-700 hover:text-emerald-950 p-0.5 cursor-pointer"
+            >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -1249,24 +1350,22 @@ export default function App() {
             <div className="space-y-4">
               <div className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <p className="font-display text-base font-bold text-slate-900">
+                  <p className="font-display text-base font-bold text-[#0B245B]">
                     {seeding
                       ? 'Provisioning Richgates Apartments, Enugu...'
-                      : 'Loading Richgates Apartments, Enugu workspace...'}
+                      : !userAccountsLoaded && !propsLoaded
+                        ? 'Loading Richgates Apartments, Enugu workspace...'
+                        : 'Loading Richgates Apartments, Enugu workspace...'}
                   </p>
                   <p className="text-xs text-slate-500">
                     Syncing suites RM-1 to RM-8, Nigerian Naira ledger, POS menu, staff payroll, and booking channels.
                   </p>
                 </div>
-                {!seeding && propsLoaded && properties.length === 0 && (
+                {!seeding && propsLoaded && properties.length === 0 && isBootstrappedAdmin && (
                   <button
                     type="button"
-                    onClick={() =>
-                      runBootstrapSeed(
-                        isBootstrappedAdmin ? RICHGATES_PROPERTY_ID : `rg-${user.uid.slice(0, 10)}`
-                      )
-                    }
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shrink-0"
+                    onClick={() => runBootstrapSeed(RICHGATES_PROPERTY_ID)}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B245B] hover:bg-[#082c70] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Load Richgates Workspace</span>
@@ -1360,6 +1459,7 @@ export default function App() {
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}
                   onNavigate={handleSelectSection}
                   onOpenReservationFolio={handleOpenReservationFolio}
+                  onSignOut={handleSignOut}
                 />
               )}
 
