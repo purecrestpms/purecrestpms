@@ -2890,13 +2890,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               Paid to OTA:{' '}
                               {paySummary.otaPaidSourceAmount > 0
                                 ? `${formatChannelCurrency(paySummary.otaPaidSourceAmount, sourceCurrency)} ${sourceCurrency}`
-                                : '₦0'}
-                              {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && (
-                                <span className="text-slate-500 font-normal">
-                                  {' '}
-                                  (≈ {formatNgn(otaPaidAmount)})
-                                </span>
-                              )}
+                                : `${formatChannelCurrency(0, sourceCurrency)} ${sourceCurrency}`}
                             </p>
                             <p className="font-mono-tabular text-[11px] text-slate-900 font-semibold">
                               Expected Payout (₦): {formatNgn(paySummary.expectedPayoutNgn)}
@@ -3471,26 +3465,24 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </td>
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular text-emerald-700 whitespace-nowrap">
-                          <span className="block font-semibold">{formatNgn(amountPaid)}</span>
                           {isOtaRow ? (
                             <>
-                              <span className="block text-[10px] text-blue-700 font-medium">
+                              <span className="block font-semibold text-blue-700">
                                 Paid to OTA:{' '}
-                                {otaPaidSourceAmount > 0
-                                  ? `${formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)} ${sourceCurrency}`
-                                  : '₦0'}
-                                {sourceCurrency !== 'NGN' && otaPaidAmount > 0
-                                  ? ` (${formatNgn(otaPaidAmount)})`
-                                  : ''}
+                                {formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)}{' '}
+                                {sourceCurrency}
                               </span>
-                              <span className="block text-[10px] text-slate-600">
+                              <span className="block text-[10px] text-emerald-700">
                                 Direct Property: {formatNgn(hotelPaidAmount)}
                               </span>
                             </>
                           ) : (
-                            <span className="block text-[10px] text-slate-500">
-                              Direct Property: {formatNgn(hotelPaidAmount)}
-                            </span>
+                            <>
+                              <span className="block font-semibold">{formatNgn(amountPaid)}</span>
+                              <span className="block text-[10px] text-slate-500">
+                                Direct Property: {formatNgn(hotelPaidAmount)}
+                              </span>
+                            </>
                           )}
                         </td>
 
@@ -4422,14 +4414,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             )} ${folioPaySummary.sourceCurrency}`
                           : '₦0'}
                       </p>
-                      {folioIsOta &&
-                        folioPaySummary.sourceCurrency !== 'NGN' &&
-                        folioPaySummary.otaPaidSourceAmount > 0 && (
-                          <p className="font-mono-tabular text-[11px] text-blue-700 mt-0.5">
-                            ≈ {formatNgn(folioPaySummary.otaPaidAmount)} @ ₦
-                            {folioPaySummary.fxRateToNgn.toLocaleString('en-NG')}
-                          </p>
-                        )}
+                      {folioIsOta && (
+                        <p className="text-[11px] text-blue-700 mt-0.5">
+                          Exact amount captured in original currency
+                        </p>
+                      )}
                     </div>
 
                     <div className="border border-slate-200 bg-slate-50 rounded-xl p-3.5">
@@ -4787,11 +4776,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   placeholder="0.00"
                                   className="w-full border border-blue-200 rounded-lg px-2.5 py-1.5 font-mono-tabular font-semibold"
                                 />
-                                {activeEditCur !== 'NGN' && parsedEditOtaSrc > 0 && (
-                                  <span className="text-[10px] text-blue-700 font-mono-tabular block mt-0.5">
-                                    ≈ {formatNgn(convertedEditOtaNgn)}
-                                  </span>
-                                )}
+                                <span className="text-[10px] text-blue-700 block mt-0.5">
+                                  Recorded verbatim in {activeEditCur}
+                                </span>
                               </div>
 
                               <div>
@@ -4916,12 +4903,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 folioPaySummary.sourceCurrency
                               )}{' '}
                               {folioPaySummary.sourceCurrency}
-                              {folioPaySummary.sourceCurrency !== 'NGN' &&
-                                folioPaySummary.otaPaidAmount > 0 && (
-                                  <span className="ml-1 text-[11px] font-normal text-blue-700">
-                                    (≈ {formatNgn(folioPaySummary.otaPaidAmount)})
-                                  </span>
-                                )}
                             </span>
                           </div>
                           <div className="flex justify-between text-slate-700">
@@ -6103,11 +6084,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             }}
                             className="w-full border border-blue-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
                           />
-                          {bookingCurrency !== 'NGN' && otaPaidSrc > 0 && (
-                            <span className="text-[10px] text-blue-700 font-mono-tabular">
-                              ≈ {formatNgn(otaPaidNgnEst)} at FX rate
-                            </span>
-                          )}
+                          <span className="text-[10px] text-blue-700">
+                            Stored exact in {bookingCurrency} (unconverted)
+                          </span>
                         </div>
 
                         <div>
@@ -6200,11 +6179,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             <strong className="text-blue-700">
                               {formatChannelCurrency(otaPaidSrc, activeCur)} {activeCur}
                             </strong>
-                            {activeCur !== 'NGN' && otaPaidNgnEst > 0 && (
-                              <span className="text-slate-500 ml-1">
-                                (≈ {formatNgn(otaPaidNgnEst)})
-                              </span>
-                            )}
                           </span>
                           <span>
                             Expected Property Payout:{' '}
@@ -6627,12 +6601,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             checkoutSummary.sourceCurrency
                           )}{' '}
                           {checkoutSummary.sourceCurrency}
-                          {checkoutSummary.sourceCurrency !== 'NGN' &&
-                            checkoutSummary.otaPaidAmount > 0 && (
-                              <span className="ml-1 text-[10px] font-normal">
-                                (≈ {formatNgn(checkoutSummary.otaPaidAmount)})
-                              </span>
-                            )}
                         </span>
                       </div>
                       <div className="flex justify-between">

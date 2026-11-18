@@ -3467,12 +3467,6 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                                     )}{' '}
                                     {payment.sourceCurrency}
                                   </span>
-                                  {payment.sourceCurrency !== 'NGN' &&
-                                    payment.otaPaidAmount > 0 && (
-                                      <span className="block text-[10px] font-normal text-slate-500">
-                                        ≈ {formatNgn(payment.otaPaidAmount)}
-                                      </span>
-                                    )}
                                   <span className="block text-[10px] text-emerald-700">
                                     Direct: {formatNgn(payment.hotelPaidAmount)}
                                   </span>

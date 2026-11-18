@@ -9,12 +9,14 @@ import {
   Globe,
   KeyRound,
   Link2,
+  Pencil,
   Plus,
   RefreshCw,
   Shield,
   Trash2,
   Upload,
   UserPlus,
+  X,
 } from 'lucide-react';
 import {
   activateLicenseKeyWorkflow,
@@ -29,11 +31,14 @@ import {
   updateLicenseStatus,
   updateOtaChannelIcal,
   updatePlanInquiryStatusWorkflow,
+  updatePropertyTenantConfigWorkflow,
 } from '../services/pmsService';
 import {
   AuditLogRecord,
   BlockedDateRecord,
   buildAllSubdomainLinks,
+  ChannelCurrency,
+  formatChannelCurrency,
   formatNgn,
   formatUsd,
   getConnectedRootDomain,
@@ -42,7 +47,9 @@ import {
   getPropertySystemId,
   LicenseRecord,
   NavSectionId,
+  normalizeSubdomainSlug,
   OtaIntegrationRecord,
+  OtaPaymentCollectionMode,
   PlanInquiryRecord,
   PortalMode,
   PosMenuItemRecord,
@@ -55,6 +62,7 @@ import {
   saveConnectedRootDomain,
   sortRoomsByNumber,
   StaffRole,
+  SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 
@@ -104,16 +112,27 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   onNotify,
 }) => {
   const { cms } = useCms();
-  // New property state
+  // New property state (Super Admin multi-client provisioning)
   const [showPropForm, setShowPropForm] = useState(false);
   const [propName, setPropName] = useState('');
   const [propCode, setPropCode] = useState('');
+  const [propSubdomainSlug, setPropSubdomainSlug] = useState('');
   const [propCity, setPropCity] = useState('Abuja');
   const [propState, setPropState] = useState('FCT');
   const [propAddress, setPropAddress] = useState('');
+  const [propAdminName, setPropAdminName] = useState('');
   const [propAdminEmail, setPropAdminEmail] = useState('');
+  const [propAdminPassword, setPropAdminPassword] = useState('');
+  const [propInitialPlan, setPropInitialPlan] = useState<LicenseRecord['plan']>('Professional');
   const [propRooms, setPropRooms] = useState(10);
   const [propBaseRate, setPropBaseRate] = useState(80000);
+
+  // Edit existing client tenant modal
+  const [editingTenantProp, setEditingTenantProp] = useState<PropertyRecord | null>(null);
+  const [editTenantName, setEditTenantName] = useState('');
+  const [editTenantSlug, setEditTenantSlug] = useState('');
+  const [editTenantAdminEmail, setEditTenantAdminEmail] = useState('');
+  const [editTenantStatus, setEditTenantStatus] = useState<PropertyRecord['status']>('active');
 
   // License generator state
   const [licPropId, setLicPropId] = useState(property.id);
@@ -145,6 +164,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [newChannelSuite, setNewChannelSuite] = useState('All Rooms');
   const [newListingId, setNewListingId] = useState('');
   const [newIcalUrl, setNewIcalUrl] = useState('');
+  const [newDefaultCurrency, setNewDefaultCurrency] = useState<ChannelCurrency>('USD');
+  const [newDefaultNightlyRate, setNewDefaultNightlyRate] = useState('');
+  const [newCollectionMode, setNewCollectionMode] =
+    useState<OtaPaymentCollectionMode>('ota_prepaid');
   const [newAutoSync, setNewAutoSync] = useState(true);
   const [exportSuiteFilter, setExportSuiteFilter] = useState('ALL');
   const [icalDrafts, setIcalDrafts] = useState<
@@ -154,6 +177,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         url: string;
         room: string;
         listingId: string;
+        defaultCurrency: ChannelCurrency;
+        defaultNightlyRate: string;
+        paymentCollectionMode: OtaPaymentCollectionMode;
       }
     >
   >({});
@@ -274,25 +300,63 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
   const handleCreateProperty = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!propName.trim() || !propCode.trim()) return;
+    if (!propName.trim() || !propCode.trim() || !propAdminEmail.trim()) {
+      onNotify('Property name, code, and Property Admin email are required.');
+      return;
+    }
     setBusy(true);
     try {
-      const newId = await createNewPropertyWithRooms({
+      const created = await createNewPropertyWithRooms({
         name: propName.trim(),
         code: propCode.trim().toUpperCase(),
+        subdomainSlug: propSubdomainSlug.trim() || undefined,
         city: propCity.trim(),
         state: propState.trim(),
         address: propAddress.trim() || `${propCity}, ${propState}, Nigeria`,
-        adminEmail: propAdminEmail.trim() || 'purecresthospitality@gmail.com',
+        adminName: propAdminName.trim() || undefined,
+        adminEmail: propAdminEmail.trim(),
+        adminPassword: propAdminPassword.trim() || undefined,
+        initialPlan: propInitialPlan,
         roomCount: propRooms,
         baseRateNgn: propBaseRate,
         actorRole: ROLE_LABELS[activeRole],
       });
-      onNotify(`Provisioned property ${propName} with ${propRooms} rooms`);
+      onNotify(
+        `Provisioned ${propName} (${created.systemPropertyId}) · ${created.subdomainSlug}.${savedRootDomain} · License ${created.licenseKey}${created.authNote ? ` · ${created.authNote}` : ''}`
+      );
       setShowPropForm(false);
       setPropName('');
       setPropCode('');
-      if (newId) onSelectProperty(newId);
+      setPropSubdomainSlug('');
+      setPropAddress('');
+      setPropAdminName('');
+      setPropAdminEmail('');
+      setPropAdminPassword('');
+      if (created.propertyId) onSelectProperty(created.propertyId);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Unable to provision client property.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveTenantConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTenantProp || !editTenantAdminEmail.trim()) return;
+    setBusy(true);
+    try {
+      await updatePropertyTenantConfigWorkflow({
+        property: editingTenantProp,
+        name: editTenantName.trim(),
+        subdomainSlug: editTenantSlug.trim() || getPropertySubdomainSlug(editingTenantProp),
+        adminEmail: editTenantAdminEmail.trim(),
+        status: editTenantStatus,
+        actorRole: ROLE_LABELS[activeRole],
+      });
+      onNotify(`Updated client subdomain & admin settings for ${editTenantName || editingTenantProp.name}`);
+      setEditingTenantProp(null);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Unable to update client tenant settings.');
     } finally {
       setBusy(false);
     }
@@ -403,11 +467,19 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     const nextUrl = draft.url.trim();
     const nextRoom = normalizeChannelRoom(draft.room);
     const nextListingId = draft.listingId.trim() || channel.propertyListingId;
+    const nextCurrency: ChannelCurrency = draft.defaultCurrency || channel.defaultCurrency || 'NGN';
+    const parsedRate = Number(draft.defaultNightlyRate.replace(/,/g, ''));
+    const nextRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : channel.defaultNightlyRate ?? 0;
+    const nextMode: OtaPaymentCollectionMode =
+      draft.paymentCollectionMode || channel.paymentCollectionMode || 'ota_prepaid';
 
     const isDirty =
       nextUrl !== (channel.icalImportUrl || '').trim() ||
       nextRoom !== normalizeChannelRoom(channel.roomNumber) ||
-      nextListingId !== (channel.propertyListingId || '').trim();
+      nextListingId !== (channel.propertyListingId || '').trim() ||
+      nextCurrency !== (channel.defaultCurrency || 'NGN') ||
+      nextRate !== (channel.defaultNightlyRate ?? 0) ||
+      nextMode !== (channel.paymentCollectionMode || 'ota_prepaid');
 
     if (!isDirty) return channel;
 
@@ -417,6 +489,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
+      defaultCurrency: nextCurrency,
+      defaultNightlyRate: nextRate,
+      paymentCollectionMode: nextMode,
       actorRole: ROLE_LABELS[activeRole],
     });
     setIcalDrafts((prev) => {
@@ -429,6 +504,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
+      defaultCurrency: nextCurrency,
+      defaultNightlyRate: nextRate,
+      paymentCollectionMode: nextMode,
     };
   };
 
@@ -527,6 +605,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
+    const parsedDefaultRate = Number(newDefaultNightlyRate.replace(/,/g, ''));
+    const safeDefaultRate = Number.isFinite(parsedDefaultRate) && parsedDefaultRate > 0 ? parsedDefaultRate : 0;
     setBusy(true);
     try {
       await createOtaChannelWithIcal({
@@ -535,13 +615,19 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         propertyListingId: newListingId,
         roomNumber: newChannelSuite,
         icalImportUrl: newIcalUrl,
+        defaultCurrency: newDefaultCurrency,
+        defaultNightlyRate: safeDefaultRate,
+        paymentCollectionMode: newCollectionMode,
         autoSync: newAutoSync,
         actorRole: ROLE_LABELS[activeRole],
       });
-      onNotify(`Added ${newChannelName} (${newChannelSuite}) to Channel Manager`);
+      onNotify(
+        `Added ${newChannelName} (${newChannelSuite} · ${newDefaultCurrency}) to Channel Manager`
+      );
       setShowChannelForm(false);
       setNewListingId('');
       setNewIcalUrl('');
+      setNewDefaultNightlyRate('');
     } catch (err) {
       onNotify(err instanceof Error ? err.message : `Unable to add ${newChannelName}`);
     } finally {
@@ -646,6 +732,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     onChange={(e) => {
                       const val = e.target.value as OtaIntegrationRecord['channelName'];
                       setNewChannelName(val);
+                      if (val === 'Direct Website Engine' || val === 'Hotels.ng') {
+                        setNewDefaultCurrency('NGN');
+                      } else if (val === 'Airbnb' || val === 'Booking.com' || val === 'Expedia' || val === 'VRBO') {
+                        setNewDefaultCurrency('USD');
+                      }
                     }}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                   >
@@ -698,6 +789,59 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                   />
                 </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Channel Booking Currency
+                  </label>
+                  <select
+                    value={newDefaultCurrency}
+                    onChange={(e) => setNewDefaultCurrency(e.target.value as ChannelCurrency)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-semibold"
+                  >
+                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                      <option key={cur} value={cur}>
+                        {cur}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Channel Nightly Rate ({newDefaultCurrency})
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="e.g. 200.00 (optional fallback)"
+                    value={newDefaultNightlyRate}
+                    onChange={(e) => setNewDefaultNightlyRate(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Payment Collection Mode
+                  </label>
+                  <select
+                    value={newCollectionMode}
+                    onChange={(e) =>
+                      setNewCollectionMode(e.target.value as OtaPaymentCollectionMode)
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="ota_prepaid">Guest Paid to OTA (Prepaid)</option>
+                    <option value="hotel_collect">Pay at Property (Hotel Collect)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-end pb-1">
+                  <p className="text-[11px] text-slate-500 leading-snug">
+                    Paid amounts in iCal events (e.g. <span className="font-mono-tabular font-semibold">200 USD</span>) are stored verbatim in original currency without converting to ₦.
+                  </p>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
@@ -707,7 +851,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     checked={newAutoSync}
                     onChange={(e) => setNewAutoSync(e.target.checked)}
                   />
-                  <span>Enable two-way calendar sync (.ics dates, guest &amp; room mapping)</span>
+                  <span>Enable two-way calendar sync (.ics dates, guest &amp; exact OTA currency capture)</span>
                 </label>
 
                 <button
@@ -785,6 +929,12 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 url: ch.icalImportUrl || '',
                 room: normalizeChannelRoom(ch.roomNumber),
                 listingId: ch.propertyListingId || '',
+                defaultCurrency: ch.defaultCurrency || 'NGN',
+                defaultNightlyRate:
+                  ch.defaultNightlyRate && ch.defaultNightlyRate > 0
+                    ? String(ch.defaultNightlyRate)
+                    : '',
+                paymentCollectionMode: ch.paymentCollectionMode || 'ota_prepaid',
               };
               const suiteParam = encodeURIComponent(
                 !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
@@ -816,6 +966,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                         <h2 className="font-display text-sm font-bold text-slate-900">
                           {ch.channelName}
                         </h2>
+                        <span className="font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
+                          {draft.defaultCurrency}
+                        </span>
                       </div>
                       <span
                         className={`text-xs font-semibold ${
@@ -850,9 +1003,78 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       />
                     </div>
 
+                    {/* Currency, Nightly Rate & Collection Mode */}
+                    <div className="grid grid-cols-3 gap-1.5 pt-2 text-[11px] border-t border-slate-100">
+                      <div>
+                        <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                          Currency
+                        </label>
+                        <select
+                          value={draft.defaultCurrency}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: {
+                                ...draft,
+                                defaultCurrency: e.target.value as ChannelCurrency,
+                              },
+                            }))
+                          }
+                          className="w-full border border-slate-200 rounded-md px-2 py-1 bg-white font-semibold"
+                        >
+                          {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                            <option key={cur} value={cur}>
+                              {cur}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                          Rate ({draft.defaultCurrency}/nt)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder={
+                            draft.defaultCurrency === 'NGN' ? 'Room ₦' : 'e.g. 200'
+                          }
+                          value={draft.defaultNightlyRate}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: { ...draft, defaultNightlyRate: e.target.value },
+                            }))
+                          }
+                          className="w-full border border-slate-200 rounded-md px-2 py-1 font-mono-tabular bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                          Collection
+                        </label>
+                        <select
+                          value={draft.paymentCollectionMode}
+                          onChange={(e) =>
+                            setIcalDrafts((prev) => ({
+                              ...prev,
+                              [ch.id]: {
+                                ...draft,
+                                paymentCollectionMode: e.target.value as OtaPaymentCollectionMode,
+                              },
+                            }))
+                          }
+                          className="w-full border border-slate-200 rounded-md px-1.5 py-1 bg-white"
+                        >
+                          <option value="ota_prepaid">Paid to OTA</option>
+                          <option value="hotel_collect">Pay at Hotel</option>
+                        </select>
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2 pt-2 text-xs border-t border-slate-100">
                       <div>
-                        <p className="text-slate-500">Sync Status</p>
+                        <p className="text-slate-500">Sync Mode</p>
                         <p className="font-semibold text-slate-900">
                           {ch.autoSync ? 'Two-way Calendar Sync' : 'Manual Sync'}
                         </p>
@@ -861,6 +1083,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                         <p className="text-slate-500">Bookings Imported</p>
                         <p className="font-mono-tabular font-semibold text-slate-900">
                           {ch.bookingsImported}
+                          {Number(draft.defaultNightlyRate) > 0 && (
+                            <span className="ml-1 text-[10px] font-normal text-blue-700">
+                              ({formatChannelCurrency(Number(draft.defaultNightlyRate), draft.defaultCurrency)}/nt)
+                            </span>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -911,12 +1138,17 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                           onClick={async () => {
                             setBusy(true);
                             try {
+                              const parsedRate = Number(draft.defaultNightlyRate.replace(/,/g, ''));
                               await updateOtaChannelIcal({
                                 property,
                                 channel: ch,
                                 icalImportUrl: draft.url,
                                 roomNumber: draft.room,
                                 propertyListingId: draft.listingId,
+                                defaultCurrency: draft.defaultCurrency,
+                                defaultNightlyRate:
+                                  Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 0,
+                                paymentCollectionMode: draft.paymentCollectionMode,
                                 actorRole: ROLE_LABELS[activeRole],
                               });
                               setIcalDrafts((prev) => {
@@ -925,7 +1157,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 return next;
                               });
                               onNotify(
-                                `Saved listing & iCal calendar settings for ${ch.channelName}`
+                                `Saved ${draft.defaultCurrency} & iCal settings for ${ch.channelName}`
                               );
                             } catch (err) {
                               onNotify(
@@ -1057,36 +1289,72 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                 <div>
                   <h2 className="font-display text-sm font-bold text-slate-900">
-                    Provision New Property in PCH Network
+                    Provision New Client Property, Subdomain &amp; Property Admin
                   </h2>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    A permanent system Property ID (<span className="font-mono-tabular font-semibold text-[#1c46be]">PCH-PROP-XXXXXX</span>) will be assigned automatically upon creation.
+                    Assigns permanent Property ID (<span className="font-mono-tabular font-semibold text-[#1c46be]">PCH-PROP-XXXXXX</span>), custom client subdomain, active license, and initial Property Admin credentials.
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Property Name</label>
+                  <label className="block font-medium text-slate-700 mb-1">Property Name *</label>
                   <input
                     required
                     type="text"
+                    placeholder="e.g. Lagos Harbour Suites"
                     value={propName}
-                    onChange={(e) => setPropName(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPropName(val);
+                      if (!propSubdomainSlug) {
+                        // auto-preview remains dynamic unless explicitly typed
+                      }
+                    }}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Property Code</label>
+                  <label className="block font-medium text-slate-700 mb-1">Property Code *</label>
                   <input
                     required
                     type="text"
+                    placeholder="e.g. LHS-LOS-01"
                     value={propCode}
                     onChange={(e) => setPropCode(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular uppercase"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">City</label>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Custom Subdomain Slug
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. harbour"
+                    value={propSubdomainSlug}
+                    onChange={(e) => setPropSubdomainSlug(normalizeSubdomainSlug(e.target.value))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular lowercase"
+                  />
+                  <span className="text-[10px] font-mono-tabular text-[#1c46be] block mt-0.5">
+                    https://{propSubdomainSlug || normalizeSubdomainSlug(propName) || 'client'}.{savedRootDomain}
+                  </span>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Initial License Plan</label>
+                  <select
+                    value={propInitialPlan}
+                    onChange={(e) => setPropInitialPlan(e.target.value as LicenseRecord['plan'])}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Starter">Starter</option>
+                    <option value="Professional">Professional</option>
+                    <option value="Enterprise">Enterprise</option>
+                    <option value="Lifetime Sovereign">Lifetime Sovereign</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">City *</label>
                   <input
                     required
                     type="text"
@@ -1096,7 +1364,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">State</label>
+                  <label className="block font-medium text-slate-700 mb-1">State *</label>
                   <input
                     required
                     type="text"
@@ -1109,17 +1377,47 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   <label className="block font-medium text-slate-700 mb-1">Street Address</label>
                   <input
                     type="text"
+                    placeholder="Street & district"
                     value={propAddress}
                     onChange={(e) => setPropAddress(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Property Admin Email</label>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Property Admin Name
+                  </label>
                   <input
+                    type="text"
+                    placeholder="e.g. Adaobi Okafor"
+                    value={propAdminName}
+                    onChange={(e) => setPropAdminName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Property Admin Email *
+                  </label>
+                  <input
+                    required
                     type="email"
+                    placeholder="gm@clienthotel.com"
                     value={propAdminEmail}
                     onChange={(e) => setPropAdminEmail(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Admin Initial Password (Optional)
+                  </label>
+                  <input
+                    type="password"
+                    minLength={6}
+                    placeholder="Min 6 chars (sends verification)"
+                    value={propAdminPassword}
+                    onChange={(e) => setPropAdminPassword(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2"
                   />
                 </div>
@@ -1152,16 +1450,16 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowPropForm(false)}
-                  className="px-4 py-2 text-slate-600"
+                  className="px-4 py-2 text-slate-600 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={busy}
-                  className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
                 >
-                  Create Property &amp; Initialize Rooms
+                  {busy ? 'Provisioning Client...' : 'Create Client Property & Admin'}
                 </button>
               </div>
             </form>
@@ -1170,6 +1468,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {properties.map((p) => {
               const isCurrent = p.id === property.id;
+              const slug = getPropertySubdomainSlug(p);
               return (
                 <div
                   key={p.id}
@@ -1195,7 +1494,15 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </h3>
                       <p className="text-xs text-slate-600 mt-0.5">{p.address}</p>
                     </div>
-                    <span className="text-xs font-semibold text-emerald-700 capitalize">
+                    <span
+                      className={`text-xs font-semibold capitalize ${
+                        p.status === 'suspended'
+                          ? 'text-rose-700'
+                          : p.status === 'onboarding'
+                            ? 'text-amber-700'
+                            : 'text-emerald-700'
+                      }`}
+                    >
                       {p.status}
                     </span>
                   </div>
@@ -1226,14 +1533,28 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       Admin: <strong className="text-slate-700">{p.adminEmail}</strong>
                     </span>
                     <span className="font-mono-tabular text-[#1c46be]">
-                      {getPropertySubdomainSlug(p)}.pchpms.com · /staff
+                      {slug}.{savedRootDomain} · /staff
                     </span>
                   </div>
-                  <div className="flex items-center justify-end">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingTenantProp(p);
+                        setEditTenantName(p.name);
+                        setEditTenantSlug(slug);
+                        setEditTenantAdminEmail(p.adminEmail);
+                        setEditTenantStatus(p.status);
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      <span>Edit Subdomain &amp; Admin</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => onSelectProperty(p.id)}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold ${
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
                         isCurrent
                           ? 'bg-slate-100 text-slate-700'
                           : 'bg-slate-900 hover:bg-slate-800 text-white'
@@ -1246,6 +1567,104 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               );
             })}
           </div>
+
+          {editingTenantProp && (
+            <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4">
+              <form
+                onSubmit={handleSaveTenantConfig}
+                className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4 text-xs"
+              >
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-display text-sm font-bold text-slate-900">
+                      Configure Client Subdomain &amp; Admin
+                    </h3>
+                    <p className="text-[11px] font-mono-tabular text-[#1c46be]">
+                      {getPropertySystemId(editingTenantProp)} · {editingTenantProp.code}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingTenantProp(null)}
+                    className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Property Name</label>
+                    <input
+                      required
+                      type="text"
+                      value={editTenantName}
+                      onChange={(e) => setEditTenantName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Client Subdomain Slug
+                    </label>
+                    <input
+                      required
+                      type="text"
+                      value={editTenantSlug}
+                      onChange={(e) => setEditTenantSlug(normalizeSubdomainSlug(e.target.value))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular lowercase"
+                    />
+                    <span className="text-[10px] font-mono-tabular text-slate-500 mt-0.5 block">
+                      Portal URL: https://{editTenantSlug || 'client'}.{savedRootDomain}
+                    </span>
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">
+                      Primary Property Admin Email
+                    </label>
+                    <input
+                      required
+                      type="email"
+                      value={editTenantAdminEmail}
+                      onChange={(e) => setEditTenantAdminEmail(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Client Status</label>
+                    <select
+                      value={editTenantStatus}
+                      onChange={(e) =>
+                        setEditTenantStatus(e.target.value as PropertyRecord['status'])
+                      }
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                    >
+                      <option value="active">Active</option>
+                      <option value="onboarding">Onboarding</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setEditingTenantProp(null)}
+                    className="px-4 py-2 text-slate-600 hover:text-slate-900 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="px-4 py-2 bg-[#1c46be] hover:bg-[#17399c] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                  >
+                    {busy ? 'Saving...' : 'Save Client Settings'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       )}
 

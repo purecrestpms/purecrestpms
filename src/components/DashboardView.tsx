@@ -1180,11 +1180,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             {formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)}{' '}
                             {sourceCurrency}
                           </span>
-                          {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && (
-                            <span className="block text-[10px] text-slate-500">
-                              ≈ {formatNgn(otaPaidAmount)}
-                            </span>
-                          )}
                           <span className="block text-[10px] text-emerald-700">
                             Direct Property: {formatNgn(hotelPaidAmount)}
                           </span>

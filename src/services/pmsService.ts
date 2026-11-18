@@ -3,6 +3,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signOut,
   updateProfile,
 } from 'firebase/auth';
@@ -12,15 +13,18 @@ import {
   doc,
   getDoc,
   getDocs,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   BOOTSTRAPPED_ADMIN_EMAILS,
+  getPchActionCodeSettings,
   isBootstrappedAdminEmail,
   OperationType,
   auth,
@@ -42,6 +46,8 @@ import {
   DepartmentName,
   formatSystemPropertyId,
   getFxRateToNgn,
+  getPropertyCodePrefix,
+  getPropertySubdomainSlug,
   GuestRecord,
   HousekeepingTaskRecord,
   InventoryItemRecord,
@@ -51,6 +57,7 @@ import {
   MaintenanceTicketRecord,
   MessageRecipientScope,
   NavSectionId,
+  normalizeSubdomainSlug,
   OtaIntegrationRecord,
   OtaPaymentCollectionMode,
   parseSystemPropertySeq,
@@ -103,16 +110,24 @@ export async function writeAuditLog(params: {
   const { uid, email } = getActorContext();
   const id = cleanId('aud');
   const path = `audit_logs/${id}`;
+  const safeEmails = Array.from(
+    new Set([
+      ...BOOTSTRAPPED_ADMIN_EMAILS,
+      email.trim().toLowerCase(),
+      ...params.authorizedEmails.map((e) => e.trim().toLowerCase()),
+    ].filter(Boolean))
+  ).slice(0, 25);
+
   try {
     await setDoc(doc(db, 'audit_logs', id), {
       propertyId: params.propertyId,
-      actorEmail: email,
+      actorEmail: email.trim().toLowerCase(),
       actorRole: params.actorRole,
       module: params.module,
       action: params.action,
       details: params.details.slice(0, 495),
       timestampIso: new Date().toISOString(),
-      authorizedEmails: params.authorizedEmails.slice(0, 25),
+      authorizedEmails: safeEmails,
       ownerUid: uid,
       createdAt: serverTimestamp(),
     });
@@ -234,7 +249,8 @@ export async function createReservationWorkflow(params: {
   const resId = cleanId('res');
   const guestId = cleanId('gst');
   const todayIso = new Date().toISOString().slice(0, 10);
-  const bookingRef = `RG-${Math.floor(1000 + Math.random() * 8999)}`;
+  const propPrefix = getPropertyCodePrefix(params.property);
+  const bookingRef = `${propPrefix}-${Math.floor(1000 + Math.random() * 8999)}`;
   const isOta = isOtaBookingChannel(params.channel);
   const safeNights = Math.max(1, Math.round(params.nights));
   const baseEffectiveRate = params.room?.nightlyRateNgn ?? params.nightlyRateNgn ?? 55000;
@@ -2323,7 +2339,7 @@ export async function createPurchaseOrder(params: {
 }) {
   const { uid } = getActorContext();
   const id = cleanId('po');
-  const poNumber = `PO-RG-${Math.floor(500 + Math.random() * 499)}`;
+  const poNumber = `PO-${getPropertyCodePrefix(params.property)}-${Math.floor(500 + Math.random() * 499)}`;
   const totalCostNgn = params.quantity * params.unitCostNgn;
   const ref = doc(db, 'properties', params.property.id, 'purchase_orders', id);
   try {
@@ -3150,11 +3166,86 @@ export async function syncOtaChannelWorkflow(params: {
   };
 
   const resolveChannelRoomPricing = (ev: ParsedIcalEvent, assignedRoom: RoomRecord) => {
-    const nightlyRateNgn = assignedRoom.nightlyRateNgn || 0;
-    const roomChargesNgn = nightlyRateNgn * ev.nights;
+    const channelCurrency: ChannelCurrency =
+      ev.paidCurrency || params.channel.defaultCurrency || 'NGN';
+    const fxRateToNgn = getFxRateToNgn(channelCurrency, params.property.usdExchangeRateNgn);
+    const channelDefaultNightly = Math.max(0, Number(params.channel.defaultNightlyRate ?? 0));
+
+    let sourceNightlyRate = 0;
+    let sourceTotalAmount = 0;
+
+    if (typeof ev.sourceNightlyRate === 'number' && ev.sourceNightlyRate > 0) {
+      sourceNightlyRate = Number(ev.sourceNightlyRate.toFixed(2));
+    } else if (typeof ev.sourceTotalAmount === 'number' && ev.sourceTotalAmount > 0) {
+      sourceNightlyRate = Number((ev.sourceTotalAmount / Math.max(1, ev.nights)).toFixed(2));
+    } else if (typeof ev.paidAmount === 'number' && ev.paidAmount > 0) {
+      sourceNightlyRate = Number((ev.paidAmount / Math.max(1, ev.nights)).toFixed(2));
+    } else if (channelDefaultNightly > 0) {
+      sourceNightlyRate = channelDefaultNightly;
+    } else {
+      const fallbackNgn = assignedRoom.nightlyRateNgn || 0;
+      sourceNightlyRate =
+        channelCurrency === 'NGN'
+          ? fallbackNgn
+          : Number((fallbackNgn / Math.max(1, fxRateToNgn)).toFixed(2));
+    }
+
+    if (typeof ev.sourceTotalAmount === 'number' && ev.sourceTotalAmount > 0) {
+      sourceTotalAmount = Number(ev.sourceTotalAmount.toFixed(2));
+    } else if (channelDefaultNightly > 0 || (ev.sourceNightlyRate && ev.sourceNightlyRate > 0)) {
+      sourceTotalAmount = Number((sourceNightlyRate * Math.max(1, ev.nights)).toFixed(2));
+    } else if (typeof ev.paidAmount === 'number' && ev.paidAmount > 0) {
+      sourceTotalAmount = Number(ev.paidAmount.toFixed(2));
+    } else {
+      sourceTotalAmount = Number(((assignedRoom.nightlyRateNgn || 0) * Math.max(1, ev.nights)).toFixed(2));
+      if (channelCurrency !== 'NGN') {
+        sourceTotalAmount = Number((sourceTotalAmount / Math.max(1, fxRateToNgn)).toFixed(2));
+      }
+    }
+
+    const commissionPct = Math.max(0, Math.min(50, Number(params.channel.commissionPct ?? 0)));
+    const collectionMode: OtaPaymentCollectionMode =
+      params.channel.paymentCollectionMode ||
+      (typeof ev.paidAmount === 'number' && ev.paidAmount > 0 ? 'ota_prepaid' : 'hotel_collect');
+
+    // Keep exact Guest Paid to OTA in the original booking currency (never convert otaPaidSourceAmount into NGN)
+    const otaPaidSourceAmount =
+      typeof ev.paidAmount === 'number' && ev.paidAmount > 0
+        ? Number(ev.paidAmount.toFixed(2))
+        : collectionMode === 'ota_prepaid' && (channelDefaultNightly > 0 || (ev.sourceTotalAmount && ev.sourceTotalAmount > 0))
+          ? sourceTotalAmount
+          : 0;
+
+    const grossNgn =
+      channelCurrency === 'NGN'
+        ? Math.round(sourceTotalAmount)
+        : Math.round(sourceTotalAmount * fxRateToNgn);
+    const nightlyRateNgn =
+      channelCurrency === 'NGN'
+        ? Math.round(sourceNightlyRate)
+        : Math.round(sourceNightlyRate * fxRateToNgn);
+    const otaPaidNgn =
+      channelCurrency === 'NGN'
+        ? Math.round(otaPaidSourceAmount)
+        : Math.round(otaPaidSourceAmount * fxRateToNgn);
+    const expectedPayoutNgn = Math.max(0, Math.round(grossNgn * (1 - commissionPct / 100)));
+    const roomChargesNgn =
+      otaPaidSourceAmount > 0 || channelDefaultNightly > 0 || ev.sourceTotalAmount
+        ? expectedPayoutNgn
+        : (assignedRoom.nightlyRateNgn || 0) * Math.max(1, ev.nights);
+
     return {
-      nightlyRateNgn,
+      nightlyRateNgn: nightlyRateNgn > 0 ? nightlyRateNgn : assignedRoom.nightlyRateNgn || 0,
       roomChargesNgn,
+      expectedPayoutNgn: expectedPayoutNgn > 0 ? expectedPayoutNgn : roomChargesNgn,
+      sourceCurrency: channelCurrency,
+      sourceNightlyRate,
+      sourceTotalAmount,
+      fxRateToNgn,
+      otaPaidSourceAmount,
+      otaPaidNgn,
+      paymentCollectionMode:
+        otaPaidSourceAmount > 0 ? ('ota_prepaid' as const) : collectionMode,
     };
   };
 
@@ -3320,6 +3411,16 @@ export async function syncOtaChannelWorkflow(params: {
           : existing.bookingRef;
       const targetStatus = existing.status === 'cancelled' ? 'confirmed' : existing.status;
 
+      const existingHotelPaid = Math.max(0, Number(existing.hotelPaidNgn ?? 0));
+      const hasExplicitIcalPayment =
+        (ev.paidAmount !== undefined && ev.paidAmount > 0) ||
+        (ev.sourceTotalAmount !== undefined && ev.sourceTotalAmount > 0) ||
+        Boolean(ev.paidCurrency);
+      const shouldUpdatePayment =
+        hasExplicitIcalPayment &&
+        (existing.otaPaidSourceAmount !== pricing.otaPaidSourceAmount ||
+          existing.sourceCurrency !== pricing.sourceCurrency);
+
       const needsUpdate =
         existing.checkInDate !== ev.checkInDate ||
         existing.checkOutDate !== ev.checkOutDate ||
@@ -3333,10 +3434,27 @@ export async function syncOtaChannelWorkflow(params: {
         existing.roomId !== assignedRoom.id ||
         existing.roomNumber !== assignedRoom.roomNumber ||
         (existing.requestedRoomType || '') !== assignedRoom.roomType.slice(0, 64) ||
-        existing.status !== targetStatus;
+        existing.status !== targetStatus ||
+        shouldUpdatePayment;
 
       if (needsUpdate) {
         const resRef = doc(db, 'properties', params.property.id, 'reservations', existing.id);
+        const paymentPatch = shouldUpdatePayment
+          ? {
+              sourceCurrency: pricing.sourceCurrency,
+              sourceNightlyRate: pricing.sourceNightlyRate,
+              sourceTotalAmount: pricing.sourceTotalAmount,
+              fxRateToNgn: pricing.fxRateToNgn,
+              otaPaidSourceAmount: pricing.otaPaidSourceAmount,
+              otaPaidNgn: pricing.otaPaidNgn,
+              expectedPayoutNgn: pricing.expectedPayoutNgn,
+              roomChargesNgn: pricing.roomChargesNgn,
+              nightlyRateNgn: pricing.nightlyRateNgn,
+              paidNgn: pricing.otaPaidNgn + existingHotelPaid,
+              paymentCollectionMode: pricing.paymentCollectionMode,
+              paymentConfirmed: pricing.otaPaidNgn > 0 || existingHotelPaid > 0,
+            }
+          : {};
         writes.push({
           kind: 'update',
           ref: resRef,
@@ -3354,6 +3472,7 @@ export async function syncOtaChannelWorkflow(params: {
             guestName: safeGuestName,
             ...(ev.guestPhone ? { guestPhone: ev.guestPhone.slice(0, 32) } : {}),
             status: targetStatus,
+            ...paymentPatch,
             updatedAt: now,
           },
         });
@@ -3366,6 +3485,12 @@ export async function syncOtaChannelWorkflow(params: {
         existing.nights = ev.nights;
         existing.guestName = safeGuestName;
         existing.status = targetStatus;
+        if (shouldUpdatePayment) {
+          existing.sourceCurrency = pricing.sourceCurrency;
+          existing.otaPaidSourceAmount = pricing.otaPaidSourceAmount;
+          existing.otaPaidNgn = pricing.otaPaidNgn;
+          existing.expectedPayoutNgn = pricing.expectedPayoutNgn;
+        }
         updated += 1;
       } else {
         skipped += 1;
@@ -3406,16 +3531,17 @@ export async function syncOtaChannelWorkflow(params: {
       nightlyRateNgn: pricing.nightlyRateNgn,
       roomChargesNgn: pricing.roomChargesNgn,
       posChargesNgn: 0,
-      paidNgn: 0,
-      sourceCurrency: 'NGN',
-      sourceNightlyRate: pricing.nightlyRateNgn,
-      sourceTotalAmount: pricing.roomChargesNgn,
-      fxRateToNgn: 1,
-      otaPaidNgn: 0,
-      otaPaidSourceAmount: 0,
-      expectedPayoutNgn: pricing.roomChargesNgn,
+      paidNgn: pricing.otaPaidNgn,
+      sourceCurrency: pricing.sourceCurrency,
+      sourceNightlyRate: pricing.sourceNightlyRate,
+      sourceTotalAmount: pricing.sourceTotalAmount,
+      fxRateToNgn: pricing.fxRateToNgn,
+      paymentCollectionMode: pricing.paymentCollectionMode,
+      otaPaidNgn: pricing.otaPaidNgn,
+      otaPaidSourceAmount: pricing.otaPaidSourceAmount,
+      expectedPayoutNgn: pricing.expectedPayoutNgn,
       hotelPaidNgn: 0,
-      paymentConfirmed: false,
+      paymentConfirmed: pricing.otaPaidNgn > 0,
       status: 'confirmed',
       paymentMethod: 'Online Gateway',
       externalUid: ev.uid.slice(0, 160),
@@ -3520,6 +3646,9 @@ export async function createOtaChannelWithIcal(params: {
   roomNumber: string;
   icalImportUrl: string;
   commissionPct?: number;
+  defaultCurrency?: ChannelCurrency;
+  defaultNightlyRate?: number;
+  paymentCollectionMode?: OtaPaymentCollectionMode;
   autoSync: boolean;
   actorRole: string;
 }) {
@@ -3533,6 +3662,10 @@ export async function createOtaChannelWithIcal(params: {
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${exportRoom}`;
   const cleanListingId = params.propertyListingId.trim().slice(0, 120) || `ICAL-${id.slice(-5).toUpperCase()}`;
   const cleanImportUrl = params.icalImportUrl.trim().slice(0, 2000);
+  const defaultCurrency: ChannelCurrency = params.defaultCurrency || 'NGN';
+  const defaultNightlyRate = Math.max(0, Number(params.defaultNightlyRate ?? 0));
+  const paymentCollectionMode: OtaPaymentCollectionMode =
+    params.paymentCollectionMode || 'ota_prepaid';
 
   try {
     await setDoc(ref, {
@@ -3540,6 +3673,9 @@ export async function createOtaChannelWithIcal(params: {
       channelName: params.channelName,
       propertyListingId: cleanListingId,
       roomNumber: normalizedRoom,
+      defaultCurrency,
+      defaultNightlyRate,
+      paymentCollectionMode,
       icalImportUrl: cleanImportUrl,
       icalExportUrl,
       commissionPct: Math.max(0, Math.min(50, params.commissionPct ?? 0)),
@@ -3557,7 +3693,7 @@ export async function createOtaChannelWithIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Added ${params.channelName} with iCal Link`,
-      details: `${cleanListingId} · ${normalizedRoom} · ${cleanImportUrl || 'Export-only feed'}`,
+      details: `${cleanListingId} · ${normalizedRoom} · ${defaultCurrency} ${defaultNightlyRate > 0 ? defaultNightlyRate : 'Room Rate'} · ${cleanImportUrl || 'Export-only feed'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -3572,6 +3708,9 @@ export async function updateOtaChannelIcal(params: {
   roomNumber: string;
   propertyListingId?: string;
   commissionPct?: number;
+  defaultCurrency?: ChannelCurrency;
+  defaultNightlyRate?: number;
+  paymentCollectionMode?: OtaPaymentCollectionMode;
   actorRole: string;
 }) {
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', params.channel.id);
@@ -3593,6 +3732,13 @@ export async function updateOtaChannelIcal(params: {
       ...(params.commissionPct !== undefined
         ? { commissionPct: Math.max(0, Math.min(50, params.commissionPct)) }
         : {}),
+      ...(params.defaultCurrency !== undefined ? { defaultCurrency: params.defaultCurrency } : {}),
+      ...(params.defaultNightlyRate !== undefined
+        ? { defaultNightlyRate: Math.max(0, Number(params.defaultNightlyRate)) }
+        : {}),
+      ...(params.paymentCollectionMode !== undefined
+        ? { paymentCollectionMode: params.paymentCollectionMode }
+        : {}),
       icalImportUrl: cleanImportUrl,
       roomNumber: normalizedRoom,
       icalExportUrl,
@@ -3604,7 +3750,7 @@ export async function updateOtaChannelIcal(params: {
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Updated OTA & iCal Settings on ${params.channel.channelName}`,
-      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${cleanImportUrl || 'No inbound link'}`,
+      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${params.defaultCurrency || params.channel.defaultCurrency || 'NGN'} · ${cleanImportUrl || 'No inbound link'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -3795,29 +3941,68 @@ export async function backfillMissingSystemPropertyIdsWorkflow(
 export async function createNewPropertyWithRooms(params: {
   name: string;
   code: string;
+  subdomainSlug?: string;
   city: string;
   state: string;
   address: string;
+  adminName?: string;
   adminEmail: string;
+  adminPassword?: string;
+  initialPlan?: LicenseRecord['plan'];
   roomCount: number;
   baseRateNgn: number;
   actorRole: string;
-}) {
+}): Promise<{ propertyId: string; systemPropertyId: string; subdomainSlug: string; licenseKey?: string; authNote?: string }> {
   const { uid, email } = getActorContext();
   const propId = cleanId(params.code.toLowerCase());
   const systemPropertyId = await allocateNextSystemPropertyId();
+  const cleanAdminEmail = params.adminEmail.trim().toLowerCase();
+  const cleanAdminName = (params.adminName || '').trim() || cleanAdminEmail.split('@')[0] || 'Property Admin';
+  const rawSlug = params.subdomainSlug?.trim() || params.name;
+  const subdomainSlug =
+    normalizeSubdomainSlug(rawSlug) ||
+    normalizeSubdomainSlug(params.code) ||
+    `client-${systemPropertyId.slice(-4).toLowerCase()}`;
+
   const authorizedEmails = Array.from(
-    new Set([
-      ...BOOTSTRAPPED_ADMIN_EMAILS,
-      email.toLowerCase(),
-      params.adminEmail.trim().toLowerCase(),
-    ].filter(Boolean))
+    new Set(
+      [
+        ...BOOTSTRAPPED_ADMIN_EMAILS,
+        email.trim().toLowerCase(),
+        cleanAdminEmail,
+      ].filter(Boolean)
+    )
   ).slice(0, 25);
+
+  let authProvisioned = false;
+  let authNote: string | undefined;
+  if (params.adminPassword && params.adminPassword.trim().length > 0 && cleanAdminEmail) {
+    const targetAdminUrl = `https://${subdomainSlug}.pchpms.com/auth-action`;
+    const authRes = await provisionStaffAuthAccount(
+      cleanAdminEmail,
+      params.adminPassword,
+      cleanAdminName,
+      targetAdminUrl
+    );
+    authProvisioned = authRes.provisioned;
+    authNote = authRes.note;
+  }
+
+  const initialPlan: LicenseRecord['plan'] = params.initialPlan || 'Starter';
+  const isLifetime = initialPlan === 'Lifetime Sovereign';
+  const licenseKey = generateLicenseKey(params.code, initialPlan, isLifetime);
+  const licId = cleanId('lic');
+  const nowIso = new Date().toISOString().slice(0, 10);
+  const expiresAt = isLifetime
+    ? 'LIFETIME'
+    : new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
+
   const batch = writeBatch(db);
   const now = serverTimestamp();
 
   batch.set(doc(db, 'properties', propId), {
     systemPropertyId,
+    subdomainSlug,
     name: params.name,
     code: params.code.toUpperCase(),
     city: params.city,
@@ -3825,18 +4010,64 @@ export async function createNewPropertyWithRooms(params: {
     country: 'Nigeria',
     address: params.address,
     phone: '+234 800 000 0000',
-    email: params.adminEmail,
+    email: cleanAdminEmail,
     currency: 'NGN',
     roomCount: params.roomCount,
-    status: 'onboarding',
-    licenseKey: '',
-    licensePlan: 'Starter',
-    adminEmail: params.adminEmail,
+    status: 'active',
+    licenseKey,
+    licensePlan: initialPlan,
+    adminEmail: cleanAdminEmail,
     authorizedEmails,
     ownerUid: uid,
     createdAt: now,
     updatedAt: now,
   });
+
+  // Activate an initial license cleanly for the client
+  batch.set(doc(db, 'licenses', licId), {
+    licenseKey,
+    propertyId: propId,
+    propertyName: params.name,
+    plan: initialPlan,
+    billingCycle: isLifetime ? 'lifetime' : 'annual',
+    isLifetime,
+    maxRooms: Math.max(params.roomCount, 20),
+    priceNgn: initialPlan === 'Enterprise' ? 1200000 : initialPlan === 'Professional' ? 650000 : 350000,
+    status: 'active',
+    issuedAt: nowIso,
+    activatedAt: nowIso,
+    expiresAt,
+    activatedByEmail: email.toLowerCase(),
+    authorizedEmails,
+    ownerUid: uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // Provision initial Property Admin account inside the tenant workspace
+  if (cleanAdminEmail) {
+    const adminParts = cleanAdminName.split(/\s+/).filter(Boolean);
+    const firstName = adminParts[0] || 'Property';
+    const lastName = adminParts.slice(1).join(' ') || 'Admin';
+    const adminAccountId = buildUserAccountDocId(cleanAdminEmail);
+    batch.set(doc(db, 'properties', propId, 'user_accounts', adminAccountId), {
+      propertyId: propId,
+      firstName,
+      lastName,
+      fullName: cleanAdminName,
+      email: cleanAdminEmail,
+      department: 'Management',
+      role: 'property_admin',
+      privileges: [...ROLE_ALLOWED_SECTIONS.property_admin],
+      active: true,
+      authProvisioned,
+      lastRoleUpdatedIso: new Date().toISOString(),
+      authorizedEmails,
+      ownerUid: uid,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
 
   const count = Math.min(Math.max(params.roomCount, 1), 20);
   for (let i = 1; i <= count; i++) {
@@ -3883,13 +4114,66 @@ export async function createNewPropertyWithRooms(params: {
       propertyId: propId,
       actorRole: params.actorRole,
       module: 'Multi-Property Admin',
-      action: `Provisioned Property: ${params.name} (${systemPropertyId})`,
-      details: `${systemPropertyId} · ${params.city}, ${params.state} · ${count} rooms initialized`,
+      action: `Provisioned Client Property: ${params.name} (${systemPropertyId})`,
+      details: `${systemPropertyId} · https://${subdomainSlug}.pchpms.com · Admin: ${cleanAdminEmail} · ${count} rooms · License: ${licenseKey}`,
       authorizedEmails,
     });
-    return propId;
+    return {
+      propertyId: propId,
+      systemPropertyId,
+      subdomainSlug,
+      licenseKey,
+      authNote,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `properties/${propId}`);
+  }
+}
+
+export async function updatePropertyTenantConfigWorkflow(params: {
+  property: PropertyRecord;
+  name?: string;
+  subdomainSlug: string;
+  adminEmail: string;
+  status: PropertyRecord['status'];
+  actorRole: string;
+}) {
+  const { email } = getActorContext();
+  const cleanSubdomain =
+    normalizeSubdomainSlug(params.subdomainSlug) || getPropertySubdomainSlug(params.property);
+  const cleanAdminEmail = params.adminEmail.trim().toLowerCase();
+  const nextAuthorized = Array.from(
+    new Set(
+      [
+        ...BOOTSTRAPPED_ADMIN_EMAILS,
+        email.trim().toLowerCase(),
+        ...params.property.authorizedEmails.map((e) => e.trim().toLowerCase()),
+        cleanAdminEmail,
+      ].filter(Boolean)
+    )
+  ).slice(0, 25);
+
+  const propRef = doc(db, 'properties', params.property.id);
+  try {
+    await updateDoc(propRef, {
+      ...(params.name?.trim() ? { name: params.name.trim() } : {}),
+      subdomainSlug: cleanSubdomain,
+      adminEmail: cleanAdminEmail,
+      status: params.status,
+      authorizedEmails: nextAuthorized,
+      updatedAt: serverTimestamp(),
+    });
+    await syncPropertyAuthorizedEmailsAcrossCollections(params.property, nextAuthorized);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Multi-Property Admin',
+      action: `Updated Client Tenant Config: ${params.name?.trim() || params.property.name}`,
+      details: `Subdomain: ${cleanSubdomain}.pchpms.com · Status: ${params.status} · Admin: ${cleanAdminEmail}`,
+      authorizedEmails: nextAuthorized,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, propRef.path);
   }
 }
 
@@ -3911,6 +4195,13 @@ export async function generateCentralLicense(params: {
   const expiresAt = isLifetime
     ? 'LIFETIME'
     : new Date(Date.now() + params.durationDays * 86400000).toISOString().slice(0, 10);
+  const safeEmails = Array.from(
+    new Set([
+      ...BOOTSTRAPPED_ADMIN_EMAILS,
+      email.trim().toLowerCase(),
+      ...params.property.authorizedEmails.map((e) => e.trim().toLowerCase()),
+    ].filter(Boolean))
+  ).slice(0, 25);
 
   const batch = writeBatch(db);
   const now = serverTimestamp();
@@ -3928,8 +4219,8 @@ export async function generateCentralLicense(params: {
     issuedAt: nowIso,
     activatedAt: params.autoActivate ? nowIso : '',
     expiresAt,
-    activatedByEmail: params.autoActivate ? email : '',
-    authorizedEmails: params.property.authorizedEmails,
+    activatedByEmail: params.autoActivate ? email.toLowerCase() : '',
+    authorizedEmails: safeEmails,
     ownerUid: uid,
     createdAt: now,
     updatedAt: now,
@@ -3952,7 +4243,7 @@ export async function generateCentralLicense(params: {
       module: 'PureCrest Licensing',
       action: `Generated License ${licenseKey}`,
       details: `${params.plan} (${expiresAt}) for ${params.property.name}`,
-      authorizedEmails: params.property.authorizedEmails,
+      authorizedEmails: safeEmails,
     });
     return licenseKey;
   } catch (error) {
@@ -4145,7 +4436,7 @@ function sanitizeAuthorizedEmailList(
 ): string[] {
   const cleaned = Array.from(
     new Set(
-      emails
+      [...BOOTSTRAPPED_ADMIN_EMAILS, ...emails]
         .map((e) => e.trim().toLowerCase())
         .filter((e) => e && !DEMO_SEED_EMAILS_TO_STRIP.has(e))
     )
@@ -4172,6 +4463,21 @@ async function syncPropertyAuthorizedEmailsAcrossCollections(
     authorizedEmails: safeEmails,
     updatedAt: serverTimestamp(),
   });
+
+  // Also keep central license records for this property synced
+  try {
+    const licSnap = await getDocs(
+      query(collection(db, 'licenses'), where('propertyId', '==', propId))
+    );
+    for (const d of licSnap.docs) {
+      await updateDoc(d.ref, {
+        authorizedEmails: safeEmails,
+        updatedAt: serverTimestamp(),
+      }).catch(() => undefined);
+    }
+  } catch {
+    // non-fatal if non-super-admin does not hold global licenses permission
+  }
 
   const subNames = [
     'rooms',
@@ -4230,7 +4536,8 @@ async function syncPropertyAuthorizedEmailsAcrossCollections(
 async function provisionStaffAuthAccount(
   email: string,
   password: string,
-  fullName: string
+  fullName: string,
+  customActionUrl?: string
 ): Promise<{ provisioned: boolean; note?: string }> {
   const cleanEmail = email.trim().toLowerCase();
   const cleanPassword = password.trim();
@@ -4246,11 +4553,14 @@ async function provisionStaffAuthAccount(
     if (fullName.trim()) {
       await updateProfile(cred.user, { displayName: fullName.trim() }).catch(() => undefined);
     }
-    await sendEmailVerification(cred.user).catch(() => undefined);
+    const actionSettings = getPchActionCodeSettings(customActionUrl);
+    await sendEmailVerification(cred.user, actionSettings).catch(() =>
+      sendEmailVerification(cred.user).catch(() => undefined)
+    );
     await signOut(secAuth).catch(() => undefined);
     return {
       provisioned: true,
-      note: 'Email/Password login credentials created and verification link sent.',
+      note: 'Login credentials created and PCHPMS verification link sent.',
     };
   } catch (err) {
     const code = (err as { code?: string })?.code || '';
@@ -4262,6 +4572,24 @@ async function provisionStaffAuthAccount(
       };
     }
     await signOut(secAuth).catch(() => undefined);
+    throw err;
+  }
+}
+
+export async function sendBrandedPasswordResetWorkflow(
+  email: string,
+  targetActionUrl?: string
+): Promise<void> {
+  const cleanEmail = email.trim().toLowerCase();
+  const actionSettings = getPchActionCodeSettings(targetActionUrl);
+  try {
+    await sendPasswordResetEmail(auth, cleanEmail, actionSettings);
+  } catch (err) {
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'auth/unauthorized-continue-uri' || code === 'auth/invalid-continue-uri') {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      return;
+    }
     throw err;
   }
 }
@@ -4312,7 +4640,16 @@ export async function createPropertyUserAccountWorkflow(params: {
   let authProvisioned = false;
   let authNote: string | undefined;
   if (params.password && params.password.trim().length > 0) {
-    const authRes = await provisionStaffAuthAccount(cleanEmail, params.password, fullName);
+    const tenantOrigin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : `https://${getPropertySubdomainSlug(params.property)}.pchpms.com`;
+    const authRes = await provisionStaffAuthAccount(
+      cleanEmail,
+      params.password,
+      fullName,
+      `${tenantOrigin}/auth-action`
+    );
     authProvisioned = authRes.provisioned;
     authNote = authRes.note;
   }
@@ -4329,7 +4666,7 @@ export async function createPropertyUserAccountWorkflow(params: {
   let linkedStaffId = '';
   if (params.alsoCreateStaffRecord && !isUnassigned) {
     linkedStaffId = cleanId('stf');
-    const staffCode = `RG-${Math.floor(100 + Math.random() * 899)}`;
+    const staffCode = `${getPropertyCodePrefix(params.property)}-${Math.floor(100 + Math.random() * 899)}`;
     const staffRef = doc(db, 'properties', params.property.id, 'staff_members', linkedStaffId);
     try {
       await setDoc(staffRef, {

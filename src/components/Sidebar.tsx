@@ -198,9 +198,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       >
         {!isCollapsed && (
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-7 h-7 rounded-md bg-[#061539] text-white flex items-center justify-center shrink-0">
+            <div className="w-7 h-7 rounded-md bg-[#061539] text-white flex items-center justify-center shrink-0 overflow-hidden">
               {portalMode === 'pch-admin' ? (
                 <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
+              ) : activeProp?.logoUrl ? (
+                <img
+                  src={activeProp.logoUrl}
+                  alt={propertyName}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
               ) : (
                 <Building2 className="w-3.5 h-3.5 text-amber-300" />
               )}

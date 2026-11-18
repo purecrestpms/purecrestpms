@@ -79,6 +79,66 @@ async function startServer() {
   app.disable('x-powered-by');
   const httpServer = createHttpServer(app);
 
+  const isPublicMarketingHost = (hostname: string): boolean => {
+    const host = hostname.toLowerCase().split(':')[0];
+    return (
+      host === 'app.pchpms.com' ||
+      host === 'pchpms.com' ||
+      host === 'www.pchpms.com' ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.endsWith('.pages.dev') ||
+      host.endsWith('.run.app')
+    );
+  };
+
+  const isInternalPortalRequest = (req: express.Request): boolean => {
+    const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '');
+    const host = rawHost.toLowerCase().split(':')[0];
+    if (host.startsWith('admin.') || (host.endsWith('.pchpms.com') && !isPublicMarketingHost(host))) {
+      return true;
+    }
+    if (/^\/(admin|login|staff|pch-admin|auth-action)(\/|$)/i.test(req.path)) {
+      return true;
+    }
+    const portalParam = typeof req.query.portal === 'string' ? req.query.portal.toLowerCase() : '';
+    if (portalParam && portalParam !== 'home') {
+      return true;
+    }
+    if (typeof req.query.page === 'string' || typeof req.query.oobCode === 'string') {
+      return true;
+    }
+    return false;
+  };
+
+  app.use((req, res, next) => {
+    if (isInternalPortalRequest(req)) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+    }
+    next();
+  });
+
+  app.get('/robots.txt', (req, res) => {
+    const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '');
+    const host = rawHost.toLowerCase().split(':')[0];
+    const body = isPublicMarketingHost(host)
+      ? [
+          'User-agent: *',
+          'Allow: /',
+          'Disallow: /admin',
+          'Disallow: /login',
+          'Disallow: /staff',
+          'Disallow: /pch-admin',
+          'Disallow: /auth-action',
+          'Disallow: /*?*portal=',
+          'Disallow: /*?*page=',
+          '',
+        ].join('\n')
+      : ['User-agent: *', 'Disallow: /', ''].join('\n');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.status(200).send(body);
+  });
+
   // Server-side OTA iCal Proxy (bypasses browser CORS while blocking SSRF to private IPs)
   app.get('/api/ical-proxy', async (req, res) => {
     const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';

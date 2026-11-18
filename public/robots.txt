@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /login
+Disallow: /staff
+Disallow: /pch-admin
+Disallow: /auth-action
+Disallow: /*?*portal=
+Disallow: /*?*page=

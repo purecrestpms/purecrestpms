@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { ActionCodeSettings, getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   doc,
   enableNetwork,
@@ -54,6 +54,17 @@ export const BOOTSTRAPPED_ADMIN_EMAILS = [
 export function isBootstrappedAdminEmail(email?: string | null): boolean {
   if (!email) return false;
   return BOOTSTRAPPED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
+}
+
+export function getPchActionCodeSettings(targetUrl?: string): ActionCodeSettings {
+  const defaultOrigin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'https://app.pchpms.com';
+  return {
+    url: targetUrl || `${defaultOrigin}/auth-action`,
+    handleCodeInApp: true,
+  };
 }
 
 export enum OperationType {

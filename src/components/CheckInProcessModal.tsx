@@ -276,18 +276,16 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
               )}
             </div>
             <div>
-              <p className="text-slate-500">OTA payment received</p>
-              <p className="font-mono-tabular font-bold text-emerald-700">
-                {formatNgn(paySummary.otaPaidAmount)}
+              <p className="text-slate-500">Paid to OTA ({paySummary.sourceCurrency})</p>
+              <p className="font-mono-tabular font-bold text-blue-800">
+                {formatChannelCurrency(paySummary.otaPaidSourceAmount, paySummary.sourceCurrency)}{' '}
+                {paySummary.sourceCurrency}
               </p>
-              {paySummary.sourceCurrency !== 'NGN' &&
-                paySummary.otaPaidAmount > 0 &&
-                paySummary.otaPaidSourceAmount > 0 && (
-                  <p className="font-mono-tabular text-[10px] text-emerald-700">
-                    ({formatChannelCurrency(paySummary.otaPaidSourceAmount, paySummary.sourceCurrency)}{' '}
-                    {paySummary.sourceCurrency})
-                  </p>
-                )}
+              {paySummary.expectedPayoutNgn > 0 && (
+                <p className="font-mono-tabular text-[10px] text-slate-600">
+                  Exp. Payout: {formatNgn(paySummary.expectedPayoutNgn)}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-slate-500">Hotel payment received</p>

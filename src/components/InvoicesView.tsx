@@ -194,7 +194,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       payRows.push([
         `Guest Paid to OTA (${summary.sourceCurrency})`,
         summary.otaPaidSourceAmount > 0
-          ? `${formatChannelCurrency(summary.otaPaidSourceAmount, summary.sourceCurrency)} ${summary.sourceCurrency} (approx. NGN ${summary.otaPaidAmount.toLocaleString('en-NG')})`
+          ? `${formatChannelCurrency(summary.otaPaidSourceAmount, summary.sourceCurrency)} ${summary.sourceCurrency}`
           : `${summary.sourceCurrency} 0.00 (Unpaid on OTA)`,
       ]);
       payRows.push([
@@ -455,11 +455,9 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                       : `${formatChannelCurrency(0, summary.sourceCurrency)} ${summary.sourceCurrency}`}
                   </p>
                   <p className="text-[11px] font-mono-tabular text-blue-700 mt-0.5">
-                    {summary.otaPaidAmount > 0 && summary.sourceCurrency !== 'NGN'
-                      ? `≈ ${formatNgn(summary.otaPaidAmount)} @ ₦${summary.fxRateToNgn.toLocaleString('en-NG')}/${summary.sourceCurrency}`
-                      : summary.otaPaidAmount > 0
-                        ? 'Paid directly to OTA'
-                        : 'No prepayment recorded on OTA'}
+                    {summary.otaPaidSourceAmount > 0 || summary.otaPaidAmount > 0
+                      ? `Paid directly to OTA in ${summary.sourceCurrency}`
+                      : 'No prepayment recorded on OTA'}
                   </p>
                 </div>
 

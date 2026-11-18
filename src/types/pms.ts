@@ -235,6 +235,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
 export interface PropertyRecord {
   id: string;
   systemPropertyId?: string;
+  subdomainSlug?: string;
   name: string;
   code: string;
   city: string;
@@ -256,6 +257,13 @@ export interface PropertyRecord {
   adminEmail: string;
   authorizedEmails: string[];
   ownerUid: string;
+}
+
+export function getPropertyCodePrefix(
+  property?: Pick<PropertyRecord, 'code' | 'id'> | null
+): string {
+  const raw = (property?.code || 'PCH').split('-')[0].replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return raw.slice(0, 4) || 'PCH';
 }
 
 export const STARTING_PROPERTY_SEQ = 11;
@@ -1270,14 +1278,16 @@ const ROOT_DOMAIN_STORAGE_KEY = 'pch_connected_root_domain';
 
 export function isPlatformPreviewHost(hostname: string): boolean {
   const host = hostname.toLowerCase().trim();
+  const hostedPreviewSuffix = ['.web', 'app'].join('.');
+  const altPreviewSuffix = ['.firebase', 'app', '.com'].join('');
   return (
     !host ||
     host === 'localhost' ||
     host === '127.0.0.1' ||
     host.endsWith('.run.app') ||
     host.endsWith('.pages.dev') ||
-    host.endsWith('.web.app') ||
-    host.endsWith('.firebaseapp.com') ||
+    host.endsWith(hostedPreviewSuffix) ||
+    host.endsWith(altPreviewSuffix) ||
     /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
   );
 }
@@ -1328,12 +1338,28 @@ export function saveConnectedRootDomain(domain: string): string {
   return valid;
 }
 
+export function normalizeSubdomainSlug(rawSlug: string): string {
+  return rawSlug
+    .toLowerCase()
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .split('.')[0]
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
 export function getPropertySubdomainSlug(
-  property?: Pick<PropertyRecord, 'id' | 'code' | 'name'> | null
+  property?: Pick<PropertyRecord, 'id' | 'code' | 'name' | 'subdomainSlug'> | null
 ): string {
   if (!property) return 'richgates';
+  if (property.subdomainSlug && property.subdomainSlug.trim()) {
+    const clean = normalizeSubdomainSlug(property.subdomainSlug);
+    if (clean) return clean;
+  }
   if (
     property.id === 'prop_richgates_enugu' ||
+    property.id === 'richgates-enugu' ||
     property.code === 'RG-ENU-01' ||
     property.name.toLowerCase().includes('richgates')
   ) {
@@ -1355,8 +1381,50 @@ export function extractPropertySubdomainSlug(hostname: string): string | null {
   const apex = extractApexDomain(host);
   if (!apex || host === apex) return null;
   const sub = host.slice(0, -(apex.length + 1)).split('.')[0];
-  if (!sub || sub === 'www' || sub === 'app' || sub === 'admin' || sub === 'pch') return null;
+  if (!sub || sub === 'www' || sub === 'app' || sub === 'admin' || sub === 'pch' || sub === 'superadmin') {
+    return null;
+  }
   return sub;
+}
+
+export type HostPortalKind = 'public_marketing' | 'super_admin' | 'tenant_subdomain' | 'preview';
+
+export function getHostPortalContext(hostname?: string): {
+  kind: HostPortalKind;
+  tenantSlug: string | null;
+  apexDomain: string | null;
+} {
+  const rawHost =
+    hostname ?? (typeof window !== 'undefined' ? window.location.hostname : '');
+  const host = rawHost.toLowerCase().trim().replace(/:\d+$/, '');
+  if (!host || isPlatformPreviewHost(host)) {
+    return { kind: 'preview', tenantSlug: null, apexDomain: null };
+  }
+  const apex = extractApexDomain(host);
+  if (
+    host === `admin.${apex}` ||
+    host === `pch.${apex}` ||
+    host === `superadmin.${apex}` ||
+    host.startsWith('admin.') ||
+    host.startsWith('pch.') ||
+    host.startsWith('superadmin.')
+  ) {
+    return { kind: 'super_admin', tenantSlug: null, apexDomain: apex };
+  }
+  if (
+    host === apex ||
+    host === `www.${apex}` ||
+    host === `app.${apex}` ||
+    host.startsWith('app.') ||
+    host.startsWith('www.')
+  ) {
+    return { kind: 'public_marketing', tenantSlug: null, apexDomain: apex };
+  }
+  const tenantSlug = extractPropertySubdomainSlug(host);
+  if (tenantSlug) {
+    return { kind: 'tenant_subdomain', tenantSlug, apexDomain: apex };
+  }
+  return { kind: 'public_marketing', tenantSlug: null, apexDomain: apex };
 }
 
 export interface SubdomainLinkItem {
@@ -1370,21 +1438,21 @@ export interface SubdomainLinkItem {
 
 export function buildAllSubdomainLinks(
   rootDomain: string,
-  properties: Array<Pick<PropertyRecord, 'id' | 'code' | 'name'>>
+  properties: Array<Pick<PropertyRecord, 'id' | 'code' | 'name' | 'subdomainSlug'>>
 ): SubdomainLinkItem[] {
   const domain = rootDomain.toLowerCase().trim() || 'pchpms.com';
   const items: SubdomainLinkItem[] = [
     {
       id: 'sub-home',
-      label: 'Software Homepage & Pricing',
-      description: 'Public marketing site, USD pricing plans & contact desk',
+      label: 'Public PCHPMS Website',
+      description: 'Public marketing website, USD pricing plans & contact desk',
       url: `https://app.${domain}`,
       portal: 'home',
     },
     {
       id: 'sub-pch-admin',
       label: 'PCH Super Admin Console',
-      description: 'Multi-property management, licensing, CMS & inquiries',
+      description: 'Multi-client SaaS control plane, licensing, subdomains & provisioning',
       url: `https://admin.${domain}`,
       portal: 'pch-admin',
     },
@@ -1395,8 +1463,8 @@ export function buildAllSubdomainLinks(
     items.push(
       {
         id: `sub-prop-admin-${prop.id}`,
-        label: `${prop.name} · Admin Portal`,
-        description: 'Property manager dashboard, rooms, folios & reports',
+        label: `${prop.name} · Private Property Dashboard`,
+        description: 'Property admin dashboard, rooms, folios, staff & reports',
         url: `https://${slug}.${domain}`,
         portal: 'richgates-admin',
         propertyId: prop.id,
@@ -1417,11 +1485,11 @@ export function buildAllSubdomainLinks(
 
 export function getPortalUrl(
   portal: PortalMode | 'admin' | 'richgates',
-  property?: Pick<PropertyRecord, 'id' | 'code' | 'name'> | null
+  property?: Pick<PropertyRecord, 'id' | 'code' | 'name' | 'subdomainSlug'> | null
 ): string {
   if (typeof window === 'undefined') {
     if (portal === 'home') return '/home';
-    if (portal === 'staff') return '/login';
+    if (portal === 'staff') return '/staff';
     if (portal === 'pch-admin') return '/pch-admin';
     return '/admin';
   }
@@ -1438,14 +1506,7 @@ export function getPortalUrl(
       return `${proto}//admin.${apex}`;
     }
     if (portal === 'staff') {
-      const targetHost = extractPropertySubdomainSlug(host) ? `${slug}.${apex}` : apex;
-      return `${proto}//${targetHost}/login`;
-    }
-    if (portal === 'admin' || portal === 'richgates-admin' || portal === 'richgates') {
-      if (extractPropertySubdomainSlug(host)) {
-        return `${proto}//${slug}.${apex}/admin`;
-      }
-      return `${proto}//${apex}/admin`;
+      return `${proto}//${slug}.${apex}/staff`;
     }
     return `${proto}//${slug}.${apex}/admin`;
   }

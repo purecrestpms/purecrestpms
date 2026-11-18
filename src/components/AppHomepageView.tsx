@@ -20,14 +20,13 @@ import {
   formatUsd,
   LicenseRecord,
   PlanInquiryRecord,
-  PortalMode,
 } from '../types/pms';
 
 const PCH_LOGO_ICON = '/assets/aistudio/4A541DC4-8B5B-4592-9C9E-752D5AE470AD_3f72a29d.png';
 
 interface AppHomepageViewProps {
-  isSignedIn: boolean;
-  onSelectPortal: (portal: PortalMode) => void;
+  isSignedIn?: boolean;
+  onSelectPortal?: () => void;
   onReturnToWorkspace?: () => void;
 }
 
@@ -203,11 +202,7 @@ const PchBrandIcon: React.FC<{ sizeClass?: string }> = ({ sizeClass = 'w-9 h-9' 
   );
 };
 
-export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
-  isSignedIn,
-  onSelectPortal,
-  onReturnToWorkspace,
-}) => {
+export const AppHomepageView: React.FC<AppHomepageViewProps> = () => {
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -260,14 +255,6 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
     setPurchaseError(null);
     setPurchaseConfirmation(null);
     setBuyerRooms(String(Math.min(plan.maxRooms, 12)));
-  };
-
-  const handleOpenPlatformPortal = () => {
-    if (isSignedIn && onReturnToWorkspace) {
-      onReturnToWorkspace();
-    } else {
-      onSelectPortal('pch-admin');
-    }
   };
 
   const handlePurchaseSubmit = async (e: React.FormEvent) => {
@@ -447,10 +434,10 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
           <div className="flex items-center gap-3 shrink-0">
             <button
               type="button"
-              onClick={handleOpenPlatformPortal}
+              onClick={() => scrollToSection('contact')}
               className="px-4 py-2 text-xs font-bold text-[#061539] bg-[#F5B800] hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-sm"
             >
-              {isSignedIn ? 'Open Workspace' : 'Group Admin Sign In'}
+              Request Demo
             </button>
             <button
               type="button"
@@ -1117,10 +1104,18 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = ({
           <div className="flex flex-wrap items-center gap-5 text-xs font-medium text-blue-200">
             <button
               type="button"
-              onClick={() => onSelectPortal('pch-admin')}
+              onClick={() => scrollToSection('pricing')}
               className="hover:text-[#F5B800] hover:underline cursor-pointer"
             >
-              Group Admin Sign In
+              Pricing Plans
+            </button>
+            <span className="text-white/25">·</span>
+            <button
+              type="button"
+              onClick={() => scrollToSection('contact')}
+              className="hover:text-[#F5B800] hover:underline cursor-pointer"
+            >
+              Contact Sales
             </button>
             <span className="text-white/25">·</span>
             <span className="text-blue-200/75">

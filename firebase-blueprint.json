@@ -6,6 +6,7 @@
       "type": "object",
       "properties": {
         "systemPropertyId": { "type": "string", "minLength": 15, "maxLength": 32, "pattern": "^PCH-PROP-[0-9]{6,}$" },
+        "subdomainSlug": { "type": "string", "minLength": 2, "maxLength": 48, "pattern": "^[a-z0-9\\-]+$" },
         "name": { "type": "string", "minLength": 2, "maxLength": 120 },
         "code": { "type": "string", "minLength": 2, "maxLength": 24, "pattern": "^[A-Z0-9\\-]+$" },
         "city": { "type": "string", "minLength": 2, "maxLength": 80 },

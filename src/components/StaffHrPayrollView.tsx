@@ -57,6 +57,7 @@ import {
   DepartmentName,
   formatNgn,
   getPortalUrl,
+  getPropertyCodePrefix,
   HousekeepingTaskRecord,
   MaintenanceTicketRecord,
   NavSectionId,
@@ -549,7 +550,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     const combinedFullName = `${firstName.trim()} ${lastName.trim()}`.trim();
     if (!firstName.trim() || !lastName.trim()) return;
     setActionError(null);
-    const code = `RG-${String(staffMembers.length + 1).padStart(3, '0')}`;
+    const code = `${getPropertyCodePrefix(property)}-${String(staffMembers.length + 1).padStart(3, '0')}`;
     try {
       await createStaffMember({
         property,

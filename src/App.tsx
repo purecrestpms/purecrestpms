@@ -1,14 +1,16 @@
 import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from 'react';
 import {
+  applyActionCode,
+  confirmPasswordReset,
   getRedirectResult,
   onAuthStateChanged,
   sendEmailVerification,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut,
   User,
+  verifyPasswordResetCode,
 } from 'firebase/auth';
 import { collection, doc, enableNetwork, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import {
@@ -21,11 +23,13 @@ import {
   DoorOpen,
   ExternalLink,
   KeyRound,
+  Lock,
   LogOut,
   Mail,
   Megaphone,
   Menu,
   RefreshCw,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 import { AdminLicensingView } from './components/AdminLicensingView';
@@ -55,6 +59,7 @@ import { RICHGATES_PROPERTY_ID } from './data/seedData';
 import {
   auth,
   db,
+  getPchActionCodeSettings,
   googleProvider,
   isBootstrappedAdminEmail,
   isFirestoreOfflineError,
@@ -67,6 +72,7 @@ import {
   markMessageReadWorkflow,
   recordStaffSessionLogoutWorkflow,
   seedRichgatesIfNeeded,
+  sendBrandedPasswordResetWorkflow,
   syncDefaultMessagesIfNeeded,
   syncOtaChannelWorkflow,
   syncRichgatesLicenseCapIfNeeded,
@@ -81,6 +87,7 @@ import {
   BlockedDateRecord,
   extractApexDomain,
   extractPropertySubdomainSlug,
+  getHostPortalContext,
   getPortalUrl,
   getPropertySubdomainSlug,
   GuestRecord,
@@ -188,8 +195,41 @@ const VALID_SECTIONS: NavSectionId[] = [
   'training_help',
 ];
 
+const SUPER_ADMIN_ONLY_SECTIONS: NavSectionId[] = [
+  'properties_admin',
+  'licensing',
+  'rbac_audit',
+  'cms',
+  'deployment',
+];
+
 function detectInitialPortal(): PortalMode {
   if (typeof window === 'undefined') return 'richgates-admin';
+  const hostContext = getHostPortalContext(window.location.hostname);
+  const path = window.location.pathname.toLowerCase();
+
+  // Strict production domain separation
+  if (hostContext.kind === 'public_marketing') {
+    return 'home';
+  }
+  if (hostContext.kind === 'super_admin') {
+    return 'pch-admin';
+  }
+  if (hostContext.kind === 'tenant_subdomain') {
+    if (
+      path === '/login' ||
+      path.startsWith('/login/') ||
+      path === '/staff' ||
+      path.startsWith('/staff/') ||
+      path === '/employee' ||
+      path.startsWith('/employee/')
+    ) {
+      return 'staff';
+    }
+    return 'richgates-admin';
+  }
+
+  // Preview / localhost hosts allow explicit ?portal= or path selection
   const params = new URLSearchParams(window.location.search);
   const p = params.get('portal')?.toLowerCase();
   if (p === 'home' || p === 'marketing' || p === 'app') return 'home';
@@ -201,7 +241,6 @@ function detectInitialPortal(): PortalMode {
     return 'staff';
   }
 
-  const path = window.location.pathname.toLowerCase();
   if (path === '/home' || path.startsWith('/home/')) {
     return 'home';
   }
@@ -224,23 +263,6 @@ function detectInitialPortal(): PortalMode {
     return 'pch-admin';
   }
   if (path === '/admin' || path.startsWith('/admin/')) {
-    return 'richgates-admin';
-  }
-
-  const host = window.location.hostname.toLowerCase();
-  const apex = extractApexDomain(host);
-  if (host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.')) {
-    return 'pch-admin';
-  }
-  if (
-    host === 'app.pchpms.com' ||
-    host === 'www.pchpms.com' ||
-    host === 'pchpms.com' ||
-    (apex && (host === apex || host === `app.${apex}` || host === `www.${apex}`))
-  ) {
-    return 'home';
-  }
-  if (extractPropertySubdomainSlug(host)) {
     return 'richgates-admin';
   }
   return 'richgates-admin';
@@ -292,10 +314,15 @@ function formatAuthErrorMessage(err: unknown): string {
   if (code === 'auth/email-already-in-use') {
     return 'An account with this email address already exists.';
   }
-  return raw
-    .replace(/^Firebase:\s*/i, '')
-    .replace(/\s*\(auth\/[^)]+\)\.?$/i, '')
-    .trim() || 'Unable to sign in right now. Please try again.';
+  if (code === 'auth/expired-action-code' || code === 'auth/invalid-action-code') {
+    return 'This verification or password reset link has expired or already been used. Please request a fresh link.';
+  }
+  return (
+    raw
+      .replace(/^[A-Za-z]+:\s*/i, '')
+      .replace(/\s*\(auth\/[^)]+\)\.?$/i, '')
+      .trim() || 'Unable to complete authentication right now. Please try again.'
+  );
 }
 
 export default function App() {
@@ -340,6 +367,64 @@ export default function App() {
     if (!params.get('ical')) return null;
     return params.get('room') || 'ALL';
   });
+
+  const hostContext = getHostPortalContext();
+
+  // Branded in-app email verification & password reset action state (/auth-action)
+  const [authActionParams] = useState<{ mode: string; oobCode: string; continueUrl: string } | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode') || '';
+    const oobCode = params.get('oobCode') || '';
+    if ((window.location.pathname.toLowerCase().startsWith('/auth-action') || (mode && oobCode)) && mode && oobCode) {
+      return { mode, oobCode, continueUrl: params.get('continueUrl') || '' };
+    }
+    return null;
+  });
+  const [authActionState, setAuthActionState] = useState<'loading' | 'ready_reset' | 'success' | 'error'>('loading');
+  const [authActionMessage, setAuthActionMessage] = useState<string>('Processing security action...');
+  const [authActionEmail, setAuthActionEmail] = useState<string>('');
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [authActionSubmitting, setAuthActionSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!authActionParams) return;
+    let active = true;
+    const runAction = async () => {
+      try {
+        if (authActionParams.mode === 'verifyEmail' || authActionParams.mode === 'recoverEmail') {
+          await applyActionCode(auth, authActionParams.oobCode);
+          await auth.currentUser?.reload().catch(() => undefined);
+          if (!active) return;
+          setAuthActionState('success');
+          setAuthActionMessage(
+            authActionParams.mode === 'verifyEmail'
+              ? 'Your PCHPMS email address is now verified. You may sign in to your workspace.'
+              : 'Your email recovery has been completed.'
+          );
+        } else if (authActionParams.mode === 'resetPassword') {
+          const emailForReset = await verifyPasswordResetCode(auth, authActionParams.oobCode);
+          if (!active) return;
+          setAuthActionEmail(emailForReset);
+          setAuthActionState('ready_reset');
+          setAuthActionMessage('Choose a strong new password for your PCHPMS account.');
+        } else {
+          if (!active) return;
+          setAuthActionState('error');
+          setAuthActionMessage('Unsupported authentication link.');
+        }
+      } catch (err) {
+        if (!active) return;
+        setAuthActionState('error');
+        setAuthActionMessage(formatAuthErrorMessage(err));
+      }
+    };
+    void runAction();
+    return () => {
+      active = false;
+    };
+  }, [authActionParams]);
 
   // Firestore Live State
   const [userProfile, setUserProfile] = useState<UserRoleProfile | null>(null);
@@ -407,7 +492,7 @@ export default function App() {
     const qs = params.toString();
     let targetPath = '/';
     if (nextPortal === 'staff') {
-      targetPath = '/login';
+      targetPath = isPropSubdomain ? '/staff' : '/login';
     } else if (nextPortal === 'richgates-admin') {
       targetPath = isPropSubdomain ? '/' : '/admin';
     } else if (nextPortal === 'pch-admin') {
@@ -470,6 +555,9 @@ export default function App() {
       if (!u) {
         autoSeedAttemptedRef.current = null;
         setProperties([]);
+        setLicenses([]);
+        setAuditLogs([]);
+        setUserProfile(null);
         setUserAccounts([]);
         setStaffSessions([]);
       }
@@ -480,7 +568,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!authReady || !user || portalMode === 'home') return;
+    if (!authReady || !user || !user.emailVerified || portalMode === 'home') return;
     const connTimer = window.setTimeout(() => {
       void testConnection();
     }, 1500);
@@ -505,8 +593,18 @@ export default function App() {
 
   const isSignedInBootstrapped = Boolean(user && isBootstrappedAdminEmail(user.email));
   const signedInEmailLower = (user?.email || '').trim().toLowerCase();
+  const tenantMatchedProperty = hostContext.tenantSlug
+    ? properties.find(
+        (p) =>
+          getPropertySubdomainSlug(p) === hostContext.tenantSlug ||
+          p.code.toLowerCase().replace(/[^a-z0-9]/g, '') === hostContext.tenantSlug
+      ) || null
+    : null;
+
   const activePropertyForRole =
-    properties.find((p) => p.id === activePropertyId) || properties[0] || null;
+    hostContext.kind === 'tenant_subdomain'
+      ? tenantMatchedProperty
+      : properties.find((p) => p.id === activePropertyId) || properties[0] || null;
   const isExplicitPropertyOwnerOrAdmin =
     isSignedInBootstrapped ||
     Boolean(
@@ -520,9 +618,15 @@ export default function App() {
       ? userAccounts.find((a) => a.email.trim().toLowerCase() === signedInEmailLower)
       : undefined;
 
+  const isPchSuperAdminUser = Boolean(
+    user &&
+      user.emailVerified &&
+      (isSignedInBootstrapped || (userProfile?.role === 'pch_admin' && userProfile?.active))
+  );
+
   const effectiveRole: StaffRole =
     portalMode === 'pch-admin'
-      ? isSignedInBootstrapped
+      ? isPchSuperAdminUser
         ? 'pch_admin'
         : staffRole
       : matchedUserAccount && matchedUserAccount.role !== 'unassigned'
@@ -534,7 +638,7 @@ export default function App() {
           : staffRole;
 
   const baseAllowedSections: NavSectionId[] =
-    portalMode === 'pch-admin' && isSignedInBootstrapped
+    portalMode === 'pch-admin' && isPchSuperAdminUser
       ? ROLE_ALLOWED_SECTIONS.pch_admin
       : matchedUserAccount && matchedUserAccount.privileges.length > 0
         ? matchedUserAccount.privileges
@@ -543,7 +647,7 @@ export default function App() {
   const isPrivilegedAdmin =
     effectiveRole === 'pch_admin' || effectiveRole === 'property_admin';
 
-  const effectiveAllowedSections: NavSectionId[] = isPrivilegedAdmin
+  const rawAllowedSections: NavSectionId[] = isPrivilegedAdmin
     ? Array.from(
         new Set([...baseAllowedSections, 'user_management', 'staff_sessions', 'shift_daily_report'])
       )
@@ -557,6 +661,12 @@ export default function App() {
         ])
       );
 
+  // Isolate Super Admin SaaS controls strictly to PCH Super Admin console (`pch-admin` / `admin.pchpms.com`)
+  const effectiveAllowedSections: NavSectionId[] =
+    portalMode === 'pch-admin'
+      ? rawAllowedSections
+      : rawAllowedSections.filter((s) => !SUPER_ADMIN_ONLY_SECTIONS.includes(s));
+
   useEffect(() => {
     if (!effectiveAllowedSections.includes(activeSection)) {
       const fallback = effectiveAllowedSections[0] || 'dashboard';
@@ -565,9 +675,9 @@ export default function App() {
     }
   }, [effectiveAllowedSections, activeSection, portalMode]);
 
-  // Root Firestore subscriptions
+  // Root Firestore subscriptions (gated strictly on verified email & internal non-marketing portals)
   useEffect(() => {
-    if (!authReady || !user || !user.email) return;
+    if (!authReady || !user || !user.email || !user.emailVerified || portalMode === 'home') return;
     const userEmail = user.email.toLowerCase();
     const isAdmin = isBootstrappedAdminEmail(userEmail);
 
@@ -623,7 +733,7 @@ export default function App() {
                 getPropertySubdomainSlug(p) === propSlug ||
                 p.code.toLowerCase().replace(/[^a-z0-9]/g, '') === propSlug
             );
-            if (matched) return matched.id;
+            return matched ? matched.id : '';
           }
           return !list.some((p) => p.id === curr) ? list[0].id : curr;
         });
@@ -707,11 +817,11 @@ export default function App() {
       unsubCms();
       unsubPlanInquiries();
     };
-  }, [authReady, user]);
+  }, [authReady, user, portalMode]);
 
   // Property-scoped subcollection subscriptions
   useEffect(() => {
-    if (!authReady || !user || !user.email || !activePropertyId) return;
+    if (!authReady || !user || !user.email || !user.emailVerified || portalMode === 'home' || !activePropertyId) return;
     const userEmail = user.email.toLowerCase();
     const isAdmin = isBootstrappedAdminEmail(userEmail);
     setUserAccountsLoaded(false);
@@ -1043,10 +1153,13 @@ export default function App() {
       await cred.user.reload().catch(() => undefined);
       await cred.user.getIdToken(true).catch(() => undefined);
       if (!cred.user.emailVerified) {
-        await sendEmailVerification(cred.user).catch(() => undefined);
+        const actionSettings = getPchActionCodeSettings();
+        await sendEmailVerification(cred.user, actionSettings).catch(() =>
+          sendEmailVerification(cred.user).catch(() => undefined)
+        );
         await signOut(auth);
         setAuthNotice(
-          `Please verify your email address (${cred.user.email}). We sent a verification link to your inbox (and spam folder) — click it and sign in again, or use "Continue with Google".`
+          `Please verify your email address (${cred.user.email}). We sent a PCHPMS verification link to your inbox (and spam folder) — click it and sign in again, or use "Continue with Google".`
         );
       }
     } catch (err) {
@@ -1066,7 +1179,7 @@ export default function App() {
     }
     setIsSigningIn(true);
     try {
-      await sendPasswordResetEmail(auth, trimmedEmail);
+      await sendBrandedPasswordResetWorkflow(trimmedEmail);
       setAuthNotice(
         `Password reset email sent to ${trimmedEmail}. Check your inbox or spam folder to set a new password.`
       );
@@ -1087,18 +1200,148 @@ export default function App() {
     await signOut(auth);
   };
 
+  // Dynamic <title> and search-engine robots exclusion (`noindex` on all internal dashboards/logins)
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    if (portalMode === 'home') {
+    if (portalMode === 'home' && !authActionParams) {
       document.title = 'PCH PMS — Property Management Software';
     } else if (portalMode === 'pch-admin') {
       document.title = 'PCH Super Admin — PCH PMS';
     } else if (activePropertyForRole?.name) {
       document.title = `${activePropertyForRole.name} — PCH PMS`;
     } else {
-      document.title = 'PCH PMS — Property Management Software';
+      document.title = 'PCH PMS — Private Property Workspace';
     }
-  }, [portalMode, activePropertyForRole?.name]);
+
+    let robotsMeta = document.querySelector('meta[name="robots"]') as HTMLMetaElement | null;
+    if (!robotsMeta) {
+      robotsMeta = document.createElement('meta');
+      robotsMeta.name = 'robots';
+      document.head.appendChild(robotsMeta);
+    }
+    const isPublicIndexable =
+      portalMode === 'home' &&
+      !authActionParams &&
+      (hostContext.kind === 'public_marketing' || hostContext.kind === 'preview');
+    robotsMeta.content = isPublicIndexable
+      ? 'index, follow'
+      : 'noindex, nofollow, noarchive, nosnippet';
+  }, [portalMode, activePropertyForRole?.name, authActionParams, hostContext.kind]);
+
+  // Branded PCHPMS /auth-action view for email verification & password resets (no firebaseapp.com UI)
+  if (authActionParams) {
+    const handleCompletePasswordReset = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (newResetPassword.length < 6) {
+        setAuthActionMessage('Password must be at least 6 characters.');
+        return;
+      }
+      if (newResetPassword !== confirmResetPassword) {
+        setAuthActionMessage('Passwords do not match.');
+        return;
+      }
+      setAuthActionSubmitting(true);
+      try {
+        await confirmPasswordReset(auth, authActionParams.oobCode, newResetPassword);
+        setAuthActionState('success');
+        setAuthActionMessage('Your new password has been saved. You can now sign in to your PCHPMS portal.');
+      } catch (err) {
+        setAuthActionState('error');
+        setAuthActionMessage(formatAuthErrorMessage(err));
+      } finally {
+        setAuthActionSubmitting(false);
+      }
+    };
+
+    const returnHref =
+      typeof window !== 'undefined' ? `${window.location.origin}/` : '/';
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#020d26] via-[#08245e] to-[#03153a] flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-white/20 overflow-hidden">
+          <div className="h-1.5 bg-gradient-to-r from-[#062052] via-[#f5b800] to-[#062052]" />
+          <div className="p-7 space-y-5 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-[#062052]/5 border border-[#062052]/15 flex items-center justify-center mx-auto">
+              {authActionState === 'success' ? (
+                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              ) : authActionState === 'error' ? (
+                <AlertTriangle className="w-6 h-6 text-rose-600" />
+              ) : (
+                <Lock className="w-6 h-6 text-[#062052]" />
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-[#9A650B]">
+                PCH PMS Account Security
+              </p>
+              <h1 className="font-display text-xl font-bold text-[#062052]">
+                {authActionParams.mode === 'resetPassword'
+                  ? 'Reset Account Password'
+                  : 'Email Verification'}
+              </h1>
+              {authActionEmail && (
+                <p className="text-xs font-mono-tabular text-slate-600">{authActionEmail}</p>
+              )}
+            </div>
+
+            {authActionState === 'ready_reset' ? (
+              <form onSubmit={handleCompletePasswordReset} className="space-y-3 text-left">
+                <p className="text-xs text-slate-600 text-center">{authActionMessage}</p>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                    New Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={newResetPassword}
+                    onChange={(e) => setNewResetPassword(e.target.value)}
+                    placeholder="Minimum 6 characters"
+                    className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={confirmResetPassword}
+                    onChange={(e) => setConfirmResetPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={authActionSubmitting}
+                  className="w-full py-2.5 bg-[#062052] hover:bg-[#082c70] text-white text-sm font-semibold rounded-xl cursor-pointer disabled:opacity-60"
+                >
+                  {authActionSubmitting ? 'Saving...' : 'Save New Password'}
+                </button>
+              </form>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-xs text-slate-600 leading-relaxed">{authActionMessage}</p>
+                {authActionState !== 'loading' && (
+                  <a
+                    href={returnHref}
+                    className="inline-flex items-center justify-center w-full py-2.5 px-4 bg-[#062052] hover:bg-[#082c70] text-white text-xs font-semibold rounded-xl"
+                  >
+                    Continue to PCH PMS Sign In
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!authReady) {
     return (
@@ -1108,32 +1351,24 @@ export default function App() {
     );
   }
 
+  // Strictly isolated public marketing website (`app.pchpms.com` / `pchpms.com`)
   if (portalMode === 'home') {
-    return (
-      <AppHomepageView
-        isSignedIn={Boolean(user)}
-        onSelectPortal={(nextPortal) => {
-          setAuthError(null);
-          setAuthNotice(null);
-          handlePortalSelection(nextPortal);
-        }}
-        onReturnToWorkspace={() =>
-          handlePortalSelection(
-            isSignedInBootstrapped
-              ? 'pch-admin'
-              : effectiveRole === 'property_admin'
-                ? 'richgates-admin'
-                : 'staff'
-          )
-        }
-      />
-    );
+    return <AppHomepageView />;
   }
+
+  const loginTenantSlug =
+    hostContext.tenantSlug ||
+    (typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('tenant')
+      : null);
 
   if (!user) {
     return (
       <PortalGateway
         selectedPortal={portalMode}
+        tenantSlug={loginTenantSlug}
+        tenantPropertyName={activePropertyForRole?.name}
+        tenantLogoUrl={activePropertyForRole?.logoUrl}
         onGoogleSignIn={handleGoogleSignIn}
         onEmailPasswordSignIn={handleEmailPasswordSignIn}
         onPasswordReset={handlePasswordReset}
@@ -1144,9 +1379,54 @@ export default function App() {
     );
   }
 
+  if (!user.emailVerified) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4 text-center shadow-sm">
+          <div className="w-12 h-12 rounded-xl bg-blue-50 border border-blue-200 text-[#0B245B] flex items-center justify-center mx-auto">
+            <Mail className="w-6 h-6" />
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="font-display text-lg font-bold text-[#0B245B]">
+              Verify Your Email Address
+            </h1>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Your account (<span className="font-mono-tabular font-semibold">{user.email}</span>) must be
+              verified before accessing any PCH PMS workspace. Check your inbox for the verification link.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                await sendEmailVerification(user, getPchActionCodeSettings()).catch(() =>
+                  sendEmailVerification(user).catch(() => undefined)
+                );
+                notify(`Verification email resent to ${user.email}`);
+              }}
+              className="w-full py-2.5 bg-[#0B245B] hover:bg-[#082c70] text-white text-xs font-semibold rounded-lg cursor-pointer"
+            >
+              Resend Verification Email
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="w-full inline-flex items-center justify-center gap-2 py-2.5 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isBootstrappedAdmin = isBootstrappedAdminEmail(user.email);
   const activeProperty =
-    properties.find((p) => p.id === activePropertyId) || properties[0] || null;
+    hostContext.kind === 'tenant_subdomain'
+      ? tenantMatchedProperty
+      : properties.find((p) => p.id === activePropertyId) || properties[0] || null;
   const activeLicense = licenses.find(
     (l) => l.propertyId === activeProperty?.id && l.status === 'active'
   );
@@ -1156,29 +1436,62 @@ export default function App() {
         !matchedUserAccount.active ||
         matchedUserAccount.privileges.length === 0)
   );
+  const isUnauthorizedSuperAdmin =
+    portalMode === 'pch-admin' && !isPchSuperAdminUser;
+  const isWrongTenantSubdomain = Boolean(
+    hostContext.kind === 'tenant_subdomain' && propsLoaded && !tenantMatchedProperty
+  );
   const isUnassignedExternalUser =
-    !seeding && propsLoaded && properties.length === 0 && !isBootstrappedAdmin;
+    !seeding && propsLoaded && properties.length === 0 && !isPchSuperAdminUser;
 
-  if (isAccountAccessRevoked || isUnassignedExternalUser) {
+  if (
+    isUnauthorizedSuperAdmin ||
+    isWrongTenantSubdomain ||
+    isAccountAccessRevoked ||
+    isUnassignedExternalUser
+  ) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4 text-center shadow-sm">
           <div className="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center mx-auto">
-            <AlertTriangle className="w-6 h-6" />
+            {isUnauthorizedSuperAdmin ? (
+              <ShieldCheck className="w-6 h-6" />
+            ) : (
+              <AlertTriangle className="w-6 h-6" />
+            )}
           </div>
           <div className="space-y-1.5">
             <h1 className="font-display text-lg font-bold text-[#0B245B]">
-              {isAccountAccessRevoked
-                ? 'Role Unassigned / Access Paused'
-                : 'Property Access Pending Assignment'}
+              {isUnauthorizedSuperAdmin
+                ? 'PCH Super Admin Access Only'
+                : isWrongTenantSubdomain
+                  ? 'Client Portal Access Restricted'
+                  : isAccountAccessRevoked
+                    ? 'Role Unassigned / Access Paused'
+                    : 'Property Access Pending Assignment'}
             </h1>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Your account (<span className="font-mono-tabular font-semibold">{user.email}</span>) does
-              not currently have an active role or module privileges assigned for{' '}
-              <span className="font-semibold text-slate-900">
-                {activeProperty?.name || 'your assigned property'}
-              </span>
-              . Ask your Property Administrator to invite or authorize this email under User Management.
+              {isUnauthorizedSuperAdmin ? (
+                <>
+                  Account <span className="font-mono-tabular font-semibold">{user.email}</span> does
+                  not hold Super Admin clearance for <span className="font-semibold">admin.pchpms.com</span>.
+                  Please sign in on your dedicated property subdomain.
+                </>
+              ) : isWrongTenantSubdomain ? (
+                <>
+                  Account <span className="font-mono-tabular font-semibold">{user.email}</span> is
+                  not authorized for <span className="font-mono-tabular font-semibold">{hostContext.tenantSlug}.pchpms.com</span>.
+                </>
+              ) : (
+                <>
+                  Your account (<span className="font-mono-tabular font-semibold">{user.email}</span>) does
+                  not currently have an active role or module privileges assigned for{' '}
+                  <span className="font-semibold text-slate-900">
+                    {activeProperty?.name || 'your assigned property'}
+                  </span>
+                  . Ask your Property Administrator to invite or authorize this email under User Management.
+                </>
+              )}
             </p>
           </div>
           <button
@@ -1751,8 +2064,8 @@ export default function App() {
                   onOpenSessionMonitor={() => handleSelectSection('staff_sessions')}
                   onOpenShiftDailyReport={() => handleSelectSection('shift_daily_report')}
                   onSendPasswordSetupEmail={async (targetEmail) => {
-                    await sendPasswordResetEmail(auth, targetEmail);
-                    notify(`Password setup email sent to ${targetEmail}`);
+                    await sendBrandedPasswordResetWorkflow(targetEmail);
+                    notify(`Password setup link sent to ${targetEmail}`);
                   }}
                   onNotify={notify}
                 />
@@ -1777,8 +2090,8 @@ export default function App() {
                   onNotify={notify}
                   onNavigateSection={handleSelectSection}
                   onSendPasswordSetupEmail={async (targetEmail) => {
-                    await sendPasswordResetEmail(auth, targetEmail);
-                    notify(`Password setup email sent to ${targetEmail}`);
+                    await sendBrandedPasswordResetWorkflow(targetEmail);
+                    notify(`Password setup link sent to ${targetEmail}`);
                   }}
                 />
               )}

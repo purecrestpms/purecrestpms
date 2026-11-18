@@ -18,6 +18,9 @@ import { PortalMode, RICHGATES_EXTERIOR_IMAGE } from '../types/pms';
 
 interface PortalGatewayProps {
   selectedPortal: PortalMode;
+  tenantSlug?: string | null;
+  tenantPropertyName?: string;
+  tenantLogoUrl?: string;
   onGoogleSignIn: (portal: PortalMode) => Promise<void>;
   onEmailPasswordSignIn: (portal: PortalMode, email: string, password: string) => Promise<void>;
   onPasswordReset: (email: string) => Promise<void>;
@@ -29,8 +32,20 @@ interface PortalGatewayProps {
 const RICHGATES_CREST_IMAGE = '/assets/richgates-crest-transparent.png';
 const PCH_ATTACHED_ICON = '/assets/pch-icon-transparent.png';
 
+function formatTenantSlugLabel(slug?: string | null): string {
+  if (!slug) return 'Property Workspace';
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 export const PortalGateway: React.FC<PortalGatewayProps> = ({
   selectedPortal,
+  tenantSlug,
+  tenantPropertyName,
+  tenantLogoUrl,
   onGoogleSignIn,
   onEmailPasswordSignIn,
   onPasswordReset,
@@ -45,9 +60,18 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
   const [bgImgError, setBgImgError] = useState(false);
   const [crestError, setCrestError] = useState(false);
   const [pchIconError, setPchIconError] = useState(false);
+  const [tenantLogoError, setTenantLogoError] = useState(false);
 
   const isStaffPage = selectedPortal === 'staff';
   const isPchPage = selectedPortal === 'pch-admin';
+  const normalizedSlug = (tenantSlug || '').trim().toLowerCase();
+  const isRichgatesTenant =
+    !isPchPage &&
+    (normalizedSlug === 'richgates' ||
+      (!normalizedSlug && !tenantPropertyName));
+  const resolvedPropertyDisplay =
+    tenantPropertyName?.trim() ||
+    (isRichgatesTenant ? 'Richgates Apartments' : formatTenantSlugLabel(normalizedSlug));
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,8 +96,8 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden bg-[#03153a] flex flex-col justify-between">
-      {/* Architectural Exterior Photo Backdrop */}
-      {!bgImgError ? (
+      {/* Architectural Exterior Photo Backdrop (Richgates only; clean deep architectural navy for other clients / super admin) */}
+      {isRichgatesTenant && !bgImgError ? (
         <img
           src={RICHGATES_EXTERIOR_IMAGE}
           alt="Richgates Apartments exterior"
@@ -133,7 +157,7 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
                 Multi-Property Platform
               </p>
             </div>
-          ) : (
+          ) : isRichgatesTenant ? (
             <div className="flex flex-col items-center">
               {!crestError ? (
                 <img
@@ -158,6 +182,32 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
                 <span className="h-[1.5px] w-10 sm:w-14 bg-[#f5b800] rounded-full" />
                 <span className="text-xs sm:text-sm italic font-medium text-white/95 tracking-wide">
                   Property Management System
+                </span>
+                <span className="h-[1.5px] w-10 sm:w-14 bg-[#f5b800] rounded-full" />
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center">
+              {tenantLogoUrl && !tenantLogoError ? (
+                <img
+                  src={tenantLogoUrl}
+                  alt={`${resolvedPropertyDisplay} Logo`}
+                  referrerPolicy="no-referrer"
+                  onError={() => setTenantLogoError(true)}
+                  className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-2xl bg-white/95 p-2 shadow-2xl mb-3"
+                />
+              ) : (
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center drop-shadow-2xl mb-3">
+                  <Building2 className="w-9 h-9 text-[#f5b800]" />
+                </div>
+              )}
+              <h1 className="font-display text-2xl sm:text-4xl font-extrabold tracking-[0.06em] text-white uppercase drop-shadow-md leading-tight">
+                {resolvedPropertyDisplay}
+              </h1>
+              <div className="flex items-center justify-center gap-3 mt-2.5">
+                <span className="h-[1.5px] w-10 sm:w-14 bg-[#f5b800] rounded-full" />
+                <span className="text-xs sm:text-sm italic font-medium text-white/95 tracking-wide">
+                  Private Property Workspace
                 </span>
                 <span className="h-[1.5px] w-10 sm:w-14 bg-[#f5b800] rounded-full" />
               </div>
@@ -308,7 +358,7 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
       {/* Bottom Legal & Platform Credit Bar */}
       <footer className="relative z-20 pb-5 pt-2 px-4 text-center">
         <p className="text-[11px] sm:text-xs text-white/90 tracking-wide">
-          © {new Date().getFullYear()} {isPchPage ? 'PCH PMS' : 'Richgates Apartments'}. All rights
+          © {new Date().getFullYear()} {isPchPage ? 'PCH PMS' : resolvedPropertyDisplay}. All rights
           reserved. <span className="text-[#f5b800] px-1.5">|</span> Powered by{' '}
           <strong className="font-semibold text-white">PCH PMS</strong>
         </p>

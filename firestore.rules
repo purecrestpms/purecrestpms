@@ -70,11 +70,30 @@ service cloud.firestore {
     }
 
     function isPropertyOperator(propertyId) {
-      return isBootstrappedAdmin() || (
+      return isPchSuperAdmin() || (
         isVerifiedUser() &&
         exists(/databases/$(database)/documents/properties/$(propertyId)) && (
           get(/databases/$(database)/documents/properties/$(propertyId)).data.ownerUid == request.auth.uid ||
           isAuthorizedEmail(get(/databases/$(database)/documents/properties/$(propertyId)).data.authorizedEmails)
+        )
+      );
+    }
+
+    function isPropertyAdmin(propertyId) {
+      return isPchSuperAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/properties/$(propertyId)) && (
+          get(/databases/$(database)/documents/properties/$(propertyId)).data.ownerUid == request.auth.uid ||
+          (
+            request.auth.token.email is string &&
+            get(/databases/$(database)/documents/properties/$(propertyId)).data.adminEmail.lower() == request.auth.token.email.lower()
+          ) ||
+          (
+            exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'property_admin' &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.propertyId == propertyId
+          )
         )
       );
     }
@@ -85,12 +104,13 @@ service cloud.firestore {
         'roomCount', 'status', 'adminEmail', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'systemPropertyId', 'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
+        'systemPropertyId', 'subdomainSlug', 'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
         'currency', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource',
         'roomCount', 'status', 'licenseKey', 'licensePlan', 'adminEmail',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       (!('systemPropertyId' in data) || (data.systemPropertyId is string && data.systemPropertyId.size() >= 15 && data.systemPropertyId.size() <= 32 && data.systemPropertyId.matches('^PCH-PROP-[0-9]{6,}$'))) &&
+      (!('subdomainSlug' in data) || (data.subdomainSlug is string && data.subdomainSlug.size() >= 2 && data.subdomainSlug.size() <= 48 && data.subdomainSlug.matches('^[a-z0-9\\-]+$'))) &&
       data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
       data.code is string && data.code.size() >= 2 && data.code.size() <= 24 && data.code.matches('^[A-Z0-9\\-]+$') &&
       data.city is string && data.city.size() >= 2 && data.city.size() <= 80 &&
@@ -707,36 +727,36 @@ service cloud.firestore {
 
     // Root collection: Properties
     match /properties/{propertyId} {
-      allow get: if isValidId(propertyId) && (isBootstrappedAdmin() || (resource != null && isMemberResource(existing())));
+      allow get: if isValidId(propertyId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
       allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
-      allow create: if isValidId(propertyId) && isVerifiedUser() && isValidProperty(incoming()) &&
+      allow create: if isValidId(propertyId) && isPchSuperAdmin() && isValidProperty(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(propertyId) && isValidProperty(incoming()) &&
         incoming().ownerUid == existing().ownerUid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         (!('systemPropertyId' in existing()) || existing().systemPropertyId == '' || incoming().systemPropertyId == existing().systemPropertyId) && (
-          isBootstrappedAdmin() || (
-            isMemberResource(existing()) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'roomCount', 'status', 'licenseKey', 'licensePlan', 'authorizedEmails', 'updatedAt'])
+          isPchSuperAdmin() || (
+            isPropertyAdmin(propertyId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'roomCount', 'authorizedEmails', 'updatedAt'])
           )
         );
-      allow delete: if isValidId(propertyId) && isBootstrappedAdmin();
+      allow delete: if isValidId(propertyId) && isPchSuperAdmin();
 
       // Subcollection: Rooms
       match /rooms/{roomId} {
         allow get: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
-        allow create: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(roomId) && isPropertyAdmin(propertyId) &&
           isValidRoom(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
         allow update: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId) &&
           isValidRoom(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
-            isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['roomNumber', 'name', 'roomType', 'section', 'maxGuests', 'occupancyStatus', 'housekeepingStatus', 'currentGuestName', 'currentReservationId', 'nightlyRateNgn', 'imageUrl', 'amenities', 'authorizedEmails', 'updatedAt'])
+            isPropertyAdmin(propertyId) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['occupancyStatus', 'housekeepingStatus', 'currentGuestName', 'currentReservationId', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(roomId) && isPropertyAdmin(propertyId);
       }
 
       // Subcollection: Guests
@@ -871,36 +891,36 @@ service cloud.firestore {
         allow delete: if isValidId(propertyId) && isValidId(poId) && isPropertyOperator(propertyId);
       }
 
-      // Subcollection: Staff Members
+      // Subcollection: Staff Members (Property Admin & Super Admin control)
       match /staff_members/{staffId} {
         allow get: if isValidId(propertyId) && isValidId(staffId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
-        allow create: if isValidId(propertyId) && isValidId(staffId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(staffId) && isPropertyAdmin(propertyId) &&
           isValidStaffMember(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(staffId) && isPropertyOperator(propertyId) &&
+        allow update: if isValidId(propertyId) && isValidId(staffId) && isPropertyAdmin(propertyId) &&
           isValidStaffMember(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
-            isBootstrappedAdmin() ||
+            isPchSuperAdmin() ||
             incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'employmentStatus', 'monthlyBaseSalaryNgn', 'monthlyAllowanceNgn', 'department', 'role', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(staffId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(staffId) && isPropertyAdmin(propertyId);
       }
 
-      // Subcollection: Property User Accounts, Roles & Privileges
+      // Subcollection: Property User Accounts, Roles & Privileges (Property Admin & Super Admin control)
       match /user_accounts/{accountId} {
         allow get: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
-        allow create: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(accountId) && isPropertyAdmin(propertyId) &&
           isValidPropertyUserAccount(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId) &&
+        allow update: if isValidId(propertyId) && isValidId(accountId) && isPropertyAdmin(propertyId) &&
           isValidPropertyUserAccount(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
-            isBootstrappedAdmin() ||
+            isPchSuperAdmin() ||
             incoming().diff(existing()).affectedKeys().hasOnly(['firstName', 'lastName', 'fullName', 'phone', 'department', 'role', 'privileges', 'active', 'linkedStaffId', 'authProvisioned', 'lastRoleUpdatedIso', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(accountId) && isPropertyAdmin(propertyId);
       }
 
       // Subcollection: Employee Login & Logout Session Monitor
@@ -956,18 +976,18 @@ service cloud.firestore {
       match /payroll_runs/{runId} {
         allow get: if isValidId(propertyId) && isValidId(runId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
-        allow create: if isValidId(propertyId) && isValidId(runId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(runId) && isPropertyAdmin(propertyId) &&
           isValidPayrollRun(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(runId) && isPropertyOperator(propertyId) &&
+        allow update: if isValidId(propertyId) && isValidId(runId) && isPropertyAdmin(propertyId) &&
           isValidPayrollRun(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
-            isBootstrappedAdmin() || (
+            isPchSuperAdmin() || (
               existing().status != 'posted_to_ledger' &&
               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'authorizedEmails', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(runId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(runId) && isPropertyAdmin(propertyId);
       }
 
       // Subcollection: Maintenance Tickets
@@ -990,16 +1010,16 @@ service cloud.firestore {
       match /ota_channels/{channelId} {
         allow get: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
-        allow create: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(channelId) && isPropertyAdmin(propertyId) &&
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId) &&
+        allow update: if isValidId(propertyId) && isValidId(channelId) && isPropertyAdmin(propertyId) &&
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
-            isBootstrappedAdmin() ||
+            isPchSuperAdmin() ||
             incoming().diff(existing()).affectedKeys().hasOnly(['propertyListingId', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'paymentCollectionMode', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyAdmin(propertyId);
       }
 
       // Subcollection: Blocked Dates (Calendar)
@@ -1035,49 +1055,53 @@ service cloud.firestore {
       }
     }
 
-    // Root collection: Centralized PureCrest Licenses
+    // Root collection: Centralized PureCrest Licenses (PCHPMS Super Admin controlled)
     match /licenses/{licenseId} {
-      allow get: if isValidId(licenseId) && (isBootstrappedAdmin() || (resource != null && isMemberResource(existing())));
+      allow get: if isValidId(licenseId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
       allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
-      allow create: if isValidId(licenseId) && isVerifiedUser() && isValidLicense(incoming()) &&
+      allow create: if isValidId(licenseId) && isPchSuperAdmin() && isValidLicense(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(licenseId) && isValidLicense(incoming()) &&
         incoming().ownerUid == existing().ownerUid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time && (
-          isBootstrappedAdmin() || (
-            isMemberResource(existing()) &&
-            existing().status == 'pending' &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'activatedAt', 'activatedByEmail', 'updatedAt']) &&
-            incoming().status == 'active'
+          isPchSuperAdmin() || (
+            isPropertyAdmin(existing().propertyId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['authorizedEmails', 'updatedAt'])
           )
         );
-      allow delete: if isValidId(licenseId) && isBootstrappedAdmin();
+      allow delete: if isValidId(licenseId) && isPchSuperAdmin();
     }
 
     // Root collection: User RBAC Profiles (strictly isolated PII)
     match /users/{userId} {
-      allow get: if isValidId(userId) && (isBootstrappedAdmin() || (isVerifiedUser() && request.auth.uid == userId));
+      allow get: if isValidId(userId) && (isPchSuperAdmin() || (isVerifiedUser() && request.auth.uid == userId));
       allow list: if isBootstrappedAdmin() || (isVerifiedUser() && resource.data.ownerUid == request.auth.uid);
       allow create: if isValidId(userId) && isVerifiedUser() && isValidUserProfile(incoming()) &&
         incoming().ownerUid == request.auth.uid &&
         incoming().createdAt == request.time && incoming().updatedAt == request.time && (
-          isBootstrappedAdmin() || (incoming().uid == request.auth.uid && incoming().role == 'front_desk' && incoming().active == true)
+          isPchSuperAdmin() || (
+            incoming().role != 'pch_admin' &&
+            isPropertyAdmin(incoming().propertyId)
+          )
         );
       allow update: if isValidId(userId) && isVerifiedUser() && isValidUserProfile(incoming()) &&
         incoming().uid == existing().uid && incoming().ownerUid == existing().ownerUid &&
         incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
-          isBootstrappedAdmin() || (
+          isPchSuperAdmin() || (
             request.auth.uid == userId &&
             incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'whatsapp', 'jobTitle', 'notes', 'updatedAt'])
+          ) || (
+            incoming().role != 'pch_admin' &&
+            isPropertyAdmin(existing().propertyId)
           )
         );
-      allow delete: if isValidId(userId) && isBootstrappedAdmin();
+      allow delete: if isValidId(userId) && isPchSuperAdmin();
     }
 
     // Root collection: Append-Only Audit Logs
     match /audit_logs/{logId} {
-      allow get: if isValidId(logId) && (isBootstrappedAdmin() || (resource != null && isMemberResource(existing())));
+      allow get: if isValidId(logId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
       allow list: if isBootstrappedAdmin() || isMemberResource(resource.data);
       allow create: if isValidId(logId) && isVerifiedUser() && isValidAuditLog(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time;

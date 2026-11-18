@@ -1,4 +1,4 @@
-import { BookingSourceOption } from '../types/pms';
+import { BookingSourceOption, ChannelCurrency } from '../types/pms';
 
 export interface ParsedIcalEvent {
   uid: string;
@@ -14,6 +14,10 @@ export interface ParsedIcalEvent {
   children?: number;
   otaBookingRef?: string;
   listingIdHint?: string;
+  paidAmount?: number;
+  paidCurrency?: ChannelCurrency;
+  sourceNightlyRate?: number;
+  sourceTotalAmount?: number;
   summary: string;
   description: string;
   location: string;
@@ -150,6 +154,168 @@ function extractListingIdHint(text: string, xListingId: string): string | undefi
   if (xListingId.trim().length >= 2) return xListingId.trim().slice(0, 120);
   const m = text.match(/(?:Listing\s*ID|Property\s*Listing\s*ID|Property\s*ID|Hotel\s*ID)\s*[:=-]\s*([A-Za-z0-9_-]{3,80})/i);
   return m ? m[1].trim().slice(0, 120) : undefined;
+}
+
+function normalizeCurrencyToken(raw?: string): ChannelCurrency | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw.trim().toUpperCase();
+  if (cleaned === 'USD' || cleaned === 'US$' || cleaned === '$') return 'USD';
+  if (cleaned === 'GBP' || cleaned === '£') return 'GBP';
+  if (cleaned === 'EUR' || cleaned === '€') return 'EUR';
+  if (cleaned === 'NGN' || cleaned === '₦') return 'NGN';
+  return undefined;
+}
+
+function parseMoneyAndCurrencyFromSnippet(
+  rawSnippet: string,
+  fallbackCurrency?: ChannelCurrency
+): { amount?: number; currency?: ChannelCurrency } {
+  const snippet = rawSnippet.trim();
+  if (!snippet) return {};
+
+  // Patterns like "200 USD", "200.00 USD", "$200 USD", "₦190,000", "GBP 180.50", "EUR150"
+  const afterCode = snippet.match(/([$£€₦]|US\$)?\s*([\d,]+(?:\.\d{1,2})?)\s*(USD|GBP|EUR|NGN)\b/i);
+  if (afterCode) {
+    const amount = Number(afterCode[2].replace(/,/g, ''));
+    const cur = normalizeCurrencyToken(afterCode[3]) || normalizeCurrencyToken(afterCode[1]) || fallbackCurrency;
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: cur };
+  }
+
+  const beforeCode = snippet.match(/\b(USD|GBP|EUR|NGN)\s*[:=-]?\s*([$£€₦])?\s*([\d,]+(?:\.\d{1,2})?)/i);
+  if (beforeCode) {
+    const amount = Number(beforeCode[3].replace(/,/g, ''));
+    const cur = normalizeCurrencyToken(beforeCode[1]) || normalizeCurrencyToken(beforeCode[2]) || fallbackCurrency;
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: cur };
+  }
+
+  const symbolFirst = snippet.match(/(US\$|[$£€₦])\s*([\d,]+(?:\.\d{1,2})?)/i);
+  if (symbolFirst) {
+    const amount = Number(symbolFirst[2].replace(/,/g, ''));
+    const cur = normalizeCurrencyToken(symbolFirst[1]) || fallbackCurrency;
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: cur };
+  }
+
+  const bareNumber = snippet.match(/\b([\d,]+(?:\.\d{1,2})?)\b/);
+  if (bareNumber) {
+    const amount = Number(bareNumber[1].replace(/,/g, ''));
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: fallbackCurrency };
+  }
+
+  return {};
+}
+
+function extractPaymentHints(params: {
+  summary: string;
+  description: string;
+  xCurrency: string;
+  xOtaPaid: string;
+  xTotalPrice: string;
+  xNightlyRate: string;
+  nights: number;
+}): {
+  paidAmount?: number;
+  paidCurrency?: ChannelCurrency;
+  sourceNightlyRate?: number;
+  sourceTotalAmount?: number;
+} {
+  const combined = `${params.summary}\n${params.description}`;
+  let detectedCurrency = normalizeCurrencyToken(params.xCurrency);
+
+  if (!detectedCurrency) {
+    const explicitCurMatch = combined.match(/\b(?:Currency|Booking\s*Currency)\s*[:=-]\s*(USD|GBP|EUR|NGN)\b/i);
+    if (explicitCurMatch) {
+      detectedCurrency = normalizeCurrencyToken(explicitCurMatch[1]);
+    }
+  }
+
+  // 1. Check explicit X-headers first
+  const xPaidParsed = parseMoneyAndCurrencyFromSnippet(params.xOtaPaid, detectedCurrency);
+  const xTotalParsed = parseMoneyAndCurrencyFromSnippet(params.xTotalPrice, detectedCurrency || xPaidParsed.currency);
+  const xRateParsed = parseMoneyAndCurrencyFromSnippet(
+    params.xNightlyRate,
+    detectedCurrency || xPaidParsed.currency || xTotalParsed.currency
+  );
+
+  let paidAmount = xPaidParsed.amount;
+  let sourceTotalAmount = xTotalParsed.amount;
+  let sourceNightlyRate = xRateParsed.amount;
+  let paidCurrency =
+    xPaidParsed.currency ||
+    xTotalParsed.currency ||
+    xRateParsed.currency ||
+    detectedCurrency;
+
+  // 2. Parse labeled paid lines from description/summary (e.g., "Paid to OTA: 200 USD", "Guest Paid: $200")
+  if (paidAmount === undefined) {
+    const paidLabelMatch = combined.match(
+      /(?:Guest\s*Paid(?:\s*to\s*OTA)?|Paid\s*to\s*OTA|OTA\s*Paid|OTA\s*Payment(?:\s*Received)?|Amount\s*Paid|Prepaid|Paid)\s*[:=-]\s*([^\n|;]+)/i
+    );
+    if (paidLabelMatch) {
+      const parsed = parseMoneyAndCurrencyFromSnippet(paidLabelMatch[1], paidCurrency);
+      if (parsed.amount !== undefined) {
+        paidAmount = parsed.amount;
+        paidCurrency = parsed.currency || paidCurrency;
+      }
+    }
+  }
+
+  // 3. Parse labeled total/amount lines (e.g., "Total: 200 USD", "Total Price: $200")
+  if (sourceTotalAmount === undefined) {
+    const totalLabelMatch = combined.match(
+      /(?:Total\s*Price|Total\s*Amount|Booking\s*Total|Reservation\s*Total|Total|Price|Amount|Payout)\s*[:=-]\s*([^\n|;]+)/i
+    );
+    if (totalLabelMatch) {
+      const parsed = parseMoneyAndCurrencyFromSnippet(totalLabelMatch[1], paidCurrency);
+      if (parsed.amount !== undefined) {
+        sourceTotalAmount = parsed.amount;
+        paidCurrency = parsed.currency || paidCurrency;
+      }
+    }
+  }
+
+  // 4. Parse nightly rate lines (e.g., "Nightly Rate: $100", "Rate: 100 USD")
+  if (sourceNightlyRate === undefined) {
+    const rateLabelMatch = combined.match(
+      /(?:Nightly\s*Rate|Rate\s*per\s*Night|ADR|Rate)\s*[:=-]\s*([^\n|;]+)/i
+    );
+    if (rateLabelMatch) {
+      const parsed = parseMoneyAndCurrencyFromSnippet(rateLabelMatch[1], paidCurrency);
+      if (parsed.amount !== undefined) {
+        sourceNightlyRate = parsed.amount;
+        paidCurrency = parsed.currency || paidCurrency;
+      }
+    }
+  }
+
+  // 5. Inline currency+amount pattern in text if still missing currency or amounts (e.g. "Paid $200" or "200 USD")
+  if (paidAmount === undefined && sourceTotalAmount === undefined) {
+    const inlineMoney = combined.match(
+      /(?:([$£€₦]|US\$)\s*([\d,]+(?:\.\d{1,2})?)(?:\s*(USD|GBP|EUR|NGN))?|\b([\d,]+(?:\.\d{1,2})?)\s*(USD|GBP|EUR|NGN)\b|\b(USD|GBP|EUR|NGN)\s*([\d,]+(?:\.\d{1,2})?)\b)/i
+    );
+    if (inlineMoney) {
+      const snippet = inlineMoney[0];
+      const parsed = parseMoneyAndCurrencyFromSnippet(snippet, paidCurrency);
+      if (parsed.amount !== undefined && parsed.currency) {
+        sourceTotalAmount = parsed.amount;
+        paidCurrency = parsed.currency;
+      }
+    }
+  }
+
+  if (sourceTotalAmount === undefined && sourceNightlyRate !== undefined && params.nights > 0) {
+    sourceTotalAmount = Number((sourceNightlyRate * params.nights).toFixed(2));
+  }
+  if (sourceNightlyRate === undefined && (sourceTotalAmount || paidAmount) && params.nights > 0) {
+    const base = sourceTotalAmount || paidAmount || 0;
+    if (base > 0) sourceNightlyRate = Number((base / params.nights).toFixed(2));
+  }
+
+  return {
+    paidAmount,
+    paidCurrency,
+    sourceNightlyRate,
+    sourceTotalAmount,
+  };
 }
 
 function isGenericRoomNoise(val: string): boolean {
@@ -346,6 +512,10 @@ export function parseIcalEvents(
   let xEmail = '';
   let xBookingRef = '';
   let xListingId = '';
+  let xCurrency = '';
+  let xOtaPaid = '';
+  let xTotalPrice = '';
+  let xNightlyRate = '';
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -370,6 +540,10 @@ export function parseIcalEvents(
       xEmail = '';
       xBookingRef = '';
       xListingId = '';
+      xCurrency = '';
+      xOtaPaid = '';
+      xTotalPrice = '';
+      xNightlyRate = '';
       continue;
     }
 
@@ -395,6 +569,15 @@ export function parseIcalEvents(
           const guestNames = extractGuestNames(cleanSummary, cleanDesc, attendeeCn, channelName);
           const combinedText = `${cleanSummary}\n${cleanDesc}`;
           const occupancy = extractAdultsAndChildren(combinedText, xAdults, xChildren);
+          const paymentHints = extractPaymentHints({
+            summary: cleanSummary,
+            description: cleanDesc,
+            xCurrency,
+            xOtaPaid,
+            xTotalPrice,
+            xNightlyRate,
+            nights,
+          });
           const isCancelled =
             status.trim().toUpperCase() === 'CANCELLED' ||
             calendarMethod.trim().toUpperCase() === 'CANCEL' ||
@@ -414,6 +597,10 @@ export function parseIcalEvents(
             children: occupancy.children,
             otaBookingRef: extractOtaBookingRef(cleanDesc, cleanSummary, xBookingRef),
             listingIdHint: extractListingIdHint(combinedText, xListingId),
+            paidAmount: paymentHints.paidAmount,
+            paidCurrency: paymentHints.paidCurrency,
+            sourceNightlyRate: paymentHints.sourceNightlyRate,
+            sourceTotalAmount: paymentHints.sourceTotalAmount,
             summary: cleanSummary,
             description: cleanDesc,
             location: cleanLocation,
@@ -469,6 +656,24 @@ export function parseIcalEvents(
       xBookingRef = valuePart;
     } else if (propName === 'X-LISTING-ID') {
       xListingId = valuePart;
+    } else if (propName === 'X-CURRENCY') {
+      xCurrency = valuePart;
+    } else if (
+      propName === 'X-OTA-PAID' ||
+      propName === 'X-TOTAL-PAID' ||
+      propName === 'X-PAID-AMOUNT' ||
+      propName === 'X-GUEST-PAID'
+    ) {
+      xOtaPaid = valuePart;
+    } else if (
+      propName === 'X-TOTAL-PRICE' ||
+      propName === 'X-AMOUNT' ||
+      propName === 'X-PRICE' ||
+      propName === 'X-TOTAL-AMOUNT'
+    ) {
+      xTotalPrice = valuePart;
+    } else if (propName === 'X-NIGHTLY-RATE' || propName === 'X-RATE') {
+      xNightlyRate = valuePart;
     }
   }
 
