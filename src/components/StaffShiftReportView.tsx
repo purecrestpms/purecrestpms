@@ -17,6 +17,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   AttendanceRecord,
+  getPropertySystemId,
   HousekeepingTaskRecord,
   MaintenanceTicketRecord,
   PosOrderRecord,
@@ -212,7 +213,7 @@ export const StaffShiftReportView: React.FC<StaffShiftReportViewProps> = ({
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${property.name} — Shift Daily Operational Report`, 14, 16);
+    doc.text(`${property.name} (${getPropertySystemId(property)}) — Shift Daily Report`, 14, 16);
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
@@ -316,7 +317,7 @@ export const StaffShiftReportView: React.FC<StaffShiftReportViewProps> = ({
             </h1>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            {property.name} · {userName} ({roleLabel} · {userDepartment})
+            {property.name} (<span className="font-mono-tabular">{getPropertySystemId(property)}</span>) · {userName} ({roleLabel} · {userDepartment})
           </p>
         </div>
 
@@ -374,7 +375,7 @@ export const StaffShiftReportView: React.FC<StaffShiftReportViewProps> = ({
               {property.name}
             </h2>
             <p className="text-xs text-slate-500">
-              {property.city}, {property.state} · {userDepartment} Department
+              <span className="font-mono-tabular">{getPropertySystemId(property)}</span> · {property.city}, {property.state} · {userDepartment} Department
             </p>
           </div>
           <div className="text-xs sm:text-right space-y-0.5 font-mono-tabular">

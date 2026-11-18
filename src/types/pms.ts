@@ -456,6 +456,7 @@ export interface ReservationRecord {
   paymentCollectionMode?: OtaPaymentCollectionMode;
   otaPaidNgn?: number;
   otaPaidSourceAmount?: number;
+  expectedPayoutNgn?: number;
   hotelPaidNgn?: number;
   status: ReservationStatus;
   paymentMethod: 'Bank Transfer' | 'Card POS' | 'Cash NGN' | 'Corporate Invoice' | 'Online Gateway';
@@ -490,6 +491,18 @@ export function matchesBookingSourceFilter(channel: string, filter: string): boo
   return formatBookingSourceLabel(channel) === formatBookingSourceLabel(filter);
 }
 
+export function isOtaBookingChannel(channel: string | undefined): boolean {
+  const ch = String(channel || '');
+  return (
+    ch === 'Airbnb' ||
+    ch === 'Booking.com' ||
+    ch === 'Expedia' ||
+    ch === 'Hotels.ng' ||
+    ch === 'VRBO' ||
+    ch === 'Custom iCal'
+  );
+}
+
 export function getReservationPaymentSummary(
   res: Pick<ReservationRecord, 'roomChargesNgn' | 'posChargesNgn' | 'paidNgn'> &
     Partial<
@@ -504,6 +517,7 @@ export function getReservationPaymentSummary(
         | 'paymentCollectionMode'
         | 'otaPaidNgn'
         | 'otaPaidSourceAmount'
+        | 'expectedPayoutNgn'
         | 'hotelPaidNgn'
         | 'sourceCurrency'
         | 'sourceNightlyRate'
@@ -514,6 +528,7 @@ export function getReservationPaymentSummary(
   usdExchangeRateNgn?: number
 ): {
   totalAmount: number;
+  expectedPayoutNgn: number;
   otaPaidAmount: number;
   hotelPaidAmount: number;
   amountPaid: number;
@@ -530,83 +545,112 @@ export function getReservationPaymentSummary(
 } {
   const lateFee = Math.max(0, res.lateCheckoutFeeNgn || 0);
   const cancelFee = Math.max(0, res.cancellationFeeNgn || 0);
+  const roomChargesNgn = Math.max(0, res.roomChargesNgn || 0);
+  const expectedPayoutNgn =
+    res.status === 'cancelled'
+      ? res.cancellationType === 'paid'
+        ? cancelFee
+        : 0
+      : typeof res.expectedPayoutNgn === 'number' && res.expectedPayoutNgn >= 0
+        ? Math.round(res.expectedPayoutNgn)
+        : roomChargesNgn;
+
+  const effectiveRoomCharge =
+    isOtaBookingChannel(res.channel) && typeof res.expectedPayoutNgn === 'number' && res.expectedPayoutNgn >= 0
+      ? Math.max(roomChargesNgn, 0) > 0
+        ? roomChargesNgn
+        : expectedPayoutNgn
+      : roomChargesNgn;
+
   const totalAmount =
     res.status === 'cancelled'
       ? res.cancellationType === 'paid'
         ? Math.max(0, cancelFee + (res.posChargesNgn || 0))
         : 0
-      : Math.max(0, (res.roomChargesNgn || 0) + (res.posChargesNgn || 0) + lateFee);
+      : Math.max(0, effectiveRoomCharge + (res.posChargesNgn || 0) + lateFee);
 
-  const channelStr = String(res.channel || '');
-  const isOtaChannel =
-    channelStr === 'Airbnb' ||
-    channelStr === 'Booking.com' ||
-    channelStr === 'Expedia' ||
-    channelStr === 'Hotels.ng' ||
-    channelStr === 'VRBO' ||
-    channelStr === 'Custom iCal';
-  const defaultMode: OtaPaymentCollectionMode =
-    channelStr === 'Airbnb' || channelStr === 'Expedia' || channelStr === 'VRBO'
-      ? 'ota_prepaid'
-      : 'hotel_collect';
-  const paymentCollectionMode: OtaPaymentCollectionMode =
-    res.paymentCollectionMode || defaultMode;
+  const isOtaChannel = isOtaBookingChannel(res.channel);
+  const sourceCurrency: ChannelCurrency = res.sourceCurrency || 'NGN';
+  const fxRate =
+    res.fxRateToNgn && res.fxRateToNgn > 0
+      ? res.fxRateToNgn
+      : getFxRateToNgn(sourceCurrency, usdExchangeRateNgn);
 
   const rawPaidNgn = Math.max(0, res.paidNgn || 0);
   let otaPaidAmount = 0;
   let hotelPaidAmount = 0;
 
-  if (typeof res.otaPaidNgn === 'number' && typeof res.hotelPaidNgn === 'number') {
-    otaPaidAmount = Math.max(0, res.otaPaidNgn);
-    hotelPaidAmount = Math.max(0, res.hotelPaidNgn);
+  if (typeof res.otaPaidSourceAmount === 'number' && res.otaPaidSourceAmount >= 0 && isOtaChannel) {
+    otaPaidAmount =
+      typeof res.otaPaidNgn === 'number' && res.otaPaidNgn >= 0
+        ? Math.round(res.otaPaidNgn)
+        : sourceCurrency === 'NGN'
+          ? Math.round(res.otaPaidSourceAmount)
+          : Math.round(res.otaPaidSourceAmount * fxRate);
+    hotelPaidAmount =
+      typeof res.hotelPaidNgn === 'number' && res.hotelPaidNgn >= 0
+        ? Math.round(res.hotelPaidNgn)
+        : Math.max(0, rawPaidNgn - otaPaidAmount);
+  } else if (typeof res.otaPaidNgn === 'number' && typeof res.hotelPaidNgn === 'number') {
+    otaPaidAmount = Math.max(0, Math.round(res.otaPaidNgn));
+    hotelPaidAmount = Math.max(0, Math.round(res.hotelPaidNgn));
   } else if (typeof res.otaPaidNgn === 'number') {
-    otaPaidAmount = Math.max(0, res.otaPaidNgn);
+    otaPaidAmount = Math.max(0, Math.round(res.otaPaidNgn));
     hotelPaidAmount = Math.max(0, rawPaidNgn - otaPaidAmount);
   } else if (typeof res.hotelPaidNgn === 'number') {
-    hotelPaidAmount = Math.max(0, res.hotelPaidNgn);
+    hotelPaidAmount = Math.max(0, Math.round(res.hotelPaidNgn));
     otaPaidAmount = isOtaChannel ? Math.max(0, rawPaidNgn - hotelPaidAmount) : 0;
-  } else if (isOtaChannel && paymentCollectionMode === 'ota_prepaid') {
-    otaPaidAmount = Math.min(rawPaidNgn, Math.max(0, res.roomChargesNgn || rawPaidNgn));
+  } else if (isOtaChannel && res.paymentCollectionMode === 'ota_prepaid' && rawPaidNgn > 0) {
+    otaPaidAmount = Math.min(rawPaidNgn, Math.max(0, effectiveRoomCharge || rawPaidNgn));
     hotelPaidAmount = Math.max(0, rawPaidNgn - otaPaidAmount);
   } else {
     otaPaidAmount = 0;
     hotelPaidAmount = rawPaidNgn;
   }
 
-  const amountPaid = Math.max(rawPaidNgn, otaPaidAmount + hotelPaidAmount);
-  const balance = Math.max(0, totalAmount - amountPaid);
+  const paymentCollectionMode: OtaPaymentCollectionMode =
+    res.paymentCollectionMode ||
+    (otaPaidAmount > 0 ? 'ota_prepaid' : 'hotel_collect');
+
+  const otaCoveredTowardFolio =
+    isOtaChannel && otaPaidAmount > 0
+      ? Math.min(effectiveRoomCharge, otaPaidAmount)
+      : 0;
+  const settledTowardFolio = otaCoveredTowardFolio + hotelPaidAmount;
+  const amountPaid = isOtaChannel
+    ? settledTowardFolio
+    : Math.max(rawPaidNgn, hotelPaidAmount);
+  const balance = Math.max(0, totalAmount - settledTowardFolio);
+
   let paymentStatus: PaymentStatusLabel = 'Unpaid';
-  if (balance <= 0 && (totalAmount > 0 || amountPaid > 0)) {
+  if (balance <= 0 && (totalAmount > 0 || otaPaidAmount > 0 || hotelPaidAmount > 0)) {
     paymentStatus = 'Paid';
   } else if (res.status === 'cancelled' && res.cancellationType === 'free') {
     paymentStatus = 'Paid';
-  } else if (amountPaid > 0) {
+  } else if (otaPaidAmount > 0 || hotelPaidAmount > 0 || amountPaid > 0) {
     paymentStatus = 'Partial';
   }
 
-  const sourceCurrency: ChannelCurrency = res.sourceCurrency || 'NGN';
-  const fxRate =
-    res.fxRateToNgn && res.fxRateToNgn > 0
-      ? res.fxRateToNgn
-      : getFxRateToNgn(sourceCurrency, usdExchangeRateNgn);
   const sourceNightlyRate =
     typeof res.sourceNightlyRate === 'number' && res.sourceNightlyRate > 0
       ? res.sourceNightlyRate
       : sourceCurrency === 'NGN'
         ? res.nightlyRateNgn || 0
         : Number(((res.nightlyRateNgn || 0) / fxRate).toFixed(2));
-  const sourceTotalAmount =
-    typeof res.sourceTotalAmount === 'number' && res.sourceTotalAmount > 0
-      ? res.sourceTotalAmount
-      : sourceCurrency === 'NGN'
-        ? totalAmount
-        : Number((totalAmount / fxRate).toFixed(2));
   const otaPaidSourceAmount =
     typeof res.otaPaidSourceAmount === 'number' && res.otaPaidSourceAmount >= 0
       ? res.otaPaidSourceAmount
       : sourceCurrency === 'NGN'
         ? otaPaidAmount
         : Number((otaPaidAmount / fxRate).toFixed(2));
+  const sourceTotalAmount =
+    typeof res.sourceTotalAmount === 'number' && res.sourceTotalAmount > 0
+      ? res.sourceTotalAmount
+      : otaPaidSourceAmount > 0 && sourceCurrency !== 'NGN'
+        ? otaPaidSourceAmount
+        : sourceCurrency === 'NGN'
+          ? totalAmount
+          : Number((totalAmount / fxRate).toFixed(2));
   const hotelPaidSourceAmount =
     sourceCurrency === 'NGN'
       ? hotelPaidAmount
@@ -618,6 +662,7 @@ export function getReservationPaymentSummary(
 
   return {
     totalAmount,
+    expectedPayoutNgn,
     otaPaidAmount,
     hotelPaidAmount,
     amountPaid,

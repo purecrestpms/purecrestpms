@@ -8,6 +8,7 @@ function splitFullName(full: string): [string, string] {
 }
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowLeftRight,
   ArrowRight,
   Ban,
@@ -61,7 +62,6 @@ import {
 import {
   BlockedDateRecord,
   ChannelCurrency,
-  convertCurrencyToNgn,
   convertNgnToUsd,
   formatBookingSourceLabel,
   formatChannelCurrency,
@@ -69,15 +69,16 @@ import {
   formatPriceInputWithCommas,
   formatUsd,
   getFxRateToNgn,
+  getPropertySystemId,
   getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
   getRoomSection,
   GuestRecord,
+  isOtaBookingChannel,
   LicenseRecord,
   matchesBookingSourceFilter,
   NavSectionId,
-  OtaPaymentCollectionMode,
   parseFormattedPriceInput,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
@@ -300,7 +301,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [editingRateRoomId, setEditingRateRoomId] = useState<string | null>(null);
   const [rateDraftInput, setRateDraftInput] = useState<string>('65,500');
 
-  // Full Room Editor Modal
+  // Room Details Page & Full Room Editor Page
+  const [selectedRoomDetailId, setSelectedRoomDetailId] = useState<string | null>(null);
   const [editingRoom, setEditingRoom] = useState<RoomRecord | null>(null);
   const [draftRoomNumber, setDraftRoomNumber] = useState('');
   const [draftName, setDraftName] = useState('');
@@ -317,20 +319,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [editRoomError, setEditRoomError] = useState<string | null>(null);
 
-  // Add New Room Modal state
+  // Add New Room Page state
   const [showAddRoomModal, setShowAddRoomModal] = useState(false);
   const [newRoomNumber, setNewRoomNumber] = useState('');
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomType, setNewRoomType] = useState('Studio Apartment');
   const [newRoomSection, setNewRoomSection] = useState<RoomSection>('Hotel Rooms');
   const [newRoomFloor, setNewRoomFloor] = useState<number>(2);
-  const [newRoomRateNgn, setNewRoomRateNgn] = useState<number>(65500);
+  const [newRoomRateInput, setNewRoomRateInput] = useState<string>('65,500');
   const [newRoomMaxGuests, setNewRoomMaxGuests] = useState<number>(2);
   const [newRoomAmenitiesText, setNewRoomAmenitiesText] = useState('King Bed, Wi-Fi, Smart TV, 24/7 Power');
   const [newRoomImageUrl, setNewRoomImageUrl] = useState(DEFAULT_SUITE_IMAGE);
   const [addRoomError, setAddRoomError] = useState<string | null>(null);
 
-  // Inline Booking Form state (auto-pick today & next day)
+  // New Reservation Page state (auto-pick today & next day)
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id || '');
   const [newRequestedRoomType, setNewRequestedRoomType] = useState(
     rooms[0]?.roomType || 'Deluxe Studio with Kitchenette'
@@ -346,13 +348,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [childrenCount, setChildrenCount] = useState(0);
   const [channel, setChannel] = useState<ReservationRecord['channel']>('Walk-in');
   const [bookingCurrency, setBookingCurrency] = useState<ChannelCurrency>('NGN');
-  const [bookingSourceNightlyRate, setBookingSourceNightlyRate] = useState<number>(0);
-  const [bookingCollectionMode, setBookingCollectionMode] =
-    useState<OtaPaymentCollectionMode>('hotel_collect');
+  const [bookingFxRateInput, setBookingFxRateInput] = useState<string>('1');
+  const [bookingOtaPaidSourceInput, setBookingOtaPaidSourceInput] = useState<string>('');
+  const [bookingExpectedPayoutInput, setBookingExpectedPayoutInput] = useState<string>('65,500');
+  const [bookingExpectedPayoutManual, setBookingExpectedPayoutManual] = useState(false);
+  const [bookingHotelPaidInput, setBookingHotelPaidInput] = useState<string>('65,500');
   const [initialBookingStatus, setInitialBookingStatus] = useState<'confirmed' | 'pending'>('confirmed');
   const [paymentMethod, setPaymentMethod] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
-  const [depositNgn, setDepositNgn] = useState(65500);
   const [immediateCheckIn, setImmediateCheckIn] = useState(false);
   const [inlineIdType, setInlineIdType] = useState<GuestRecord['idType']>('NIN');
   const [inlineIdNumber, setInlineIdNumber] = useState('');
@@ -395,7 +398,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [newGuestIdNumber, setNewGuestIdNumber] = useState('');
   const [newGuestVip, setNewGuestVip] = useState<GuestRecord['vipTier']>('Standard');
 
-  // Guest Profile Modal state
+  // Guest Profile Page state
   const [selectedGuestId, setSelectedGuestId] = useState<string | null>(null);
   const [editingGuestMode, setEditingGuestMode] = useState(false);
   const [editGuestFirstName, setEditGuestFirstName] = useState('');
@@ -410,7 +413,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [editGuestVip, setEditGuestVip] = useState<GuestRecord['vipTier']>('Standard');
   const [editGuestNotes, setEditGuestNotes] = useState('');
 
-  // Check-In Process Modal, Change Room Modal, Cancel Confirm Modal & Checkout settlement modal state
+  // Quick Action Modals: Check-In, Change Room, Cancel Confirm & Checkout Settlement
   const [checkInTarget, setCheckInTarget] = useState<ReservationRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<ReservationRecord | null>(null);
   const [cancelMode, setCancelMode] = useState<'free' | 'paid'>('free');
@@ -430,7 +433,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [lateCheckoutTime, setLateCheckoutTime] = useState('14:00');
   const [lateCheckoutFeeDraft, setLateCheckoutFeeDraft] = useState<number>(0);
 
-  // Guest Folio Flow & Reservation Editor modal state
+  // Reservation Details, Folio & Editor Page state
   const [folioPayAmount, setFolioPayAmount] = useState<number>(0);
   const [folioPayMethod, setFolioPayMethod] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
@@ -450,7 +453,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [editStatus, setEditStatus] = useState<ReservationRecord['status']>('confirmed');
   const [editPaymentMethodRes, setEditPaymentMethodRes] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
+  const [editSourceCurrency, setEditSourceCurrency] = useState<ChannelCurrency>('NGN');
+  const [editFxRateInput, setEditFxRateInput] = useState<string>('1');
+  const [editOtaPaidSourceInput, setEditOtaPaidSourceInput] = useState<string>('0');
+  const [editExpectedPayoutInput, setEditExpectedPayoutInput] = useState<string>('0');
+  const [editHotelPaidInput, setEditHotelPaidInput] = useState<string>('0');
   const [editStayError, setEditStayError] = useState<string | null>(null);
+
+  const selectedRoomDetail = selectedRoomDetailId
+    ? rooms.find((r) => r.id === selectedRoomDetailId) || null
+    : null;
 
   const activeFolioReservation = selectedReservationId
     ? reservations.find((r) => r.id === selectedReservationId) || null
@@ -461,9 +473,21 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     : null;
 
   useEffect(() => {
+    setEditingRoom(null);
+    setShowAddRoomModal(false);
+    setSelectedRoomDetailId(null);
+    setShowBookingForm(false);
+    setShowGuestForm(false);
+    setSelectedGuestId(null);
+  }, [section]);
+
+  useEffect(() => {
     if (activeFolioReservation) {
-      const { balance } = getReservationPaymentSummary(activeFolioReservation);
-      setFolioPayAmount(balance);
+      const summary = getReservationPaymentSummary(
+        activeFolioReservation,
+        property.usdExchangeRateNgn
+      );
+      setFolioPayAmount(summary.balance);
       setFolioPayMethod(activeFolioReservation.paymentMethod || 'Bank Transfer');
       setLateCheckoutTime(activeFolioReservation.checkOutTime || '14:00');
       setLateCheckoutFeeDraft(activeFolioReservation.lateCheckoutFeeNgn || 0);
@@ -483,6 +507,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setEditChannel(activeFolioReservation.channel);
       setEditStatus(activeFolioReservation.status);
       setEditPaymentMethodRes(activeFolioReservation.paymentMethod || 'Bank Transfer');
+      setEditSourceCurrency(summary.sourceCurrency);
+      setEditFxRateInput(formatPriceInputWithCommas(summary.fxRateToNgn));
+      setEditOtaPaidSourceInput(
+        summary.otaPaidSourceAmount > 0 ? String(summary.otaPaidSourceAmount) : ''
+      );
+      setEditExpectedPayoutInput(formatPriceInputWithCommas(summary.expectedPayoutNgn));
+      setEditHotelPaidInput(formatPriceInputWithCommas(summary.hotelPaidAmount));
       setEditStayError(null);
       if (initialReservationIntent === 'edit') {
         onConsumeIntent?.();
@@ -517,7 +548,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       if (first) {
         setSelectedRoomId(first.id);
         setNewRequestedRoomType(first.roomType);
-        setDepositNgn(first.nightlyRateNgn);
+        const formatted = formatPriceInputWithCommas(first.nightlyRateNgn);
+        setBookingExpectedPayoutInput(formatted);
+        setBookingHotelPaidInput(formatted);
       }
     }
   }, [rooms]);
@@ -643,15 +676,17 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const openAddRoomModal = () => {
     const nextNum = rooms.length + 1;
     setNewRoomNumber(`RM-${nextNum}`);
-    setNewRoomName(`Suite ${nextNum}`);
+    setNewRoomName(`Room ${nextNum}`);
     setNewRoomType('Deluxe Studio with Kitchenette');
     setNewRoomSection('Hotel Rooms');
     setNewRoomFloor(2);
-    setNewRoomRateNgn(65500);
+    setNewRoomRateInput('65,500');
     setNewRoomMaxGuests(2);
     setNewRoomAmenitiesText('King Bed, Wi-Fi, Smart TV, 24/7 Power');
     setNewRoomImageUrl(RICHGATES_GALLERY_ASSETS[nextNum % RICHGATES_GALLERY_ASSETS.length]?.url || DEFAULT_SUITE_IMAGE);
     setAddRoomError(null);
+    setEditingRoom(null);
+    setSelectedRoomDetailId(null);
     setShowAddRoomModal(true);
   };
 
@@ -676,7 +711,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
     const trimmedCode = newRoomNumber.trim().toUpperCase();
     if (!trimmedCode || !newRoomName.trim() || !newRoomType.trim()) {
-      setAddRoomError('Room code, suite title, and room type are required.');
+      setAddRoomError('Room code, room title, and room type are required.');
+      return;
+    }
+    const parsedNewRate = parseFormattedPriceInput(newRoomRateInput);
+    if (parsedNewRate === null || parsedNewRate < 1000) {
+      setAddRoomError('Enter a valid nightly rate of at least ₦1,000.');
       return;
     }
     if (rooms.some((r) => r.roomNumber.toUpperCase() === trimmedCode)) {
@@ -701,7 +741,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         roomType: newRoomType.trim(),
         section: newRoomSection,
         floor: newRoomFloor,
-        nightlyRateNgn: newRoomRateNgn,
+        nightlyRateNgn: Number(parsedNewRate),
         maxGuests: newRoomMaxGuests,
         imageUrl: newRoomImageUrl || DEFAULT_SUITE_IMAGE,
         amenities: newRoomAmenitiesText
@@ -732,7 +772,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
 
     if (selectedRoomId && !targetRoom) {
-      setBookingError('Selected suite could not be found. Choose a suite or Unassigned.');
+      setBookingError('Selected room could not be found. Choose a room or Unassigned.');
       return;
     }
 
@@ -769,7 +809,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
     if (immediateCheckIn) {
       if (!targetRoom) {
-        setBookingError('Please assign a specific suite/room before performing immediate check-in.');
+        setBookingError('Please assign a specific room before performing immediate check-in.');
         return;
       }
       if (
@@ -780,7 +820,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         !inlineRoomReady
       ) {
         setBookingError(
-          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming suite readiness.'
+          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming room readiness.'
         );
         return;
       }
@@ -791,34 +831,55 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     const fallbackNightlyRate =
       rooms.find((r) => r.roomType === resolvedRoomType)?.nightlyRateNgn || 55000;
     const baseRoomRateNgn = targetRoom?.nightlyRateNgn ?? fallbackNightlyRate;
-    const fxRateToNgn = getFxRateToNgn(bookingCurrency, property.usdExchangeRateNgn);
-    const hasCustomSourceRate = bookingCurrency !== 'NGN' && bookingSourceNightlyRate > 0;
-    const effectiveNightlyRateNgn = hasCustomSourceRate
-      ? convertCurrencyToNgn(bookingSourceNightlyRate, bookingCurrency, property.usdExchangeRateNgn)
-      : baseRoomRateNgn;
     const safeNightsVal = Math.max(1, nights);
+    const isOtaSource = isOtaBookingChannel(channel);
+    const activeCurrency: ChannelCurrency = isOtaSource ? bookingCurrency : 'NGN';
+    const fxRateToNgn =
+      activeCurrency === 'NGN'
+        ? 1
+        : Math.max(
+            1,
+            parseFormattedPriceInput(bookingFxRateInput) ??
+              getFxRateToNgn(activeCurrency, property.usdExchangeRateNgn)
+          );
+
+    const parsedOtaPaidSource = isOtaSource
+      ? Math.max(0, parseFormattedPriceInput(bookingOtaPaidSourceInput) ?? 0)
+      : 0;
+    const otaPaidNgnVal = isOtaSource
+      ? activeCurrency === 'NGN'
+        ? Math.round(parsedOtaPaidSource)
+        : Math.round(parsedOtaPaidSource * fxRateToNgn)
+      : 0;
+
+    const defaultExpectedPayoutNgn =
+      otaPaidNgnVal > 0 ? otaPaidNgnVal : baseRoomRateNgn * safeNightsVal;
+    const expectedPayoutNgnVal = isOtaSource
+      ? Math.max(
+          0,
+          Math.round(parseFormattedPriceInput(bookingExpectedPayoutInput) ?? defaultExpectedPayoutNgn)
+        )
+      : baseRoomRateNgn * safeNightsVal;
+
+    const hotelPaidNgnVal = Math.max(
+      0,
+      Math.round(parseFormattedPriceInput(bookingHotelPaidInput) ?? 0)
+    );
+
+    const effectiveNightlyRateNgn =
+      isOtaSource && expectedPayoutNgnVal > 0
+        ? Math.round(expectedPayoutNgnVal / safeNightsVal)
+        : baseRoomRateNgn;
+
     const resolvedSourceNightlyRate =
-      bookingCurrency === 'NGN'
+      activeCurrency === 'NGN'
         ? effectiveNightlyRateNgn
-        : hasCustomSourceRate
-          ? bookingSourceNightlyRate
-          : Number((effectiveNightlyRateNgn / fxRateToNgn).toFixed(2));
-    const resolvedSourceTotal = Number((resolvedSourceNightlyRate * safeNightsVal).toFixed(2));
-    const safeDepositNgn = Math.max(0, depositNgn);
-    const isOtaSource =
-      channel === 'Airbnb' ||
-      channel === 'Booking.com' ||
-      channel === 'Expedia' ||
-      channel === 'Hotels.ng' ||
-      channel === 'VRBO' ||
-      channel === 'Custom iCal';
-    const resolvedCollectionMode: OtaPaymentCollectionMode = isOtaSource
-      ? bookingCollectionMode
-      : 'hotel_collect';
-    const otaPaidNgnVal =
-      isOtaSource && resolvedCollectionMode === 'ota_prepaid' ? safeDepositNgn : 0;
-    const hotelPaidNgnVal =
-      isOtaSource && resolvedCollectionMode === 'ota_prepaid' ? 0 : safeDepositNgn;
+        : Number((effectiveNightlyRateNgn / fxRateToNgn).toFixed(2));
+    const resolvedSourceTotal =
+      parsedOtaPaidSource > 0 && activeCurrency !== 'NGN'
+        ? parsedOtaPaidSource
+        : Number((resolvedSourceNightlyRate * safeNightsVal).toFixed(2));
+
     const assignedLabel = targetRoom
       ? targetRoom.roomNumber
       : `Unassigned (${resolvedRoomType})`;
@@ -843,13 +904,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         children: Math.max(0, childrenCount),
         channel,
         paymentMethod,
-        depositNgn: safeDepositNgn,
-        sourceCurrency: bookingCurrency,
+        depositNgn: hotelPaidNgnVal,
+        sourceCurrency: activeCurrency,
         sourceNightlyRate: resolvedSourceNightlyRate,
         sourceTotalAmount: resolvedSourceTotal,
         fxRateToNgn,
-        paymentCollectionMode: resolvedCollectionMode,
+        paymentCollectionMode: parsedOtaPaidSource > 0 ? 'ota_prepaid' : 'hotel_collect',
+        otaPaidSourceAmount: parsedOtaPaidSource,
         otaPaidNgn: otaPaidNgnVal,
+        expectedPayoutNgn: expectedPayoutNgnVal,
         hotelPaidNgn: hotelPaidNgnVal,
         immediateCheckIn,
         initialStatus: initialBookingStatus,
@@ -875,8 +938,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setGuestEmail('');
       setChildrenCount(0);
       setBookingCurrency('NGN');
-      setBookingSourceNightlyRate(0);
-      setBookingCollectionMode('hotel_collect');
+      setBookingFxRateInput('1');
+      setBookingOtaPaidSourceInput('');
+      setBookingExpectedPayoutInput(formatPriceInputWithCommas(baseRoomRateNgn));
+      setBookingExpectedPayoutManual(false);
+      setBookingHotelPaidInput(formatPriceInputWithCommas(baseRoomRateNgn));
       setInlineIdNumber('');
       setInlinePayConfirmed(false);
       setInlineIdVerified(false);
@@ -1062,6 +1128,33 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
 
     const updatedNights = diffNights(editCheckInDate, editCheckOutDate);
+    const isEditOta = isOtaBookingChannel(editChannel);
+    const activeEditCurrency: ChannelCurrency = isEditOta ? editSourceCurrency : 'NGN';
+    const parsedEditFx =
+      activeEditCurrency === 'NGN'
+        ? 1
+        : Math.max(
+            1,
+            parseFormattedPriceInput(editFxRateInput) ??
+              getFxRateToNgn(activeEditCurrency, property.usdExchangeRateNgn)
+          );
+    const parsedEditOtaSourcePaid = isEditOta
+      ? Math.max(0, parseFormattedPriceInput(editOtaPaidSourceInput) ?? 0)
+      : 0;
+    const parsedEditExpectedPayout = isEditOta
+      ? Math.max(
+          0,
+          Math.round(
+            parseFormattedPriceInput(editExpectedPayoutInput) ??
+              (targetRoom?.nightlyRateNgn || res.nightlyRateNgn) * updatedNights
+          )
+        )
+      : undefined;
+    const parsedEditHotelPaid = Math.max(
+      0,
+      Math.round(parseFormattedPriceInput(editHotelPaidInput) ?? res.hotelPaidNgn ?? 0)
+    );
+
     setBusyId(`stay-${res.id}`);
     try {
       await updateReservationDetailsWorkflow({
@@ -1083,6 +1176,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         channel: editChannel,
         status: editStatus,
         paymentMethod: editPaymentMethodRes,
+        sourceCurrency: activeEditCurrency,
+        fxRateToNgn: parsedEditFx,
+        otaPaidSourceAmount: parsedEditOtaSourcePaid,
+        expectedPayoutNgn: parsedEditExpectedPayout,
+        hotelPaidNgn: parsedEditHotelPaid,
         actorRole,
       });
       onNotify(
@@ -1097,9 +1195,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const handleConfirmCheckout = async () => {
     if (!checkoutTarget) return;
     const lateFee = Math.max(0, checkoutTarget.lateCheckoutFeeNgn || 0);
-    const totalFolio =
-      checkoutTarget.roomChargesNgn + checkoutTarget.posChargesNgn + lateFee;
-    const balanceDue = Math.max(0, totalFolio - checkoutTarget.paidNgn);
+    const checkoutSummary = getReservationPaymentSummary(
+      checkoutTarget,
+      property.usdExchangeRateNgn
+    );
+    const balanceDue = checkoutSummary.balance;
     setActionError(null);
     setBusyId(checkoutTarget.id);
     try {
@@ -1547,18 +1647,33 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     section === 'in_house' ||
     section === 'front_desk';
 
+  const isDedicatedSubpage = Boolean(
+    (editingRoom && canManageRooms) ||
+      (showAddRoomModal && canManageRooms) ||
+      activeFolioReservation ||
+      selectedGuest ||
+      (showGuestForm && section === 'guests') ||
+      (showBookingForm && section !== 'walk_in') ||
+      selectedRoomDetail
+  );
+
+  const systemPropertyId = getPropertySystemId(property);
+
   return (
     <div className="space-y-6">
-      {/* Header Toolbar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="font-display text-xl font-bold text-slate-900">
-            {cms.pages[section]?.title || (section === 'rooms' ? 'Rooms & Rates' : 'Reservations')}
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {cms.pages[section]?.subtitle}
-          </p>
-        </div>
+      {!isDedicatedSubpage && (
+        <>
+          {/* Header Toolbar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h1 className="font-display text-xl font-bold text-slate-900">
+                {cms.pages[section]?.title || (section === 'rooms' ? 'Rooms & Rates' : 'Reservations')}
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {cms.pages[section]?.subtitle}
+                <span className="ml-2 font-mono-tabular text-slate-400">· {systemPropertyId}</span>
+              </p>
+            </div>
 
         <div className="flex flex-wrap items-center gap-3">
           {section !== 'rooms' && section !== 'walk_in' && (
@@ -2155,655 +2270,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             }
             className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold transition-colors cursor-pointer"
           >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>{busyId === 'walk_in' ? 'Checking In Guest...' : 'Verify & Check In Walk-In'}</span>
           </button>
-        </form>
-      )}
-
-      {/* Inline New Reservation Form */}
-      {showBookingForm && section !== 'walk_in' && (
-        <form
-          onSubmit={handleCreateBooking}
-          className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
-        >
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h2 className="font-display text-sm font-bold text-slate-900">
-              Create Reservation or Immediate Check-In
-            </h2>
-            <button
-              type="button"
-              onClick={() => setShowBookingForm(false)}
-              className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer"
-            >
-              Cancel
-            </button>
-          </div>
-
-          {bookingError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
-              {bookingError}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Suite / Room</label>
-              <select
-                value={selectedRoomId}
-                onChange={(e) => {
-                  const nextId = e.target.value;
-                  const rm = rooms.find((r) => r.id === nextId);
-                  setSelectedRoomId(nextId);
-                  setBookingError(null);
-                  if (rm) {
-                    setNewRequestedRoomType(rm.roomType);
-                    setDepositNgn(rm.nightlyRateNgn);
-                  } else {
-                    setImmediateCheckIn(false);
-                  }
-                }}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-              >
-                <option value="">Unassigned — Assign later</option>
-                {sortedRooms.map((r) => (
-                  <option key={r.id} value={r.id} disabled={r.occupancyStatus === 'out_of_order'}>
-                    {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}) [{r.occupancyStatus}]
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {selectedRoomId === '' && (
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  Requested Room Type
-                </label>
-                <select
-                  value={newRequestedRoomType}
-                  onChange={(e) => {
-                    const rt = e.target.value;
-                    setNewRequestedRoomType(rt);
-                    const match = rooms.find((r) => r.roomType === rt);
-                    if (match) setDepositNgn(match.nightlyRateNgn);
-                  }}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  {uniqueRoomTypes.map((rt) => (
-                    <option key={rt} value={rt}>
-                      {rt}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Guest First Name *</label>
-              <input
-                required
-                type="text"
-                value={guestFirstName}
-                onChange={(e) => setGuestFirstName(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Guest Last Name *</label>
-              <input
-                required
-                type="text"
-                value={guestLastName}
-                onChange={(e) => setGuestLastName(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Phone Number</label>
-              <input
-                required
-                type="text"
-                value={guestPhone}
-                onChange={(e) => setGuestPhone(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Booking Source</label>
-              <select
-                value={channel}
-                onChange={(e) => {
-                  const nextCh = e.target.value as ReservationRecord['channel'];
-                  setChannel(nextCh);
-                  const isOtaPrepaid =
-                    nextCh === 'Airbnb' || nextCh === 'Expedia' || nextCh === 'VRBO';
-                  setBookingCollectionMode(isOtaPrepaid ? 'ota_prepaid' : 'hotel_collect');
-                  if (nextCh === 'Walk-in' || nextCh === 'Website' || nextCh === 'Hotels.ng') {
-                    setBookingCurrency('NGN');
-                  }
-                }}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-              >
-                {PRIMARY_BOOKING_SOURCES.map((src) => (
-                  <option key={src.value} value={src.value}>
-                    {src.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Check-In Date</label>
-              <input
-                type="date"
-                value={checkInDate}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (!val) return;
-                  setCheckInDate(val);
-                  if (checkOutDate <= val) {
-                    const nextOut = addDaysIso(val, 1);
-                    setCheckOutDate(nextOut);
-                    setNights(1);
-                  } else {
-                    setNights(diffNights(val, checkOutDate));
-                  }
-                  setBookingError(null);
-                }}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-              />
-            </div>
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Check-Out Date</label>
-              <input
-                type="date"
-                min={addDaysIso(checkInDate, 1)}
-                value={checkOutDate}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (!raw) return;
-                  const safeOut = raw <= checkInDate ? addDaysIso(checkInDate, 1) : raw;
-                  setCheckOutDate(safeOut);
-                  setNights(diffNights(checkInDate, safeOut));
-                  setBookingError(null);
-                }}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-              />
-            </div>
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">
-                Nights · Adults · Children
-              </label>
-              <div className="grid grid-cols-3 gap-1.5">
-                <input
-                  type="number"
-                  min={1}
-                  title="Nights"
-                  value={nights}
-                  onChange={(e) => setNights(Math.max(1, Number(e.target.value)))}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
-                />
-                <input
-                  type="number"
-                  min={1}
-                  title="Adults"
-                  value={adults}
-                  onChange={(e) => setAdults(Math.max(1, Number(e.target.value)))}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
-                />
-                <input
-                  type="number"
-                  min={0}
-                  title="Children"
-                  value={childrenCount}
-                  onChange={(e) => setChildrenCount(Math.max(0, Number(e.target.value)))}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
-                />
-              </div>
-              <span className="text-[10px] text-slate-400">Nights / Adults / Children</span>
-            </div>
-
-            {(channel === 'Airbnb' ||
-              channel === 'Booking.com' ||
-              channel === 'Expedia' ||
-              channel === 'Hotels.ng' ||
-              channel === 'VRBO' ||
-              channel === 'Custom iCal') && (
-              <>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    OTA Currency &amp; Rate / Night
-                  </label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <select
-                      value={bookingCurrency}
-                      onChange={(e) => setBookingCurrency(e.target.value as ChannelCurrency)}
-                      className="border border-slate-200 rounded-lg px-2 py-2 bg-white font-semibold"
-                    >
-                      {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                        <option key={cur} value={cur}>
-                          {cur}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      min={0}
-                      step={bookingCurrency === 'NGN' ? 500 : 1}
-                      placeholder="0 = Room rate"
-                      value={bookingSourceNightlyRate}
-                      onChange={(e) =>
-                        setBookingSourceNightlyRate(Math.max(0, Number(e.target.value)))
-                      }
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
-                    />
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-mono-tabular">
-                    FX: 1 {bookingCurrency} = ₦
-                    {getFxRateToNgn(bookingCurrency, property.usdExchangeRateNgn).toLocaleString(
-                      'en-NG'
-                    )}
-                  </span>
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    OTA Payment Collection
-                  </label>
-                  <select
-                    value={bookingCollectionMode}
-                    onChange={(e) =>
-                      setBookingCollectionMode(e.target.value as OtaPaymentCollectionMode)
-                    }
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="ota_prepaid">OTA Collects (Prepaid)</option>
-                    <option value="hotel_collect">Hotel Collects at Property</option>
-                  </select>
-                </div>
-              </>
-            )}
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">
-                {bookingCollectionMode === 'ota_prepaid' &&
-                (channel === 'Airbnb' ||
-                  channel === 'Booking.com' ||
-                  channel === 'Expedia' ||
-                  channel === 'VRBO' ||
-                  channel === 'Custom iCal')
-                  ? 'OTA Paid (₦) & Status'
-                  : 'Hotel Paid (₦) & Status'}
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  min={0}
-                  step={500}
-                  value={depositNgn}
-                  onChange={(e) => setDepositNgn(Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
-                />
-                <select
-                  value={immediateCheckIn ? 'checked_in' : initialBookingStatus}
-                  disabled={immediateCheckIn}
-                  onChange={(e) =>
-                    setInitialBookingStatus(e.target.value as 'confirmed' | 'pending')
-                  }
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white disabled:bg-slate-50"
-                >
-                  <option value="confirmed">Confirmed</option>
-                  <option value="pending">Pending</option>
-                  {immediateCheckIn && <option value="checked_in">Checked-in</option>}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Payment Method</label>
-              <select
-                value={paymentMethod}
-                onChange={(e) =>
-                  setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
-                }
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-              >
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="Card POS">Card POS</option>
-                <option value="Cash NGN">Cash NGN</option>
-                <option value="Corporate Invoice">Corporate Invoice</option>
-                <option value="Online Gateway">Online Gateway</option>
-              </select>
-            </div>
-          </div>
-
-          {(() => {
-            const pickedRoom = selectedRoomId
-              ? rooms.find((r) => r.id === selectedRoomId)
-              : undefined;
-            const baseRateNgn =
-              pickedRoom?.nightlyRateNgn ||
-              rooms.find((r) => r.roomType === newRequestedRoomType)?.nightlyRateNgn ||
-              55000;
-            const ratePerNight =
-              bookingCurrency !== 'NGN' && bookingSourceNightlyRate > 0
-                ? convertCurrencyToNgn(
-                    bookingSourceNightlyRate,
-                    bookingCurrency,
-                    property.usdExchangeRateNgn
-                  )
-                : baseRateNgn;
-            const estTotal = ratePerNight * Math.max(1, nights);
-            const estPaid = Math.max(0, depositNgn);
-            const estBal = Math.max(0, estTotal - estPaid);
-            const estPayStatus =
-              estBal <= 0 && estTotal > 0 ? 'Paid' : estPaid > 0 ? 'Partial' : 'Unpaid';
-            const estOtaPaid =
-              bookingCollectionMode === 'ota_prepaid' &&
-              channel !== 'Walk-in' &&
-              channel !== 'Website'
-                ? estPaid
-                : 0;
-            const estHotelPaid = estPaid - estOtaPaid;
-            return (
-              <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-xs">
-                <div className="flex flex-wrap items-center gap-4 text-slate-600 font-mono-tabular">
-                  <span>
-                    Total: <strong className="text-slate-900">{formatNgn(estTotal)}</strong>
-                    {bookingCurrency !== 'NGN' && (
-                      <span className="text-blue-700 ml-1">
-                        (
-                        {formatChannelCurrency(
-                          (bookingSourceNightlyRate > 0
-                            ? bookingSourceNightlyRate
-                            : Number(
-                                (
-                                  ratePerNight /
-                                  getFxRateToNgn(bookingCurrency, property.usdExchangeRateNgn)
-                                ).toFixed(2)
-                              )) * Math.max(1, nights),
-                          bookingCurrency
-                        )}{' '}
-                        {bookingCurrency})
-                      </span>
-                    )}
-                  </span>
-                  <span>
-                    OTA received: <strong className="text-emerald-700">{formatNgn(estOtaPaid)}</strong>
-                  </span>
-                  <span>
-                    Hotel received: <strong className="text-slate-900">{formatNgn(estHotelPaid)}</strong>
-                  </span>
-                  <span>
-                    Guest balance: <strong className="text-slate-900">{formatNgn(estBal)}</strong>
-                  </span>
-                  <span>
-                    Payment Status:{' '}
-                    <strong
-                      className={
-                        estPayStatus === 'Paid'
-                          ? 'text-emerald-700'
-                          : estPayStatus === 'Partial'
-                            ? 'text-amber-700'
-                            : 'text-rose-700'
-                      }
-                    >
-                      {estPayStatus}
-                    </strong>
-                  </span>
-                </div>
-                <span className="text-slate-500">Date Booked: {todayIso}</span>
-              </div>
-            );
-          })()}
-
-          <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-            <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={immediateCheckIn}
-                onChange={(e) => setImmediateCheckIn(e.target.checked)}
-                className="rounded border-slate-300 text-emerald-600"
-              />
-              <span>Immediate Front Desk Check-In (requires verification steps)</span>
-            </label>
-
-            <button
-              type="submit"
-              disabled={
-                busyId === 'booking' ||
-                (immediateCheckIn &&
-                  (!inlinePayConfirmed ||
-                    !inlineIdVerified ||
-                    inlineIdNumber.trim().length < 3 ||
-                    inlineKeyIssued !== 'yes' ||
-                    !inlineRoomReady))
-              }
-              className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
-            >
-              {busyId === 'booking'
-                ? 'Saving...'
-                : immediateCheckIn
-                  ? 'Verify & Check In Guest'
-                  : 'Create Confirmed Reservation'}
-            </button>
-          </div>
-
-          {immediateCheckIn && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
-              <p className="font-bold text-slate-900">
-                Mandatory Check-In Process (Required for Immediate Check-In)
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Guest ID Type</label>
-                  <select
-                    value={inlineIdType}
-                    onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="NIN">NIN</option>
-                    <option value="International Passport">International Passport</option>
-                    <option value="Driver License">Driver License</option>
-                    <option value="Voter Card">Voter Card</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Guest ID Number *</label>
-                  <input
-                    type="text"
-                    required
-                    value={inlineIdNumber}
-                    onChange={(e) => setInlineIdNumber(e.target.value)}
-                    placeholder="Enter NIN / Passport / License No."
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={inlinePayConfirmed}
-                    onChange={(e) => setInlinePayConfirmed(e.target.checked)}
-                  />
-                  <span>1. Payment Confirmed</span>
-                </label>
-                <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={inlineIdVerified}
-                    onChange={(e) => setInlineIdVerified(e.target.checked)}
-                  />
-                  <span>2. Guest ID Verified</span>
-                </label>
-                <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={inlineRoomReady}
-                    onChange={(e) => setInlineRoomReady(e.target.checked)}
-                  />
-                  <span>3. Suite Inspected Ready</span>
-                </label>
-              </div>
-              <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
-                <span className="font-semibold text-slate-800">4. Key Issued? *</span>
-                <div className="inline-flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setInlineKeyIssued('yes')}
-                    className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
-                      inlineKeyIssued === 'yes'
-                        ? 'bg-emerald-600 border-emerald-600 text-white'
-                        : 'bg-white border-slate-200 text-slate-700'
-                    }`}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInlineKeyIssued('no')}
-                    className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
-                      inlineKeyIssued === 'no'
-                        ? 'bg-rose-600 border-rose-600 text-white'
-                        : 'bg-white border-slate-200 text-slate-700'
-                    }`}
-                  >
-                    No
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </form>
-      )}
-
-      {/* Register Guest Form */}
-      {showGuestForm && section === 'guests' && (
-        <form
-          onSubmit={handleCreateGuest}
-          className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
-        >
-          <h2 className="font-display text-sm font-bold text-slate-900">
-            Register New Guest Profile (KYC)
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">First Name *</label>
-              <input
-                required
-                type="text"
-                value={newGuestFirstName}
-                onChange={(e) => setNewGuestFirstName(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
-              <input
-                required
-                type="text"
-                value={newGuestLastName}
-                onChange={(e) => setNewGuestLastName(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Phone *</label>
-              <input
-                required
-                type="text"
-                value={newGuestPhone}
-                onChange={(e) => setNewGuestPhone(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-              />
-            </div>
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Email Address</label>
-              <input
-                type="email"
-                value={newGuestEmail}
-                onChange={(e) => setNewGuestEmail(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">City</label>
-              <input
-                type="text"
-                value={newGuestCity}
-                onChange={(e) => setNewGuestCity(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">Residential / Office Address</label>
-              <input
-                type="text"
-                value={newGuestAddress}
-                onChange={(e) => setNewGuestAddress(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2"
-              />
-            </div>
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">ID Type</label>
-              <select
-                value={newGuestIdType}
-                onChange={(e) => setNewGuestIdType(e.target.value as GuestRecord['idType'])}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-              >
-                <option value="NIN">NIN</option>
-                <option value="International Passport">International Passport</option>
-                <option value="Driver License">Driver License</option>
-                <option value="Voter Card">Voter Card</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">ID Number</label>
-                <input
-                  type="text"
-                  value={newGuestIdNumber}
-                  onChange={(e) => setNewGuestIdNumber(e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">VIP Tier</label>
-                <select
-                  value={newGuestVip}
-                  onChange={(e) => setNewGuestVip(e.target.value as GuestRecord['vipTier'])}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white"
-                >
-                  <option value="Standard">Standard</option>
-                  <option value="Silver">Silver VIP</option>
-                  <option value="Gold">Gold VIP</option>
-                  <option value="Diplomatic">Diplomatic</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setShowGuestForm(false)}
-              className="px-4 py-2 text-xs text-slate-600 hover:text-slate-900"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busyId === 'guest'}
-              className="px-4 py-2 text-xs font-semibold bg-emerald-600 text-white rounded-lg cursor-pointer"
-            >
-              Save Guest Profile
-            </button>
-          </div>
         </form>
       )}
 
@@ -2838,7 +2305,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       key={room.id}
                       className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col justify-between"
                     >
-                      <div className="h-40 bg-slate-100 relative overflow-hidden">
+                      <div
+                        onClick={() => setSelectedRoomDetailId(room.id)}
+                        className="h-40 bg-slate-100 relative overflow-hidden cursor-pointer group"
+                      >
                         <img
                           src={room.imageUrl || DEFAULT_SUITE_IMAGE}
                           alt={room.name}
@@ -2846,13 +2316,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           onError={(e) => {
                             (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
                           }}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/15 to-transparent" />
                         {canManageRooms && (
                           <button
                             type="button"
-                            onClick={() => openRoomEditor(room)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openRoomEditor(room);
+                            }}
                             className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/75 hover:bg-slate-950 text-white text-[11px] font-medium backdrop-blur-sm cursor-pointer"
                           >
                             <SlidersHorizontal className="w-3 h-3" />
@@ -2875,7 +2348,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between text-xs text-slate-600">
-                            <span className="truncate pr-2">{room.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRoomDetailId(room.id)}
+                              className="truncate pr-2 font-medium text-slate-700 hover:text-emerald-700 hover:underline text-left cursor-pointer"
+                            >
+                              {room.name}
+                            </button>
                             <span className="font-mono-tabular shrink-0">
                               Max {room.maxGuests}
                             </span>
@@ -2954,13 +2433,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             <strong className="text-slate-900">{room.housekeepingStatus}</strong>
                           </span>
                           <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRoomDetailId(room.id)}
+                              className="px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 font-medium text-slate-700 cursor-pointer"
+                            >
+                              Details
+                            </button>
                             {canManageRooms && (
                               <button
                                 type="button"
                                 onClick={() => openRoomEditor(room)}
                                 className="px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 font-medium text-slate-700 cursor-pointer"
                               >
-                                Manage
+                                Edit
                               </button>
                             )}
                             <button
@@ -3380,8 +2866,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </p>
                       </div>
 
-                      {/* Payment Status & 3-Way Breakdown */}
-                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-w-[205px] space-y-0.5">
+                      {/* Payment Status & Separated OTA / Property Breakdown */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 min-w-[235px] space-y-0.5">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-[10px] font-semibold uppercase text-slate-500">
                             Payment Breakdown
@@ -3398,26 +2884,43 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             {paymentStatus}
                           </span>
                         </div>
-                        <p className="font-mono-tabular font-bold text-slate-900 text-xs">
-                          Total: {formatNgn(totalAmount)}
-                          {sourceCurrency !== 'NGN' && sourceTotalAmount > 0 && (
-                            <span className="ml-1 text-[10px] font-semibold text-blue-700">
-                              ({formatChannelCurrency(sourceTotalAmount, sourceCurrency)} {sourceCurrency})
-                            </span>
-                          )}
-                        </p>
-                        <p className="font-mono-tabular text-[11px] text-emerald-700 font-semibold">
-                          OTA payment received: {formatNgn(otaPaidAmount)}
-                        </p>
-                        <p className="font-mono-tabular text-[11px] text-slate-700">
-                          Hotel payment received: {formatNgn(hotelPaidAmount)}
-                        </p>
+                        {isOtaBookingChannel(res.channel) ? (
+                          <>
+                            <p className="font-mono-tabular text-[11px] text-blue-800 font-semibold">
+                              Paid to OTA:{' '}
+                              {paySummary.otaPaidSourceAmount > 0
+                                ? `${formatChannelCurrency(paySummary.otaPaidSourceAmount, sourceCurrency)} ${sourceCurrency}`
+                                : '₦0'}
+                              {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && (
+                                <span className="text-slate-500 font-normal">
+                                  {' '}
+                                  (≈ {formatNgn(otaPaidAmount)})
+                                </span>
+                              )}
+                            </p>
+                            <p className="font-mono-tabular text-[11px] text-slate-900 font-semibold">
+                              Expected Payout (₦): {formatNgn(paySummary.expectedPayoutNgn)}
+                            </p>
+                            <p className="font-mono-tabular text-[11px] text-emerald-700">
+                              Direct to Property: {formatNgn(hotelPaidAmount)}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-mono-tabular font-bold text-slate-900 text-xs">
+                              Total: {formatNgn(totalAmount)}
+                            </p>
+                            <p className="font-mono-tabular text-[11px] text-emerald-700 font-semibold">
+                              Direct to Property: {formatNgn(hotelPaidAmount)}
+                            </p>
+                          </>
+                        )}
                         <p
                           className={`font-mono-tabular text-[11px] font-bold ${
                             balance > 0 ? 'text-rose-700' : 'text-slate-600'
                           }`}
                         >
-                          Outstanding guest balance: {formatNgn(balance)}
+                          Property Balance Due: {formatNgn(balance)}
                         </p>
                       </div>
                     </div>
@@ -3807,6 +3310,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       totalAmount,
                       otaPaidAmount,
                       hotelPaidAmount,
+                      expectedPayoutNgn,
                       amountPaid,
                       balance,
                       paymentStatus,
@@ -3815,6 +3319,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       sourceTotalAmount,
                       otaPaidSourceAmount,
                     } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
+                    const isOtaRow = isOtaBookingChannel(res.channel);
                     const bookedDate = getReservationBookedDate(res);
                     const adultsCount = res.adults || 1;
                     const kidsCount = res.children || 0;
@@ -3947,28 +3452,46 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
                           <span className="block">{formatNgn(totalAmount)}</span>
-                          {sourceCurrency !== 'NGN' && sourceTotalAmount > 0 && (
+                          {isOtaRow ? (
                             <span className="block text-[10px] font-medium text-blue-700">
-                              {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
-                              {sourceCurrency}
-                              {sourceNightlyRate > 0
-                                ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
-                                : ''}
+                              Exp. Payout: {formatNgn(expectedPayoutNgn)}
                             </span>
+                          ) : (
+                            sourceCurrency !== 'NGN' &&
+                            sourceTotalAmount > 0 && (
+                              <span className="block text-[10px] font-medium text-blue-700">
+                                {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
+                                {sourceCurrency}
+                                {sourceNightlyRate > 0
+                                  ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
+                                  : ''}
+                              </span>
+                            )
                           )}
                         </td>
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular text-emerald-700 whitespace-nowrap">
                           <span className="block font-semibold">{formatNgn(amountPaid)}</span>
-                          <span className="block text-[10px] text-slate-500">
-                            OTA: {formatNgn(otaPaidAmount)}
-                            {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && otaPaidSourceAmount > 0
-                              ? ` (${formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)})`
-                              : ''}
-                          </span>
-                          <span className="block text-[10px] text-slate-500">
-                            Hotel: {formatNgn(hotelPaidAmount)}
-                          </span>
+                          {isOtaRow ? (
+                            <>
+                              <span className="block text-[10px] text-blue-700 font-medium">
+                                Paid to OTA:{' '}
+                                {otaPaidSourceAmount > 0
+                                  ? `${formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)} ${sourceCurrency}`
+                                  : '₦0'}
+                                {sourceCurrency !== 'NGN' && otaPaidAmount > 0
+                                  ? ` (${formatNgn(otaPaidAmount)})`
+                                  : ''}
+                              </span>
+                              <span className="block text-[10px] text-slate-600">
+                                Direct Property: {formatNgn(hotelPaidAmount)}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="block text-[10px] text-slate-500">
+                              Direct Property: {formatNgn(hotelPaidAmount)}
+                            </span>
+                          )}
                         </td>
 
                         <td
@@ -3978,7 +3501,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         >
                           <span className="block">{formatNgn(balance)}</span>
                           <span className="block text-[10px] font-normal text-slate-500">
-                            {balance > 0 ? 'Guest bal due' : '₦0 guest bal'}
+                            {balance > 0 ? 'Property bal due' : '₦0 bal due'}
                           </span>
                         </td>
 
@@ -4216,1080 +3739,2103 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           </div>
         </div>
       )}
+        </>
+      )}
 
-      {/* GUEST PROFILE MODAL */}
-      {selectedGuest && (
-        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-5 my-8">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-3.5">
-                <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-display font-bold text-base flex items-center justify-center shrink-0">
-                  {selectedGuest.fullName
-                    .split(/\s+/)
-                    .slice(0, 2)
-                    .map((n) => n[0]?.toUpperCase() || '')
-                    .join('')}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-display text-lg font-bold text-slate-900">
-                      {selectedGuest.fullName}
-                    </h3>
-                    <span className="text-xs font-semibold text-emerald-700">
-                      · {selectedGuest.vipTier}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 font-mono-tabular">
-                    {selectedGuest.totalStays} stay(s) · Lifetime Spend{' '}
-                    {formatNgn(selectedGuest.lifetimeSpendNgn)}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingGuestMode((v) => !v)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer"
-                >
-                  <Pencil className="w-3 h-3" />
-                  <span>{editingGuestMode ? 'Cancel Edit' : 'Edit Profile'}</span>
-                </button>
-                {canManageRooms && confirmDeleteGuestId !== selectedGuest.id && (
+      {/* DEDICATED FULL PAGES FOR MAJOR OPERATIONS */}
+      {isDedicatedSubpage && (
+        <div className="space-y-6">
+          {editingRoom && canManageRooms ? (
+            <form
+              onSubmit={handleSaveRoomEditor}
+              className="bg-white border border-slate-200 rounded-xl p-6 space-y-6"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    disabled={busyId === selectedGuest.id}
-                    onClick={() => setConfirmDeleteGuestId(selectedGuest.id)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-semibold text-rose-700 cursor-pointer"
+                    onClick={() => setEditingRoom(null)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
                   >
-                    <Trash2 className="w-3 h-3" />
-                    <span>Delete</span>
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back to Rooms</span>
                   </button>
-                )}
-                {canManageRooms && confirmDeleteGuestId === selectedGuest.id && (
-                  <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteGuestId(null)}
-                      className="px-1.5 py-0.5 text-slate-600 cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyId === selectedGuest.id}
-                      onClick={() => void handleDeleteGuest(selectedGuest)}
-                      className="px-2 py-0.5 font-semibold bg-rose-600 text-white rounded cursor-pointer"
-                    >
-                      {busyId === selectedGuest.id ? 'Deleting...' : 'Confirm Delete'}
-                    </button>
+                  <div>
+                    <h2 className="font-display text-lg font-bold text-slate-900">
+                      Edit Room &amp; Rates — {editingRoom.roomNumber}
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Update pricing in Naira (₦), room classification, status, amenities, and room photography ·{' '}
+                      <span className="font-mono-tabular">{systemPropertyId}</span>
+                    </p>
                   </div>
-                )}
+                </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedGuestId(null)}
-                  className="text-slate-400 hover:text-slate-700 cursor-pointer p-1"
+                  onClick={() => {
+                    const id = editingRoom.id;
+                    setEditingRoom(null);
+                    setSelectedRoomDetailId(id);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  <BedDouble className="w-3.5 h-3.5" />
+                  <span>View Room Details</span>
                 </button>
               </div>
-            </div>
 
-            {editingGuestMode ? (
-              <form onSubmit={handleSaveGuestProfile} className="space-y-4 text-xs">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {editRoomError && (
+                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 font-medium">
+                  {editRoomError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Room Code</label>
+                  <input
+                    type="text"
+                    required
+                    value={draftRoomNumber}
+                    onChange={(e) => setDraftRoomNumber(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Property Section</label>
+                  <select
+                    value={draftSection}
+                    onChange={(e) => setDraftSection(e.target.value as RoomSection)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Serviced Apartment">Serviced Apartment Section</option>
+                    <option value="Hotel Rooms">Hotel Rooms</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Room Type</label>
+                  <input
+                    type="text"
+                    required
+                    value={draftRoomType}
+                    onChange={(e) => setDraftRoomType(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Room Display Title</label>
+                  <input
+                    type="text"
+                    required
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Nightly Rate (₦ NGN)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    placeholder="e.g. 87,000"
+                    value={draftRateInput}
+                    onChange={(e) => {
+                      setEditRoomError(null);
+                      handleCommaPriceChange(e, draftRateInput, setDraftRateInput);
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Max Guests</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    required
+                    value={draftMaxGuests}
+                    onChange={(e) => setDraftMaxGuests(Number(e.target.value))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Occupancy Status</label>
+                  <select
+                    value={draftOccupancy}
+                    onChange={(e) =>
+                      setDraftOccupancy(e.target.value as RoomRecord['occupancyStatus'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="vacant">Vacant / Available</option>
+                    <option value="reserved">Reserved</option>
+                    <option value="occupied">Occupied</option>
+                    <option value="out_of_order">Out of Order</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Housekeeping Readiness
+                  </label>
+                  <select
+                    value={draftHousekeeping}
+                    onChange={(e) =>
+                      setDraftHousekeeping(e.target.value as RoomRecord['housekeepingStatus'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="clean">Clean</option>
+                    <option value="inspected">Inspected</option>
+                    <option value="cleaning">Cleaning</option>
+                    <option value="dirty">Dirty</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200 pt-4 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-semibold text-slate-800">
+                    Room Amenities (comma-separated, up to 15)
+                  </label>
+                  <span className="font-mono-tabular text-[11px] text-slate-500">
+                    {
+                      draftAmenitiesText
+                        .split(',')
+                        .map((item) => item.trim())
+                        .filter(Boolean).length
+                    }
+                    /15
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="King Bed, Wi-Fi, Smart TV, Fitted Kitchenette, 24/7 Power"
+                  value={draftAmenitiesText}
+                  onChange={(e) => setDraftAmenitiesText(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs"
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'King Bed',
+                    'Wi-Fi',
+                    'Smart TV',
+                    'Fitted Kitchenette',
+                    '24/7 Power',
+                    'Work Desk',
+                    'Split AC',
+                    'En-Suite Shower',
+                    'Private Balcony',
+                    'Tea & Coffee Station',
+                  ].map((preset) => {
+                    const currentList = draftAmenitiesText
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean);
+                    const isActive = currentList.some(
+                      (item) => item.toLowerCase() === preset.toLowerCase()
+                    );
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          if (isActive) {
+                            setDraftAmenitiesText(
+                              currentList
+                                .filter((item) => item.toLowerCase() !== preset.toLowerCase())
+                                .join(', ')
+                            );
+                          } else if (currentList.length < 15) {
+                            setDraftAmenitiesText([...currentList, preset].join(', '));
+                          }
+                        }}
+                        className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                          isActive
+                            ? 'bg-[#061539] text-white border-[#061539]'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {isActive ? `✓ ${preset}` : `+ ${preset}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800">Room Photography</span>
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">First Name *</label>
                     <input
-                      required
-                      type="text"
-                      value={editGuestFirstName}
-                      onChange={(e) => setEditGuestFirstName(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageFileSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
+                    >
+                      <ImagePlus className="w-3.5 h-3.5" />
+                      <span>Upload Photo from Device</span>
+                    </button>
+                  </div>
+                </div>
+
+                {uploadError && (
+                  <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700">
+                    {uploadError}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+                  <div className="sm:col-span-5 h-36 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+                    <img
+                      src={draftImageUrl || DEFAULT_SUITE_IMAGE}
+                      alt="Room Preview"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
+                      }}
                     />
                   </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                  <div className="sm:col-span-7 space-y-2">
+                    <p className="text-[11px] font-medium text-slate-600">
+                      Or pick from Property Gallery:
+                    </p>
+                    <div className="grid grid-cols-5 gap-2">
+                      {RICHGATES_GALLERY_ASSETS.map((asset) => (
+                        <button
+                          key={asset.id}
+                          type="button"
+                          onClick={() => setDraftImageUrl(asset.url)}
+                          title={asset.label}
+                          className={`h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                            draftImageUrl === asset.url
+                              ? 'border-emerald-600 ring-2 ring-emerald-200'
+                              : 'border-slate-200 hover:border-slate-400'
+                          }`}
+                        >
+                          <img
+                            src={asset.url}
+                            alt={asset.label}
+                            className="w-full h-full object-cover"
+                          />
+                        </button>
+                      ))}
+                    </div>
                     <input
-                      required
                       type="text"
-                      value={editGuestLastName}
-                      onChange={(e) => setEditGuestLastName(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      value={draftImageUrl.startsWith('data:') ? '[Uploaded Device Photo]' : draftImageUrl}
+                      onChange={(e) => setDraftImageUrl(e.target.value)}
+                      placeholder="Or paste custom image URL (/assets/... or https://...)"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
                     />
                   </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingRoom(null)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={busyId === editingRoom.id}
+                  className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
+                >
+                  {busyId === editingRoom.id ? 'Saving Room...' : 'Save Room Changes'}
+                </button>
+              </div>
+            </form>
+          ) : showAddRoomModal && canManageRooms ? (
+            <form
+              onSubmit={handleCreateNewRoom}
+              className="bg-white border border-slate-200 rounded-xl p-6 space-y-6"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddRoomModal(false)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back to Rooms</span>
+                  </button>
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                    <h2 className="font-display text-lg font-bold text-slate-900">Add New Room</h2>
+                    <p className="text-xs text-slate-500">
+                      Create a new room with room code, section, room type, and nightly Naira rate ·{' '}
+                      <span className="font-mono-tabular">{systemPropertyId}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {addRoomError && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+                  {addRoomError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Room Code</label>
+                  <input
+                    type="text"
+                    required
+                    value={newRoomNumber}
+                    onChange={(e) => setNewRoomNumber(e.target.value)}
+                    placeholder="e.g. RM-9"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular uppercase"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Property Section</label>
+                  <select
+                    value={newRoomSection}
+                    onChange={(e) => setNewRoomSection(e.target.value as RoomSection)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="Serviced Apartment">Serviced Apartment Section</option>
+                    <option value="Hotel Rooms">Hotel Rooms</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Room Type</label>
+                  <input
+                    type="text"
+                    required
+                    value={newRoomType}
+                    onChange={(e) => setNewRoomType(e.target.value)}
+                    placeholder="e.g. Deluxe Studio with Kitchenette"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Room Display Title</label>
+                  <input
+                    type="text"
+                    required
+                    value={newRoomName}
+                    onChange={(e) => setNewRoomName(e.target.value)}
+                    placeholder="e.g. Garden View Studio 9"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Nightly Rate (₦ NGN)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    placeholder="e.g. 65,500"
+                    value={newRoomRateInput}
+                    onChange={(e) => {
+                      setAddRoomError(null);
+                      handleCommaPriceChange(e, newRoomRateInput, setNewRoomRateInput);
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Max Guests</label>
                     <input
+                      type="number"
+                      min={1}
+                      max={12}
                       required
-                      type="text"
-                      value={editGuestPhone}
-                      onChange={(e) => setEditGuestPhone(e.target.value)}
+                      value={newRoomMaxGuests}
+                      onChange={(e) => setNewRoomMaxGuests(Number(e.target.value))}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
                     />
                   </div>
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Email</label>
+                    <label className="block font-medium text-slate-700 mb-1">Floor</label>
                     <input
-                      type="email"
-                      value={editGuestEmail}
-                      onChange={(e) => setEditGuestEmail(e.target.value)}
+                      type="number"
+                      min={0}
+                      max={20}
+                      required
+                      value={newRoomFloor}
+                      onChange={(e) => setNewRoomFloor(Number(e.target.value))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                    />
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Amenities (comma-separated)
+                  </label>
+                  <input
+                    type="text"
+                    value={newRoomAmenitiesText}
+                    onChange={(e) => setNewRoomAmenitiesText(e.target.value)}
+                    placeholder="King Bed, Wi-Fi, Kitchenette, Smart TV, 24/7 Power"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800">Room Photography</span>
+                  <div>
+                    <input
+                      ref={addRoomFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAddRoomImageSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addRoomFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
+                    >
+                      <ImagePlus className="w-3.5 h-3.5" />
+                      <span>Upload Photo</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+                  <div className="sm:col-span-5 h-32 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+                    <img
+                      src={newRoomImageUrl || DEFAULT_SUITE_IMAGE}
+                      alt="New Room Preview"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
+                      }}
+                    />
+                  </div>
+                  <div className="sm:col-span-7 space-y-2">
+                    <div className="grid grid-cols-5 gap-2">
+                      {RICHGATES_GALLERY_ASSETS.map((asset) => (
+                        <button
+                          key={asset.id}
+                          type="button"
+                          onClick={() => setNewRoomImageUrl(asset.url)}
+                          title={asset.label}
+                          className={`h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                            newRoomImageUrl === asset.url
+                              ? 'border-emerald-600 ring-2 ring-emerald-200'
+                              : 'border-slate-200 hover:border-slate-400'
+                          }`}
+                        >
+                          <img
+                            src={asset.url}
+                            alt={asset.label}
+                            className="w-full h-full object-cover"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      value={
+                        newRoomImageUrl.startsWith('data:')
+                          ? '[Uploaded Device Photo]'
+                          : newRoomImageUrl
+                      }
+                      onChange={(e) => setNewRoomImageUrl(e.target.value)}
+                      placeholder="Or paste custom photo URL..."
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddRoomModal(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={busyId === 'add-room' || atRoomCapacity}
+                  className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
+                >
+                  {busyId === 'add-room' ? 'Adding Room...' : 'Create Room'}
+                </button>
+              </div>
+            </form>
+          ) : activeFolioReservation ? (
+            (() => {
+              const folioPaySummary = getReservationPaymentSummary(
+                activeFolioReservation,
+                property.usdExchangeRateNgn
+              );
+              const folioIsOta = isOtaBookingChannel(activeFolioReservation.channel);
+              const editIsOta = isOtaBookingChannel(editChannel);
+              const activeEditCur: ChannelCurrency = editIsOta ? editSourceCurrency : 'NGN';
+              const parsedEditFxNum =
+                activeEditCur === 'NGN'
+                  ? 1
+                  : Math.max(
+                      1,
+                      parseFormattedPriceInput(editFxRateInput) ??
+                        getFxRateToNgn(activeEditCur, property.usdExchangeRateNgn)
+                    );
+              const parsedEditOtaSrc = Math.max(
+                0,
+                parseFormattedPriceInput(editOtaPaidSourceInput) ?? 0
+              );
+              const convertedEditOtaNgn =
+                activeEditCur === 'NGN'
+                  ? Math.round(parsedEditOtaSrc)
+                  : Math.round(parsedEditOtaSrc * parsedEditFxNum);
+
+              return (
+                <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                    <div className="flex items-start gap-3">
+                      <button
+                        type="button"
+                        onClick={() => onSelectReservation?.(null)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>Back</span>
+                      </button>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                          <span className="font-mono-tabular font-bold text-slate-900">
+                            {activeFolioReservation.bookingRef}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-mono-tabular font-semibold text-emerald-700">
+                            {getReservationRoomDisplay(activeFolioReservation, rooms).roomNumberLabel}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            {getReservationRoomDisplay(activeFolioReservation, rooms).roomTypeLabel}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>{formatBookingSourceLabel(activeFolioReservation.channel)}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-mono-tabular">
+                            Booked {getReservationBookedDate(activeFolioReservation)}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-mono-tabular text-slate-400">{systemPropertyId}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 mt-1">
+                          <h2 className="font-display text-lg font-bold text-slate-900">
+                            Reservation &amp; Folio — {activeFolioReservation.guestName}
+                          </h2>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const target = activeFolioReservation;
+                              onSelectReservation?.(null);
+                              openGuestByReservation(target);
+                            }}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+                          >
+                            <UserCircle2 className="w-3.5 h-3.5" />
+                            <span>View Guest Profile</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stay Lifecycle Indicator */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                    {[
+                      { label: '1. Reservation Booked', active: true },
+                      {
+                        label:
+                          activeFolioReservation.status === 'pending'
+                            ? '2. Awaiting Confirmation'
+                            : '2. Confirmed',
+                        active: activeFolioReservation.status !== 'pending',
+                      },
+                      {
+                        label: '3. Checked-in / Folio',
+                        active:
+                          activeFolioReservation.status === 'checked_in' ||
+                          activeFolioReservation.status === 'checked_out',
+                      },
+                      {
+                        label: '4. Checked-out & Settled',
+                        active: activeFolioReservation.status === 'checked_out',
+                      },
+                    ].map((step) => (
+                      <div
+                        key={step.label}
+                        className={`px-3 py-2 rounded-lg border font-semibold ${
+                          step.active
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-slate-50 border-slate-200 text-slate-500'
+                        }`}
+                      >
+                        {step.label}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Separated OTA & Property Payment Summary Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                    <div className="border border-blue-200 bg-blue-50/50 rounded-xl p-3.5">
+                      <p className="text-[11px] font-semibold text-blue-900">
+                        {folioIsOta
+                          ? `Guest Paid to OTA (${folioPaySummary.sourceCurrency})`
+                          : 'OTA Payment Recorded'}
+                      </p>
+                      <p className="font-mono-tabular text-base font-bold text-blue-800 mt-1">
+                        {folioIsOta
+                          ? `${formatChannelCurrency(
+                              folioPaySummary.otaPaidSourceAmount,
+                              folioPaySummary.sourceCurrency
+                            )} ${folioPaySummary.sourceCurrency}`
+                          : '₦0'}
+                      </p>
+                      {folioIsOta &&
+                        folioPaySummary.sourceCurrency !== 'NGN' &&
+                        folioPaySummary.otaPaidSourceAmount > 0 && (
+                          <p className="font-mono-tabular text-[11px] text-blue-700 mt-0.5">
+                            ≈ {formatNgn(folioPaySummary.otaPaidAmount)} @ ₦
+                            {folioPaySummary.fxRateToNgn.toLocaleString('en-NG')}
+                          </p>
+                        )}
+                    </div>
+
+                    <div className="border border-slate-200 bg-slate-50 rounded-xl p-3.5">
+                      <p className="text-[11px] font-semibold text-slate-700">
+                        {folioIsOta ? 'Expected Property Payout (₦)' : 'Room Charges Total (₦)'}
+                      </p>
+                      <p className="font-mono-tabular text-base font-bold text-slate-900 mt-1">
+                        {formatNgn(
+                          folioIsOta
+                            ? folioPaySummary.expectedPayoutNgn
+                            : activeFolioReservation.roomChargesNgn
+                        )}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5 font-mono-tabular">
+                        {activeFolioReservation.nights} night(s)
+                      </p>
+                    </div>
+
+                    <div className="border border-emerald-200 bg-emerald-50/50 rounded-xl p-3.5">
+                      <p className="text-[11px] font-semibold text-emerald-900">
+                        Direct Payment to Property (₦)
+                      </p>
+                      <p className="font-mono-tabular text-base font-bold text-emerald-800 mt-1">
+                        {formatNgn(folioPaySummary.hotelPaidAmount)}
+                      </p>
+                      <p className="text-[11px] text-emerald-700 mt-0.5">
+                        Cash / POS / Bank Transfer at property
+                      </p>
+                    </div>
+
+                    <div className="border border-slate-200 bg-white rounded-xl p-3.5">
+                      <p className="text-[11px] font-semibold text-slate-700">
+                        Remaining Property Balance Due
+                      </p>
+                      <p
+                        className={`font-mono-tabular text-base font-bold mt-1 ${
+                          folioPaySummary.balance > 0 ? 'text-rose-700' : 'text-emerald-700'
+                        }`}
+                      >
+                        {formatNgn(folioPaySummary.balance)}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Status: <strong>{folioPaySummary.paymentStatus}</strong>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Stay Summary & Full Reservation Editor */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
+                      <div className="space-y-0.5">
+                        <span className="font-mono-tabular text-slate-700 block">
+                          Stay: <strong>{activeFolioReservation.checkInDate}</strong> →{' '}
+                          <strong>{activeFolioReservation.checkOutDate}</strong> (
+                          {activeFolioReservation.nights} nights @{' '}
+                          {formatNgn(activeFolioReservation.nightlyRateNgn)}/nt)
+                        </span>
+                        <span className="text-[11px] text-slate-500 block">
+                          Guests:{' '}
+                          <strong className="text-slate-700 font-mono-tabular">
+                            {activeFolioReservation.adults} Adult
+                            {activeFolioReservation.adults !== 1 ? 's' : ''},{' '}
+                            {activeFolioReservation.children || 0} Child
+                            {(activeFolioReservation.children || 0) !== 1 ? 'ren' : ''}
+                          </strong>{' '}
+                          · Source:{' '}
+                          <strong className="text-slate-700">
+                            {formatBookingSourceLabel(activeFolioReservation.channel)}
+                          </strong>
+                          {activeFolioReservation.paymentConfirmed && ' · Payment Verified'}
+                          {activeFolioReservation.idVerified &&
+                            ` · ID Verified (${activeFolioReservation.idType || 'KYC'})`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {activeFolioReservation.status !== 'checked_out' &&
+                          activeFolioReservation.status !== 'cancelled' &&
+                          activeFolioReservation.status !== 'no_show' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingStayDetails((v) => !v);
+                                setEditStayError(null);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-100 rounded-md text-[11px] font-semibold text-slate-700 cursor-pointer"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>{editingStayDetails ? 'Close Editor' : 'Edit Reservation'}</span>
+                            </button>
+                          )}
+                        <span className="font-semibold text-emerald-700">
+                          Status: {RESERVATION_STATUS_LABELS[activeFolioReservation.status]}
+                        </span>
+                      </div>
+                    </div>
+
+                    {editingStayDetails && (
+                      <div className="bg-white border border-emerald-200 rounded-lg p-4 space-y-3">
+                        {editStayError && (
+                          <p className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-[11px]">
+                            {editStayError}
+                          </p>
+                        )}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Guest First Name *
+                            </label>
+                            <input
+                              type="text"
+                              value={editGuestFirstNameRes}
+                              onChange={(e) => setEditGuestFirstNameRes(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Guest Last Name *
+                            </label>
+                            <input
+                              type="text"
+                              value={editGuestLastNameRes}
+                              onChange={(e) => setEditGuestLastNameRes(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">Guest Phone</label>
+                            <input
+                              type="text"
+                              value={editGuestPhoneRes}
+                              onChange={(e) => setEditGuestPhoneRes(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">Room</label>
+                            <select
+                              value={editRoomId}
+                              onChange={(e) => {
+                                const nextId = e.target.value;
+                                const matchedRoom = rooms.find((r) => r.id === nextId);
+                                setEditRoomId(nextId);
+                                if (matchedRoom) setEditRequestedRoomType(matchedRoom.roomType);
+                                setEditStayError(null);
+                              }}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                            >
+                              <option value="">Unassigned — Assign later</option>
+                              {sortedRooms.map((r) => (
+                                <option key={r.id} value={r.id}>
+                                  {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          {editRoomId === '' && (
+                            <div>
+                              <label className="block font-medium text-slate-700 mb-1">
+                                Requested Room Type
+                              </label>
+                              <select
+                                value={editRequestedRoomType}
+                                onChange={(e) => setEditRequestedRoomType(e.target.value)}
+                                className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                              >
+                                {uniqueRoomTypes.map((rt) => (
+                                  <option key={rt} value={rt}>
+                                    {rt}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Check-In Date
+                            </label>
+                            <input
+                              type="date"
+                              value={editCheckInDate}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setEditCheckInDate(val);
+                                if (val && editCheckOutDate <= val) {
+                                  setEditCheckOutDate(addDaysIso(val, 1));
+                                }
+                                setEditStayError(null);
+                              }}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Check-Out Date
+                            </label>
+                            <input
+                              type="date"
+                              min={editCheckInDate ? addDaysIso(editCheckInDate, 1) : undefined}
+                              value={editCheckOutDate}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const safeOut =
+                                  editCheckInDate && raw && raw <= editCheckInDate
+                                    ? addDaysIso(editCheckInDate, 1)
+                                    : raw;
+                                setEditCheckOutDate(safeOut);
+                                setEditStayError(null);
+                              }}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Adults / Children
+                            </label>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <input
+                                type="number"
+                                min={1}
+                                value={editAdults}
+                                onChange={(e) => setEditAdults(Math.max(1, Number(e.target.value)))}
+                                className="w-full border border-slate-200 rounded-lg px-2 py-1.5 font-mono-tabular"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                value={editChildren}
+                                onChange={(e) =>
+                                  setEditChildren(Math.max(0, Number(e.target.value)))
+                                }
+                                className="w-full border border-slate-200 rounded-lg px-2 py-1.5 font-mono-tabular"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Booking Source
+                            </label>
+                            <select
+                              value={editChannel}
+                              onChange={(e) => {
+                                const nextCh = e.target.value as ReservationRecord['channel'];
+                                setEditChannel(nextCh);
+                                if (!isOtaBookingChannel(nextCh)) {
+                                  setEditSourceCurrency('NGN');
+                                  setEditFxRateInput('1');
+                                  setEditOtaPaidSourceInput('0');
+                                }
+                              }}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                            >
+                              {PRIMARY_BOOKING_SOURCES.map((src) => (
+                                <option key={src.value} value={src.value}>
+                                  {src.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Reservation Status
+                            </label>
+                            <select
+                              value={editStatus}
+                              onChange={(e) => setEditStatus(e.target.value as ReservationStatus)}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                            >
+                              <option value="confirmed">Confirmed</option>
+                              <option value="pending">Pending</option>
+                              <option value="checked_in">Checked-in</option>
+                              <option value="checked_out">Checked-out</option>
+                              <option value="cancelled">Cancelled</option>
+                              <option value="no_show">No-show</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block font-medium text-slate-700 mb-1">
+                              Payment Method
+                            </label>
+                            <select
+                              value={editPaymentMethodRes}
+                              onChange={(e) =>
+                                setEditPaymentMethodRes(
+                                  e.target.value as ReservationRecord['paymentMethod']
+                                )
+                              }
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                            >
+                              <option value="Bank Transfer">Bank Transfer</option>
+                              <option value="Card POS">Card POS</option>
+                              <option value="Cash NGN">Cash NGN</option>
+                              <option value="Corporate Invoice">Corporate Invoice</option>
+                              <option value="Online Gateway">Online Gateway</option>
+                            </select>
+                          </div>
+
+                          {editIsOta && (
+                            <>
+                              <div>
+                                <label className="block font-medium text-slate-700 mb-1">
+                                  Original OTA Currency &amp; FX (₦)
+                                </label>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <select
+                                    value={editSourceCurrency}
+                                    onChange={(e) => {
+                                      const cur = e.target.value as ChannelCurrency;
+                                      setEditSourceCurrency(cur);
+                                      setEditFxRateInput(
+                                        cur === 'NGN'
+                                          ? '1'
+                                          : formatPriceInputWithCommas(
+                                              getFxRateToNgn(cur, property.usdExchangeRateNgn)
+                                            )
+                                      );
+                                    }}
+                                    className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white font-semibold"
+                                  >
+                                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                                      <option key={cur} value={cur}>
+                                        {cur}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    disabled={editSourceCurrency === 'NGN'}
+                                    value={editSourceCurrency === 'NGN' ? '1' : editFxRateInput}
+                                    onChange={(e) =>
+                                      handleCommaPriceChange(e, editFxRateInput, setEditFxRateInput)
+                                    }
+                                    placeholder="FX Rate"
+                                    className="w-full border border-slate-200 rounded-lg px-2 py-1.5 font-mono-tabular disabled:bg-slate-50"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block font-medium text-blue-900 mb-1">
+                                  Guest Paid to OTA ({activeEditCur})
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={editOtaPaidSourceInput}
+                                  onChange={(e) =>
+                                    handleCommaPriceChange(
+                                      e,
+                                      editOtaPaidSourceInput,
+                                      setEditOtaPaidSourceInput
+                                    )
+                                  }
+                                  placeholder="0.00"
+                                  className="w-full border border-blue-200 rounded-lg px-2.5 py-1.5 font-mono-tabular font-semibold"
+                                />
+                                {activeEditCur !== 'NGN' && parsedEditOtaSrc > 0 && (
+                                  <span className="text-[10px] text-blue-700 font-mono-tabular block mt-0.5">
+                                    ≈ {formatNgn(convertedEditOtaNgn)}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div>
+                                <label className="block font-medium text-slate-700 mb-1">
+                                  Expected Property Payout (₦)
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={editExpectedPayoutInput}
+                                  onChange={(e) =>
+                                    handleCommaPriceChange(
+                                      e,
+                                      editExpectedPayoutInput,
+                                      setEditExpectedPayoutInput
+                                    )
+                                  }
+                                  placeholder="e.g. 165,000"
+                                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular font-semibold"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          <div>
+                            <label className="block font-medium text-emerald-900 mb-1">
+                              {editIsOta
+                                ? 'Additional Direct Payment to Property (₦)'
+                                : 'Direct Payment to Property (₦)'}
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={editHotelPaidInput}
+                              onChange={(e) =>
+                                handleCommaPriceChange(e, editHotelPaidInput, setEditHotelPaidInput)
+                              }
+                              placeholder="0"
+                              className="w-full border border-emerald-200 rounded-lg px-2.5 py-1.5 font-mono-tabular font-semibold"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-2 border-t border-slate-100">
+                          <span className="text-slate-500 font-mono-tabular">
+                            Updated Stay: {diffNights(editCheckInDate, editCheckOutDate)} night(s)
+                            {editIsOta
+                              ? ` · Exp. Payout ${formatNgn(
+                                  Math.round(
+                                    parseFormattedPriceInput(editExpectedPayoutInput) ?? 0
+                                  )
+                                )}`
+                              : ` · Room Total ${formatNgn(
+                                  (rooms.find((r) => r.id === editRoomId)?.nightlyRateNgn ||
+                                    activeFolioReservation.nightlyRateNgn) *
+                                    diffNights(editCheckInDate, editCheckOutDate)
+                                )}`}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={busyId === `stay-${activeFolioReservation.id}`}
+                            onClick={() => handleSaveStayDetails(activeFolioReservation)}
+                            className="inline-flex items-center gap-1 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>Save Reservation Changes</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">
+                          Room Accommodation ({activeFolioReservation.nights} nights)
+                        </span>
+                        <span className="font-mono-tabular font-semibold text-slate-900">
+                          {formatNgn(activeFolioReservation.roomChargesNgn)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Restaurant POS / Misc Folio Charges</span>
+                        <span className="font-mono-tabular font-semibold text-slate-900">
+                          {formatNgn(activeFolioReservation.posChargesNgn)}
+                        </span>
+                      </div>
+                      {(activeFolioReservation.lateCheckoutFeeNgn || 0) > 0 && (
+                        <div className="flex justify-between text-amber-800">
+                          <span>
+                            Late Check-Out Fee ({activeFolioReservation.checkOutTime || '14:00'})
+                          </span>
+                          <span className="font-mono-tabular font-semibold">
+                            {formatNgn(activeFolioReservation.lateCheckoutFeeNgn || 0)}
+                          </span>
+                        </div>
+                      )}
+                      {activeFolioReservation.status === 'cancelled' &&
+                        activeFolioReservation.cancellationType === 'paid' && (
+                          <div className="flex justify-between text-rose-700">
+                            <span>Cancellation Fee Applied</span>
+                            <span className="font-mono-tabular font-semibold">
+                              {formatNgn(activeFolioReservation.cancellationFeeNgn || 0)}
+                            </span>
+                          </div>
+                        )}
+                      <div className="flex justify-between pt-1.5 border-t border-slate-200/70">
+                        <span className="text-slate-700 font-semibold">Total Folio Charges (₦)</span>
+                        <span className="font-mono-tabular font-bold text-slate-900">
+                          {formatNgn(folioPaySummary.totalAmount)}
+                        </span>
+                      </div>
+                      {folioIsOta && (
+                        <>
+                          <div className="flex justify-between text-blue-800">
+                            <span>
+                              Guest Paid to OTA ({activeFolioReservation.channel} · Orig.{' '}
+                              {folioPaySummary.sourceCurrency})
+                            </span>
+                            <span className="font-mono-tabular font-semibold">
+                              {formatChannelCurrency(
+                                folioPaySummary.otaPaidSourceAmount,
+                                folioPaySummary.sourceCurrency
+                              )}{' '}
+                              {folioPaySummary.sourceCurrency}
+                              {folioPaySummary.sourceCurrency !== 'NGN' &&
+                                folioPaySummary.otaPaidAmount > 0 && (
+                                  <span className="ml-1 text-[11px] font-normal text-blue-700">
+                                    (≈ {formatNgn(folioPaySummary.otaPaidAmount)})
+                                  </span>
+                                )}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-slate-700">
+                            <span>Expected Property Payout (₦)</span>
+                            <span className="font-mono-tabular font-semibold text-slate-900">
+                              {formatNgn(folioPaySummary.expectedPayoutNgn)}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                      <div className="flex justify-between text-emerald-800">
+                        <span>Additional Direct Payment to Property (₦)</span>
+                        <span className="font-mono-tabular font-semibold">
+                          {formatNgn(folioPaySummary.hotelPaidAmount)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-slate-900">
+                        <span>
+                          Remaining Property Balance Due ({folioPaySummary.paymentStatus})
+                        </span>
+                        <span
+                          className={`font-mono-tabular ${
+                            folioPaySummary.balance > 0 ? 'text-rose-700' : 'text-emerald-700'
+                          }`}
+                        >
+                          {formatNgn(folioPaySummary.balance)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {cms.brand.folioFooterNote && (
+                      <p className="text-[11px] text-slate-500 pt-1">{cms.brand.folioFooterNote}</p>
+                    )}
+                  </div>
+
+                  {activeFolioReservation.status !== 'checked_out' &&
+                    activeFolioReservation.status !== 'cancelled' &&
+                    activeFolioReservation.status !== 'no_show' && (
+                      <div className="space-y-3 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                            <p className="font-semibold text-slate-900">
+                              Post Direct Payment to Property Folio (₦)
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="number"
+                                min={500}
+                                step={500}
+                                value={folioPayAmount}
+                                onChange={(e) => setFolioPayAmount(Number(e.target.value))}
+                                className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                              />
+                              <select
+                                value={folioPayMethod}
+                                onChange={(e) =>
+                                  setFolioPayMethod(
+                                    e.target.value as ReservationRecord['paymentMethod']
+                                  )
+                                }
+                                className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                              >
+                                <option value="Bank Transfer">Bank Transfer</option>
+                                <option value="Card POS">Card POS</option>
+                                <option value="Cash NGN">Cash NGN</option>
+                                <option value="Corporate Invoice">Corporate Invoice</option>
+                                <option value="Online Gateway">Online Gateway</option>
+                              </select>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={busyId === activeFolioReservation.id || folioPayAmount <= 0}
+                              onClick={async () => {
+                                setActionError(null);
+                                setBusyId(activeFolioReservation.id);
+                                try {
+                                  await recordReservationFolioPayment({
+                                    property,
+                                    reservation: activeFolioReservation,
+                                    amountNgn: folioPayAmount,
+                                    paymentMethod: folioPayMethod,
+                                    actorRole,
+                                  });
+                                  onNotify(
+                                    `Posted ${formatNgn(folioPayAmount)} direct payment to ${activeFolioReservation.bookingRef}`
+                                  );
+                                } catch (err) {
+                                  setActionError(parseReadableError(err));
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              }}
+                              className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                            >
+                              Post Direct Payment
+                            </button>
+                          </div>
+
+                          <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                            <p className="font-semibold text-slate-900">
+                              Add Folio / Extra Service Charge
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                value={miscChargeDesc}
+                                onChange={(e) => setMiscChargeDesc(e.target.value)}
+                                placeholder="Service label"
+                                className="border border-slate-200 rounded-lg px-2.5 py-1.5"
+                              />
+                              <input
+                                type="number"
+                                min={500}
+                                step={500}
+                                value={miscChargeAmount}
+                                onChange={(e) => setMiscChargeAmount(Number(e.target.value))}
+                                className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              disabled={
+                                busyId === activeFolioReservation.id || miscChargeAmount <= 0
+                              }
+                              onClick={async () => {
+                                setActionError(null);
+                                setBusyId(activeFolioReservation.id);
+                                try {
+                                  await addMiscFolioCharge({
+                                    property,
+                                    reservation: activeFolioReservation,
+                                    amountNgn: miscChargeAmount,
+                                    description: miscChargeDesc.trim() || 'Extra Service Charge',
+                                    actorRole,
+                                  });
+                                  onNotify(
+                                    `Added ${formatNgn(miscChargeAmount)} charge to ${activeFolioReservation.bookingRef}`
+                                  );
+                                } catch (err) {
+                                  setActionError(parseReadableError(err));
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              }}
+                              className="w-full py-1.5 border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-semibold rounded-lg cursor-pointer"
+                            >
+                              Add Charge to Folio
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Late Check-Out Fee & Checkout Time Card */}
+                        <div className="border border-amber-200 bg-amber-50/50 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                          <div className="grid grid-cols-2 gap-3 flex-1">
+                            <div>
+                              <label className="block font-semibold text-slate-800 mb-1">
+                                <span className="inline-flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5 text-amber-700" />
+                                  <span>Check-Out Time</span>
+                                </span>
+                              </label>
+                              <input
+                                type="time"
+                                value={lateCheckoutTime}
+                                onChange={(e) => setLateCheckoutTime(e.target.value)}
+                                className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                              />
+                            </div>
+                            <div>
+                              <label className="block font-semibold text-slate-800 mb-1">
+                                Late Check-Out Fee (₦)
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                step={500}
+                                value={lateCheckoutFeeDraft}
+                                onChange={(e) =>
+                                  setLateCheckoutFeeDraft(Math.max(0, Number(e.target.value)))
+                                }
+                                className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 font-mono-tabular"
+                              />
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={busyId === `late-${activeFolioReservation.id}`}
+                            onClick={() => void handleApplyLateCheckout(activeFolioReservation)}
+                            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                          >
+                            {busyId === `late-${activeFolioReservation.id}`
+                              ? 'Applying...'
+                              : 'Apply Late Fee to Bill'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {activeFolioReservation.status !== 'checked_out' &&
+                        activeFolioReservation.status !== 'cancelled' &&
+                        activeFolioReservation.status !== 'no_show' && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busyId === activeFolioReservation.id}
+                              onClick={async () => {
+                                setBusyId(activeFolioReservation.id);
+                                try {
+                                  await extendReservationStay({
+                                    property,
+                                    reservation: activeFolioReservation,
+                                    extraNights: 1,
+                                    actorRole,
+                                  });
+                                  onNotify(
+                                    `Extended ${activeFolioReservation.bookingRef} by +1 night`
+                                  );
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg cursor-pointer"
+                            >
+                              <CalendarPlus className="w-3.5 h-3.5" />
+                              <span>Extend +1 Night</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectReservation?.(null);
+                                onNavigateSection?.('pos_kitchen');
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg cursor-pointer"
+                            >
+                              <ChefHat className="w-3.5 h-3.5" />
+                              <span>Order Restaurant POS</span>
+                            </button>
+                          </>
+                        )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {(activeFolioReservation.status === 'confirmed' ||
+                        activeFolioReservation.status === 'pending') && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={busyId === activeFolioReservation.id}
+                            onClick={() => {
+                              const target = activeFolioReservation;
+                              onSelectReservation?.(null);
+                              openCancelDialog(target);
+                            }}
+                            className="px-3 py-2 border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg cursor-pointer"
+                          >
+                            Cancel Booking
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyId === activeFolioReservation.id}
+                            onClick={() => {
+                              const target = activeFolioReservation;
+                              onSelectReservation?.(null);
+                              setCheckInTarget(target);
+                            }}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                          >
+                            Check In Guest Now
+                          </button>
+                        </>
+                      )}
+
+                      {activeFolioReservation.status === 'checked_in' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const target = activeFolioReservation;
+                              onSelectReservation?.(null);
+                              openChangeRoomModal(target);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded-lg cursor-pointer"
+                          >
+                            <ArrowLeftRight className="w-3.5 h-3.5" />
+                            <span>Change Room</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const target = activeFolioReservation;
+                              onSelectReservation?.(null);
+                              setCheckoutTarget(target);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Settle &amp; Check Out</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
+          ) : selectedGuest ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedGuestId(null)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back to Guests</span>
+                  </button>
+                  <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-display font-bold text-base flex items-center justify-center shrink-0">
+                    {selectedGuest.fullName
+                      .split(/\s+/)
+                      .slice(0, 2)
+                      .map((n) => n[0]?.toUpperCase() || '')
+                      .join('')}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-display text-lg font-bold text-slate-900">
+                        {selectedGuest.fullName}
+                      </h2>
+                      <span className="text-xs font-semibold text-emerald-700">
+                        · {selectedGuest.vipTier}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 font-mono-tabular">
+                      {selectedGuest.totalStays} stay(s) · Lifetime Spend{' '}
+                      {formatNgn(selectedGuest.lifetimeSpendNgn)} · {systemPropertyId}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingGuestMode((v) => !v)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer"
+                  >
+                    <Pencil className="w-3 h-3" />
+                    <span>{editingGuestMode ? 'Cancel Edit' : 'Edit Profile'}</span>
+                  </button>
+                  {canManageRooms && confirmDeleteGuestId !== selectedGuest.id && (
+                    <button
+                      type="button"
+                      disabled={busyId === selectedGuest.id}
+                      onClick={() => setConfirmDeleteGuestId(selectedGuest.id)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-semibold text-rose-700 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Delete</span>
+                    </button>
+                  )}
+                  {canManageRooms && confirmDeleteGuestId === selectedGuest.id && (
+                    <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteGuestId(null)}
+                        className="px-1.5 py-0.5 text-slate-600 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId === selectedGuest.id}
+                        onClick={() => void handleDeleteGuest(selectedGuest)}
+                        className="px-2 py-0.5 font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                      >
+                        {busyId === selectedGuest.id ? 'Deleting...' : 'Confirm Delete'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {editingGuestMode ? (
+                <form onSubmit={handleSaveGuestProfile} className="space-y-4 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+                      <input
+                        required
+                        type="text"
+                        value={editGuestFirstName}
+                        onChange={(e) => setEditGuestFirstName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                      <input
+                        required
+                        type="text"
+                        value={editGuestLastName}
+                        onChange={(e) => setEditGuestLastName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Phone</label>
+                      <input
+                        required
+                        type="text"
+                        value={editGuestPhone}
+                        onChange={(e) => setEditGuestPhone(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Email</label>
+                      <input
+                        type="email"
+                        value={editGuestEmail}
+                        onChange={(e) => setEditGuestEmail(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">VIP Tier</label>
+                      <select
+                        value={editGuestVip}
+                        onChange={(e) => setEditGuestVip(e.target.value as GuestRecord['vipTier'])}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                      >
+                        <option value="Standard">Standard</option>
+                        <option value="Silver">Silver</option>
+                        <option value="Gold">Gold</option>
+                        <option value="Diplomatic">Diplomatic</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">City</label>
+                      <input
+                        type="text"
+                        value={editGuestCity}
+                        onChange={(e) => setEditGuestCity(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block font-medium text-slate-700 mb-1">Address</label>
+                      <input
+                        type="text"
+                        value={editGuestAddress}
+                        onChange={(e) => setEditGuestAddress(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Country / Nationality
+                      </label>
+                      <input
+                        type="text"
+                        value={editGuestNationality}
+                        onChange={(e) => setEditGuestNationality(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">ID Type</label>
+                      <select
+                        value={editGuestIdType}
+                        onChange={(e) => setEditGuestIdType(e.target.value as GuestRecord['idType'])}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                      >
+                        <option value="NIN">NIN</option>
+                        <option value="International Passport">International Passport</option>
+                        <option value="Driver License">Driver License</option>
+                        <option value="Voter Card">Voter Card</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">ID Number</label>
+                      <input
+                        type="text"
+                        value={editGuestIdNumber}
+                        onChange={(e) => setEditGuestIdNumber(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Guest Preferences / Notes
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={editGuestNotes}
+                        onChange={(e) => setEditGuestNotes(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="submit"
+                      disabled={busyId === `guest-${selectedGuest.id}`}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Save Guest Changes</span>
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs bg-slate-50 border border-slate-200 rounded-xl p-4">
+                  <div className="space-y-1.5">
+                    <p className="flex items-center gap-2 text-slate-700">
+                      <Phone className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="font-mono-tabular">{selectedGuest.phone}</span>
+                    </p>
+                    <p className="flex items-center gap-2 text-slate-700">
+                      <Mail className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{selectedGuest.email || 'No email recorded'}</span>
+                    </p>
+                    <p className="flex items-start gap-2 text-slate-700">
+                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                      <span>
+                        {[selectedGuest.address, selectedGuest.city, selectedGuest.nationality]
+                          .filter(Boolean)
+                          .join(', ') || 'No address recorded'}
+                      </span>
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-slate-700">
+                      <span className="text-slate-500">KYC ID:</span>{' '}
+                      <span className="font-mono-tabular font-semibold">
+                        {selectedGuest.idType}{' '}
+                        {selectedGuest.idNumber ? `· ${selectedGuest.idNumber}` : '(Not provided)'}
+                      </span>
+                    </p>
+                    <p className="text-slate-700">
+                      <span className="text-slate-500">Notes:</span>{' '}
+                      <span>{selectedGuest.notes || 'None'}</span>
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Stay & Folio History for Guest */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-display text-xs font-bold text-slate-900">
+                    Stay &amp; Folio History
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const [selFirst, selLast] = splitFullName(selectedGuest.fullName);
+                      setGuestFirstName(selFirst);
+                      setGuestLastName(selLast);
+                      setGuestPhone(selectedGuest.phone);
+                      setGuestEmail(selectedGuest.email || '');
+                      setSelectedGuestId(null);
+                      setShowBookingForm(true);
+                      onNavigateSection?.('reservations');
+                    }}
+                    className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+                  >
+                    + New Reservation for Guest
+                  </button>
+                </div>
+                <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 text-xs">
+                  {reservations
+                    .filter(
+                      (r) =>
+                        r.guestId === selectedGuest.id ||
+                        r.guestName.toLowerCase() === selectedGuest.fullName.toLowerCase()
+                    )
+                    .map((r) => (
+                      <div
+                        key={r.id}
+                        onClick={() => {
+                          setSelectedGuestId(null);
+                          onSelectReservation?.(r.id);
+                        }}
+                        className="px-4 py-2.5 flex items-center justify-between hover:bg-emerald-50/40 cursor-pointer"
+                      >
+                        <div>
+                          <p className="font-mono-tabular font-semibold text-slate-900">
+                            {r.bookingRef} · {r.roomNumber}
+                          </p>
+                          <p className="font-mono-tabular text-[11px] text-slate-500">
+                            {r.checkInDate} → {r.checkOutDate} ({r.nights}n) · {r.channel}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-mono-tabular font-semibold text-slate-900">
+                            {formatNgn(r.roomChargesNgn + r.posChargesNgn)}
+                          </p>
+                          {r.sourceCurrency &&
+                            r.sourceCurrency !== 'NGN' &&
+                            typeof r.otaPaidSourceAmount === 'number' &&
+                            r.otaPaidSourceAmount > 0 && (
+                              <p className="font-mono-tabular text-[10px] font-medium text-blue-700">
+                                Paid OTA: {formatChannelCurrency(r.otaPaidSourceAmount, r.sourceCurrency)}{' '}
+                                ({r.sourceCurrency})
+                              </p>
+                            )}
+                          <p className="text-[11px] text-emerald-700 capitalize">
+                            {r.status.replace('_', ' ')} · Open Folio →
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  {reservations.filter(
+                    (r) =>
+                      r.guestId === selectedGuest.id ||
+                      r.guestName.toLowerCase() === selectedGuest.fullName.toLowerCase()
+                  ).length === 0 && (
+                    <p className="px-4 py-5 text-center text-slate-500">
+                      No reservations linked to this guest yet.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : showGuestForm && section === 'guests' ? (
+            <form
+              onSubmit={handleCreateGuest}
+              className="bg-white border border-slate-200 rounded-xl p-6 space-y-5"
+            >
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+                <button
+                  type="button"
+                  onClick={() => setShowGuestForm(false)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Guests</span>
+                </button>
+                <div>
+                  <h2 className="font-display text-lg font-bold text-slate-900">
+                    Register New Guest Profile (KYC)
+                  </h2>
+                  <p className="text-xs text-slate-500 font-mono-tabular">{systemPropertyId}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">First Name *</label>
+                  <input
+                    required
+                    type="text"
+                    value={newGuestFirstName}
+                    onChange={(e) => setNewGuestFirstName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Last Name *</label>
+                  <input
+                    required
+                    type="text"
+                    value={newGuestLastName}
+                    onChange={(e) => setNewGuestLastName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Phone *</label>
+                  <input
+                    required
+                    type="text"
+                    value={newGuestPhone}
+                    onChange={(e) => setNewGuestPhone(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    value={newGuestEmail}
+                    onChange={(e) => setNewGuestEmail(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">City</label>
+                  <input
+                    type="text"
+                    value={newGuestCity}
+                    onChange={(e) => setNewGuestCity(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Residential / Office Address
+                  </label>
+                  <input
+                    type="text"
+                    value={newGuestAddress}
+                    onChange={(e) => setNewGuestAddress(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">ID Type</label>
+                  <select
+                    value={newGuestIdType}
+                    onChange={(e) => setNewGuestIdType(e.target.value as GuestRecord['idType'])}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                  >
+                    <option value="NIN">NIN</option>
+                    <option value="International Passport">International Passport</option>
+                    <option value="Driver License">Driver License</option>
+                    <option value="Voter Card">Voter Card</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">ID Number</label>
+                    <input
+                      type="text"
+                      value={newGuestIdNumber}
+                      onChange={(e) => setNewGuestIdNumber(e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2"
                     />
                   </div>
                   <div>
                     <label className="block font-medium text-slate-700 mb-1">VIP Tier</label>
                     <select
-                      value={editGuestVip}
-                      onChange={(e) => setEditGuestVip(e.target.value as GuestRecord['vipTier'])}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                      value={newGuestVip}
+                      onChange={(e) => setNewGuestVip(e.target.value as GuestRecord['vipTier'])}
+                      className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white"
                     >
                       <option value="Standard">Standard</option>
-                      <option value="Silver">Silver</option>
-                      <option value="Gold">Gold</option>
+                      <option value="Silver">Silver VIP</option>
+                      <option value="Gold">Gold VIP</option>
                       <option value="Diplomatic">Diplomatic</option>
                     </select>
                   </div>
-                  <div className="sm:col-span-2">
-                    <label className="block font-medium text-slate-700 mb-1">Address</label>
-                    <input
-                      type="text"
-                      value={editGuestAddress}
-                      onChange={(e) => setEditGuestAddress(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">City</label>
-                    <input
-                      type="text"
-                      value={editGuestCity}
-                      onChange={(e) => setEditGuestCity(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Country / Nationality</label>
-                    <input
-                      type="text"
-                      value={editGuestNationality}
-                      onChange={(e) => setEditGuestNationality(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">ID Type</label>
-                    <select
-                      value={editGuestIdType}
-                      onChange={(e) => setEditGuestIdType(e.target.value as GuestRecord['idType'])}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                    >
-                      <option value="NIN">NIN</option>
-                      <option value="International Passport">International Passport</option>
-                      <option value="Driver License">Driver License</option>
-                      <option value="Voter Card">Voter Card</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">ID Number</label>
-                    <input
-                      type="text"
-                      value={editGuestIdNumber}
-                      onChange={(e) => setEditGuestIdNumber(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block font-medium text-slate-700 mb-1">Guest Preferences / Notes</label>
-                    <textarea
-                      rows={2}
-                      value={editGuestNotes}
-                      onChange={(e) => setEditGuestNotes(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="submit"
-                    disabled={busyId === `guest-${selectedGuest.id}`}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>Save Guest Changes</span>
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs bg-slate-50 border border-slate-200 rounded-xl p-4">
-                <div className="space-y-1.5">
-                  <p className="flex items-center gap-2 text-slate-700">
-                    <Phone className="w-3.5 h-3.5 text-slate-400" />
-                    <span className="font-mono-tabular">{selectedGuest.phone}</span>
-                  </p>
-                  <p className="flex items-center gap-2 text-slate-700">
-                    <Mail className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{selectedGuest.email || 'No email recorded'}</span>
-                  </p>
-                  <p className="flex items-start gap-2 text-slate-700">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-                    <span>
-                      {[selectedGuest.address, selectedGuest.city, selectedGuest.nationality]
-                        .filter(Boolean)
-                        .join(', ') || 'No address recorded'}
-                    </span>
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <p className="text-slate-700">
-                    <span className="text-slate-500">KYC ID:</span>{' '}
-                    <span className="font-mono-tabular font-semibold">
-                      {selectedGuest.idType}{' '}
-                      {selectedGuest.idNumber ? `· ${selectedGuest.idNumber}` : '(Not provided)'}
-                    </span>
-                  </p>
-                  <p className="text-slate-700">
-                    <span className="text-slate-500">Notes:</span>{' '}
-                    <span>{selectedGuest.notes || 'None'}</span>
-                  </p>
                 </div>
               </div>
-            )}
-
-            {/* Stay & Folio History for Guest */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h4 className="font-display text-xs font-bold text-slate-900">
-                  Stay &amp; Folio History
-                </h4>
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => {
-                    const [selFirst, selLast] = splitFullName(selectedGuest.fullName);
-                    setGuestFirstName(selFirst);
-                    setGuestLastName(selLast);
-                    setGuestPhone(selectedGuest.phone);
-                    setGuestEmail(selectedGuest.email || '');
-                    setSelectedGuestId(null);
-                    setShowBookingForm(true);
-                    onNavigateSection?.('reservations');
-                  }}
-                  className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+                  onClick={() => setShowGuestForm(false)}
+                  className="px-4 py-2 text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
                 >
-                  + New Reservation for Guest
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={busyId === 'guest'}
+                  className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                >
+                  Save Guest Profile
                 </button>
               </div>
-              <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 text-xs">
-                {reservations
-                  .filter(
-                    (r) =>
-                      r.guestId === selectedGuest.id ||
-                      r.guestName.toLowerCase() === selectedGuest.fullName.toLowerCase()
-                  )
-                  .map((r) => (
-                    <div
-                      key={r.id}
-                      onClick={() => {
-                        setSelectedGuestId(null);
-                        onSelectReservation?.(r.id);
-                      }}
-                      className="px-4 py-2.5 flex items-center justify-between hover:bg-emerald-50/40 cursor-pointer"
-                    >
-                      <div>
-                        <p className="font-mono-tabular font-semibold text-slate-900">
-                          {r.bookingRef} · {r.roomNumber}
-                        </p>
-                        <p className="font-mono-tabular text-[11px] text-slate-500">
-                          {r.checkInDate} → {r.checkOutDate} ({r.nights}n) · {r.channel}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-mono-tabular font-semibold text-slate-900">
-                          {formatNgn(r.roomChargesNgn + r.posChargesNgn)}
-                        </p>
-                        {r.sourceCurrency &&
-                          r.sourceCurrency !== 'NGN' &&
-                          typeof r.sourceTotalAmount === 'number' &&
-                          r.sourceTotalAmount > 0 && (
-                            <p className="font-mono-tabular text-[10px] font-medium text-blue-700">
-                              {formatChannelCurrency(r.sourceTotalAmount, r.sourceCurrency)} (
-                              {r.sourceCurrency})
-                            </p>
-                          )}
-                        <p className="text-[11px] text-emerald-700 capitalize">
-                          {r.status.replace('_', ' ')} · Open Folio →
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                {reservations.filter(
-                  (r) =>
-                    r.guestId === selectedGuest.id ||
-                    r.guestName.toLowerCase() === selectedGuest.fullName.toLowerCase()
-                ).length === 0 && (
-                  <p className="px-4 py-5 text-center text-slate-500">
-                    No reservations linked to this guest yet.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Room Management Modal */}
-      {editingRoom && canManageRooms && (
-        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
-          <form
-            onSubmit={handleSaveRoomEditor}
-            className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-5 my-8"
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="font-display text-base font-bold text-slate-900">
-                  Edit Room &amp; Rates — {editingRoom.roomNumber}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Update pricing in Naira (₦), room classification, status, and suite photography
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditingRoom(null)}
-                className="text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {editRoomError && (
-              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 font-medium">
-                {editRoomError}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Room Code</label>
-                <input
-                  type="text"
-                  required
-                  value={draftRoomNumber}
-                  onChange={(e) => setDraftRoomNumber(e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Property Section</label>
-                <select
-                  value={draftSection}
-                  onChange={(e) => setDraftSection(e.target.value as RoomSection)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="Serviced Apartment">Serviced Apartment Section</option>
-                  <option value="Hotel Rooms">Hotel Rooms</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Room Type</label>
-                <input
-                  type="text"
-                  required
-                  value={draftRoomType}
-                  onChange={(e) => setDraftRoomType(e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Suite Display Title</label>
-                <input
-                  type="text"
-                  required
-                  value={draftName}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  Nightly Rate (₦ NGN)
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  required
-                  placeholder="e.g. 87,000"
-                  value={draftRateInput}
-                  onChange={(e) => {
-                    setEditRoomError(null);
-                    handleCommaPriceChange(e, draftRateInput, setDraftRateInput);
-                  }}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Max Guests</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  required
-                  value={draftMaxGuests}
-                  onChange={(e) => setDraftMaxGuests(Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Occupancy Status</label>
-                <select
-                  value={draftOccupancy}
-                  onChange={(e) =>
-                    setDraftOccupancy(e.target.value as RoomRecord['occupancyStatus'])
-                  }
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="vacant">Vacant / Available</option>
-                  <option value="reserved">Reserved</option>
-                  <option value="occupied">Occupied</option>
-                  <option value="out_of_order">Out of Order</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  Housekeeping Readiness
-                </label>
-                <select
-                  value={draftHousekeeping}
-                  onChange={(e) =>
-                    setDraftHousekeeping(e.target.value as RoomRecord['housekeepingStatus'])
-                  }
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="clean">Clean</option>
-                  <option value="inspected">Inspected</option>
-                  <option value="cleaning">Cleaning</option>
-                  <option value="dirty">Dirty</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 pt-4 space-y-2.5 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <label className="font-semibold text-slate-800">
-                  Room Amenities (comma-separated, up to 15)
-                </label>
-                <span className="font-mono-tabular text-[11px] text-slate-500">
-                  {
-                    draftAmenitiesText
-                      .split(',')
-                      .map((item) => item.trim())
-                      .filter(Boolean).length
-                  }
-                  /15
-                </span>
-              </div>
-              <input
-                type="text"
-                placeholder="King Bed, Wi-Fi, Smart TV, Fitted Kitchenette, 24/7 Power"
-                value={draftAmenitiesText}
-                onChange={(e) => setDraftAmenitiesText(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs"
-              />
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  'King Bed',
-                  'Wi-Fi',
-                  'Smart TV',
-                  'Fitted Kitchenette',
-                  '24/7 Power',
-                  'Work Desk',
-                  'Split AC',
-                  'En-Suite Shower',
-                  'Private Balcony',
-                  'Tea & Coffee Station',
-                ].map((preset) => {
-                  const currentList = draftAmenitiesText
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                  const isActive = currentList.some(
-                    (item) => item.toLowerCase() === preset.toLowerCase()
-                  );
-                  return (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => {
-                        if (isActive) {
-                          setDraftAmenitiesText(
-                            currentList
-                              .filter((item) => item.toLowerCase() !== preset.toLowerCase())
-                              .join(', ')
-                          );
-                        } else if (currentList.length < 15) {
-                          setDraftAmenitiesText([...currentList, preset].join(', '));
-                        }
-                      }}
-                      className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
-                        isActive
-                          ? 'bg-[#061539] text-white border-[#061539]'
-                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {isActive ? `✓ ${preset}` : `+ ${preset}`}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-semibold text-slate-800">Suite Photography</span>
-                <div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageFileSelect}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
-                  >
-                    <ImagePlus className="w-3.5 h-3.5" />
-                    <span>Upload Photo from Device</span>
-                  </button>
-                </div>
-              </div>
-
-              {uploadError && (
-                <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700">
-                  {uploadError}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
-                <div className="sm:col-span-5 h-32 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                  <img
-                    src={draftImageUrl || DEFAULT_SUITE_IMAGE}
-                    alt="Suite Preview"
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
-                    }}
-                  />
-                </div>
-                <div className="sm:col-span-7 space-y-2">
-                  <p className="text-[11px] font-medium text-slate-600">
-                    Or pick from Richgates Property Gallery:
-                  </p>
-                  <div className="grid grid-cols-5 gap-2">
-                    {RICHGATES_GALLERY_ASSETS.map((asset) => (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        onClick={() => setDraftImageUrl(asset.url)}
-                        title={asset.label}
-                        className={`h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
-                          draftImageUrl === asset.url
-                            ? 'border-emerald-600 ring-2 ring-emerald-200'
-                            : 'border-slate-200 hover:border-slate-400'
-                        }`}
-                      >
-                        <img
-                          src={asset.url}
-                          alt={asset.label}
-                          className="w-full h-full object-cover"
-                        />
-                      </button>
-                    ))}
-                  </div>
-                  <input
-                    type="text"
-                    value={draftImageUrl.startsWith('data:') ? '[Uploaded Device Photo]' : draftImageUrl}
-                    onChange={(e) => setDraftImageUrl(e.target.value)}
-                    placeholder="Or paste custom image URL (/assets/... or https://...)"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setEditingRoom(null)}
-                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={busyId === editingRoom.id}
-                className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
-              >
-                {busyId === editingRoom.id ? 'Saving Suite...' : 'Save Suite Changes'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ADD NEW ROOM MODAL (Enforces 20-Room License Maximum for Richgates) */}
-      {showAddRoomModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
-          <form
-            onSubmit={handleCreateNewRoom}
-            className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-5 my-8"
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="font-display text-base font-bold text-slate-900">
-                  Add New Room
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Create a new suite with room code, section, room type, and nightly Naira rate
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAddRoomModal(false)}
-                className="text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {addRoomError && (
-              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
-                {addRoomError}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Room Code</label>
-                <input
-                  type="text"
-                  required
-                  value={newRoomNumber}
-                  onChange={(e) => setNewRoomNumber(e.target.value)}
-                  placeholder="e.g. RM-9"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular uppercase"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Property Section</label>
-                <select
-                  value={newRoomSection}
-                  onChange={(e) => setNewRoomSection(e.target.value as RoomSection)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                >
-                  <option value="Serviced Apartment">Serviced Apartment Section</option>
-                  <option value="Hotel Rooms">Hotel Rooms</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Room Type</label>
-                <input
-                  type="text"
-                  required
-                  value={newRoomType}
-                  onChange={(e) => setNewRoomType(e.target.value)}
-                  placeholder="e.g. Deluxe Studio with Kitchenette"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">Suite Display Title</label>
-                <input
-                  type="text"
-                  required
-                  value={newRoomName}
-                  onChange={(e) => setNewRoomName(e.target.value)}
-                  placeholder="e.g. Garden View Studio 9"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  Nightly Rate (₦ NGN)
-                </label>
-                <input
-                  type="number"
-                  min={5000}
-                  step={500}
-                  required
-                  value={newRoomRateNgn}
-                  onChange={(e) => setNewRoomRateNgn(Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Max Guests</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={12}
-                    required
-                    value={newRoomMaxGuests}
-                    onChange={(e) => setNewRoomMaxGuests(Number(e.target.value))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Floor</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={20}
-                    required
-                    value={newRoomFloor}
-                    onChange={(e) => setNewRoomFloor(Number(e.target.value))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                </div>
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="block font-medium text-slate-700 mb-1">
-                  Amenities (comma-separated)
-                </label>
-                <input
-                  type="text"
-                  value={newRoomAmenitiesText}
-                  onChange={(e) => setNewRoomAmenitiesText(e.target.value)}
-                  placeholder="King Bed, Wi-Fi, Kitchenette, Smart TV, 24/7 Power"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                />
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-semibold text-slate-800">Suite Photography</span>
-                <div>
-                  <input
-                    ref={addRoomFileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleAddRoomImageSelect}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => addRoomFileInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
-                  >
-                    <ImagePlus className="w-3.5 h-3.5" />
-                    <span>Upload Photo</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
-                <div className="sm:col-span-5 h-28 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                  <img
-                    src={newRoomImageUrl || DEFAULT_SUITE_IMAGE}
-                    alt="New Suite Preview"
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
-                    }}
-                  />
-                </div>
-                <div className="sm:col-span-7 space-y-2">
-                  <div className="grid grid-cols-5 gap-2">
-                    {RICHGATES_GALLERY_ASSETS.map((asset) => (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        onClick={() => setNewRoomImageUrl(asset.url)}
-                        title={asset.label}
-                        className={`h-11 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
-                          newRoomImageUrl === asset.url
-                            ? 'border-emerald-600 ring-2 ring-emerald-200'
-                            : 'border-slate-200 hover:border-slate-400'
-                        }`}
-                      >
-                        <img
-                          src={asset.url}
-                          alt={asset.label}
-                          className="w-full h-full object-cover"
-                        />
-                      </button>
-                    ))}
-                  </div>
-                  <input
-                    type="text"
-                    value={
-                      newRoomImageUrl.startsWith('data:')
-                        ? '[Uploaded Device Photo]'
-                        : newRoomImageUrl
-                    }
-                    onChange={(e) => setNewRoomImageUrl(e.target.value)}
-                    placeholder="Or paste custom photo URL..."
-                    className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setShowAddRoomModal(false)}
-                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={busyId === 'add-room' || atRoomCapacity}
-                className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
-              >
-                {busyId === 'add-room' ? 'Adding Room...' : 'Create Room'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Guest Folio & Stay Flow Modal */}
-      {activeFolioReservation && (
-        <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-5 my-8">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
-              <div>
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span className="font-mono-tabular font-bold text-slate-900">
-                    {activeFolioReservation.bookingRef}
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span className="font-mono-tabular font-semibold text-emerald-700">
-                    {getReservationRoomDisplay(activeFolioReservation, rooms).roomNumberLabel}
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    {getReservationRoomDisplay(activeFolioReservation, rooms).roomTypeLabel}
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>{formatBookingSourceLabel(activeFolioReservation.channel)}</span>
-                  <span aria-hidden="true">·</span>
-                  <span className="font-mono-tabular">
-                    Booked {getReservationBookedDate(activeFolioReservation)}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 mt-1">
-                  <h3 className="font-display text-lg font-bold text-slate-900">
-                    Reservation &amp; Folio — {activeFolioReservation.guestName}
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const target = activeFolioReservation;
-                      onSelectReservation?.(null);
-                      openGuestByReservation(target);
-                    }}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
-                  >
-                    <UserCircle2 className="w-3.5 h-3.5" />
-                    <span>View Guest Profile</span>
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => onSelectReservation?.(null)}
-                className="text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Stay Lifecycle Indicator */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-              {[
-                { label: '1. Reservation Booked', active: true },
-                {
-                  label:
-                    activeFolioReservation.status === 'pending'
-                      ? '2. Awaiting Confirmation'
-                      : '2. Confirmed',
-                  active: activeFolioReservation.status !== 'pending',
-                },
-                {
-                  label: '3. Checked-in / Folio',
-                  active:
-                    activeFolioReservation.status === 'checked_in' ||
-                    activeFolioReservation.status === 'checked_out',
-                },
-                {
-                  label: '4. Checked-out & Settled',
-                  active: activeFolioReservation.status === 'checked_out',
-                },
-              ].map((step) => (
-                <div
-                  key={step.label}
-                  className={`px-3 py-2 rounded-lg border font-semibold ${
-                    step.active
-                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                      : 'bg-slate-50 border-slate-200 text-slate-500'
-                  }`}
-                >
-                  {step.label}
-                </div>
-              ))}
-            </div>
-
-            {/* Stay Summary & Full Reservation Editor */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
-                <div className="space-y-0.5">
-                  <span className="font-mono-tabular text-slate-700 block">
-                    Stay: <strong>{activeFolioReservation.checkInDate}</strong> →{' '}
-                    <strong>{activeFolioReservation.checkOutDate}</strong> (
-                    {activeFolioReservation.nights} nights @{' '}
-                    {formatNgn(activeFolioReservation.nightlyRateNgn)}/nt
-                    {activeFolioReservation.sourceCurrency &&
-                      activeFolioReservation.sourceCurrency !== 'NGN' &&
-                      typeof activeFolioReservation.sourceNightlyRate === 'number' &&
-                      activeFolioReservation.sourceNightlyRate > 0 && (
-                        <span className="text-blue-700 font-semibold">
-                          {' '}
-                          ·{' '}
-                          {formatChannelCurrency(
-                            activeFolioReservation.sourceNightlyRate,
-                            activeFolioReservation.sourceCurrency
-                          )}
-                          /nt ({activeFolioReservation.sourceCurrency})
-                        </span>
-                      )}
+            </form>
+          ) : showBookingForm && section !== 'walk_in' ? (
+            (() => {
+              const pickedRoom = selectedRoomId
+                ? rooms.find((r) => r.id === selectedRoomId)
+                : undefined;
+              const baseRateNgn =
+                pickedRoom?.nightlyRateNgn ||
+                rooms.find((r) => r.roomType === newRequestedRoomType)?.nightlyRateNgn ||
+                55000;
+              const safeNights = Math.max(1, nights);
+              const isOta = isOtaBookingChannel(channel);
+              const activeCur: ChannelCurrency = isOta ? bookingCurrency : 'NGN';
+              const fxRate =
+                activeCur === 'NGN'
+                  ? 1
+                  : Math.max(
+                      1,
+                      parseFormattedPriceInput(bookingFxRateInput) ??
+                        getFxRateToNgn(activeCur, property.usdExchangeRateNgn)
+                    );
+              const otaPaidSrc = isOta
+                ? Math.max(0, parseFormattedPriceInput(bookingOtaPaidSourceInput) ?? 0)
+                : 0;
+              const otaPaidNgnEst = isOta
+                ? activeCur === 'NGN'
+                  ? Math.round(otaPaidSrc)
+                  : Math.round(otaPaidSrc * fxRate)
+                : 0;
+              const defaultExpectedPayout =
+                otaPaidNgnEst > 0 ? otaPaidNgnEst : baseRateNgn * safeNights;
+              const expectedPayoutEst = isOta
+                ? Math.max(
+                    0,
+                    Math.round(
+                      parseFormattedPriceInput(bookingExpectedPayoutInput) ?? defaultExpectedPayout
                     )
-                  </span>
-                  <span className="text-[11px] text-slate-500 block">
-                    Guests:{' '}
-                    <strong className="text-slate-700 font-mono-tabular">
-                      {activeFolioReservation.adults} Adult
-                      {activeFolioReservation.adults !== 1 ? 's' : ''},{' '}
-                      {activeFolioReservation.children || 0} Child
-                      {(activeFolioReservation.children || 0) !== 1 ? 'ren' : ''}
-                    </strong>{' '}
-                    · Source:{' '}
-                    <strong className="text-slate-700">
-                      {formatBookingSourceLabel(activeFolioReservation.channel)}
-                    </strong>{' '}
-                    · Payment:{' '}
-                    <strong className="text-slate-900">
-                      {getReservationPaymentSummary(activeFolioReservation).paymentStatus}
-                    </strong>
-                    {activeFolioReservation.paymentConfirmed && ' · Payment Verified'}
-                    {activeFolioReservation.idVerified &&
-                      ` · ID Verified (${activeFolioReservation.idType || 'KYC'})`}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  {activeFolioReservation.status !== 'checked_out' &&
-                    activeFolioReservation.status !== 'cancelled' &&
-                    activeFolioReservation.status !== 'no_show' && (
+                  )
+                : baseRateNgn * safeNights;
+              const directPaidEst = Math.max(
+                0,
+                Math.round(parseFormattedPriceInput(bookingHotelPaidInput) ?? 0)
+              );
+              const estTotalCharges = expectedPayoutEst;
+              const otaCreditTowardCharges = isOta
+                ? Math.min(estTotalCharges, otaPaidNgnEst)
+                : 0;
+              const estBalanceDue = Math.max(
+                0,
+                estTotalCharges - otaCreditTowardCharges - directPaidEst
+              );
+              const estPayStatus =
+                estBalanceDue <= 0 && (estTotalCharges > 0 || otaPaidNgnEst > 0 || directPaidEst > 0)
+                  ? 'Paid'
+                  : otaPaidNgnEst > 0 || directPaidEst > 0
+                    ? 'Partial'
+                    : 'Unpaid';
+
+              return (
+                <form
+                  onSubmit={handleCreateBooking}
+                  className="bg-white border border-slate-200 rounded-xl p-6 space-y-5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                    <div className="flex items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditingStayDetails((v) => !v);
-                          setEditStayError(null);
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-100 rounded-md text-[11px] font-semibold text-slate-700 cursor-pointer"
+                        onClick={() => setShowBookingForm(false)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
                       >
-                        <Pencil className="w-3 h-3" />
-                        <span>{editingStayDetails ? 'Close Editor' : 'Edit Reservation'}</span>
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>Back</span>
                       </button>
-                    )}
-                  <span className="font-semibold text-emerald-700">
-                    Status: {RESERVATION_STATUS_LABELS[activeFolioReservation.status]}
-                  </span>
-                </div>
-              </div>
+                      <div>
+                        <h2 className="font-display text-lg font-bold text-slate-900">
+                          Create Reservation or Immediate Check-In
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Enter guest details, stay dates, OTA original currency payment, expected payout, and any direct payment at property ·{' '}
+                          <span className="font-mono-tabular">{systemPropertyId}</span>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
 
-              {editingStayDetails && (
-                <div className="bg-white border border-emerald-200 rounded-lg p-3.5 space-y-3">
-                  {editStayError && (
-                    <p className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-[11px]">
-                      {editStayError}
-                    </p>
+                  {bookingError && (
+                    <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                      {bookingError}
+                    </div>
                   )}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
                     <div>
-                      <label className="block font-medium text-slate-700 mb-1">Guest First Name *</label>
-                      <input
-                        type="text"
-                        value={editGuestFirstNameRes}
-                        onChange={(e) => setEditGuestFirstNameRes(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-medium text-slate-700 mb-1">Guest Last Name *</label>
-                      <input
-                        type="text"
-                        value={editGuestLastNameRes}
-                        onChange={(e) => setEditGuestLastNameRes(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-medium text-slate-700 mb-1">Guest Phone</label>
-                      <input
-                        type="text"
-                        value={editGuestPhoneRes}
-                        onChange={(e) => setEditGuestPhoneRes(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-medium text-slate-700 mb-1">Suite / Room</label>
+                      <label className="block font-medium text-slate-700 mb-1">Room</label>
                       <select
-                        value={editRoomId}
+                        value={selectedRoomId}
                         onChange={(e) => {
                           const nextId = e.target.value;
-                          const matchedRoom = rooms.find((r) => r.id === nextId);
-                          setEditRoomId(nextId);
-                          if (matchedRoom) setEditRequestedRoomType(matchedRoom.roomType);
-                          setEditStayError(null);
+                          const rm = rooms.find((r) => r.id === nextId);
+                          setSelectedRoomId(nextId);
+                          setBookingError(null);
+                          if (rm) {
+                            setNewRequestedRoomType(rm.roomType);
+                            const nextTotal = rm.nightlyRateNgn * Math.max(1, nights);
+                            if (!bookingExpectedPayoutManual) {
+                              setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
+                            }
+                            if (!isOtaBookingChannel(channel)) {
+                              setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
+                            }
+                          } else {
+                            setImmediateCheckIn(false);
+                          }
                         }}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                       >
                         <option value="">Unassigned — Assign later</option>
                         {sortedRooms.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)})
+                          <option
+                            key={r.id}
+                            value={r.id}
+                            disabled={r.occupancyStatus === 'out_of_order'}
+                          >
+                            {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}) [
+                            {r.occupancyStatus}]
                           </option>
                         ))}
                       </select>
                     </div>
-                    {editRoomId === '' && (
+
+                    {selectedRoomId === '' && (
                       <div>
                         <label className="block font-medium text-slate-700 mb-1">
                           Requested Room Type
                         </label>
                         <select
-                          value={editRequestedRoomType}
-                          onChange={(e) => setEditRequestedRoomType(e.target.value)}
-                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                          value={newRequestedRoomType}
+                          onChange={(e) => {
+                            const rt = e.target.value;
+                            setNewRequestedRoomType(rt);
+                            const match = rooms.find((r) => r.roomType === rt);
+                            if (match) {
+                              const nextTotal = match.nightlyRateNgn * Math.max(1, nights);
+                              if (!bookingExpectedPayoutManual) {
+                                setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
+                              }
+                              if (!isOtaBookingChannel(channel)) {
+                                setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
+                              }
+                            }
+                          }}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                         >
                           {uniqueRoomTypes.map((rt) => (
                             <option key={rt} value={rt}>
@@ -5299,69 +5845,72 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </select>
                       </div>
                     )}
-                    <div>
-                      <label className="block font-medium text-slate-700 mb-1">Check-In Date</label>
-                      <input
-                        type="date"
-                        value={editCheckInDate}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setEditCheckInDate(val);
-                          if (val && editCheckOutDate <= val) {
-                            setEditCheckOutDate(addDaysIso(val, 1));
-                          }
-                          setEditStayError(null);
-                        }}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-medium text-slate-700 mb-1">Check-Out Date</label>
-                      <input
-                        type="date"
-                        min={editCheckInDate ? addDaysIso(editCheckInDate, 1) : undefined}
-                        value={editCheckOutDate}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          const safeOut =
-                            editCheckInDate && raw && raw <= editCheckInDate
-                              ? addDaysIso(editCheckInDate, 1)
-                              : raw;
-                          setEditCheckOutDate(safeOut);
-                          setEditStayError(null);
-                        }}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                      />
-                    </div>
+
                     <div>
                       <label className="block font-medium text-slate-700 mb-1">
-                        Adults / Children
+                        Guest First Name *
                       </label>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <input
-                          type="number"
-                          min={1}
-                          value={editAdults}
-                          onChange={(e) => setEditAdults(Math.max(1, Number(e.target.value)))}
-                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 font-mono-tabular"
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          value={editChildren}
-                          onChange={(e) => setEditChildren(Math.max(0, Number(e.target.value)))}
-                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 font-mono-tabular"
-                        />
-                      </div>
+                      <input
+                        required
+                        type="text"
+                        value={guestFirstName}
+                        onChange={(e) => setGuestFirstName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
                     </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Guest Last Name *
+                      </label>
+                      <input
+                        required
+                        type="text"
+                        value={guestLastName}
+                        onChange={(e) => setGuestLastName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Phone Number</label>
+                      <input
+                        required
+                        type="text"
+                        value={guestPhone}
+                        onChange={(e) => setGuestPhone(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+
                     <div>
                       <label className="block font-medium text-slate-700 mb-1">Booking Source</label>
                       <select
-                        value={editChannel}
-                        onChange={(e) =>
-                          setEditChannel(e.target.value as ReservationRecord['channel'])
-                        }
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                        value={channel}
+                        onChange={(e) => {
+                          const nextCh = e.target.value as ReservationRecord['channel'];
+                          setChannel(nextCh);
+                          const nextIsOta = isOtaBookingChannel(nextCh);
+                          const defaultRoomTotal = baseRateNgn * Math.max(1, nights);
+                          if (!nextIsOta) {
+                            setBookingCurrency('NGN');
+                            setBookingFxRateInput('1');
+                            setBookingOtaPaidSourceInput('');
+                            setBookingExpectedPayoutManual(false);
+                            setBookingExpectedPayoutInput(
+                              formatPriceInputWithCommas(defaultRoomTotal)
+                            );
+                            setBookingHotelPaidInput(formatPriceInputWithCommas(defaultRoomTotal));
+                          } else {
+                            setBookingHotelPaidInput('0');
+                            if (!bookingExpectedPayoutManual) {
+                              setBookingExpectedPayoutInput(
+                                formatPriceInputWithCommas(defaultRoomTotal)
+                              );
+                            }
+                          }
+                        }}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                       >
                         {PRIMARY_BOOKING_SOURCES.map((src) => (
                           <option key={src.value} value={src.value}>
@@ -5370,33 +5919,267 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         ))}
                       </select>
                     </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Check-In Date</label>
+                      <input
+                        type="date"
+                        value={checkInDate}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) return;
+                          setCheckInDate(val);
+                          let nextNights = nights;
+                          if (checkOutDate <= val) {
+                            const nextOut = addDaysIso(val, 1);
+                            setCheckOutDate(nextOut);
+                            nextNights = 1;
+                            setNights(1);
+                          } else {
+                            nextNights = diffNights(val, checkOutDate);
+                            setNights(nextNights);
+                          }
+                          if (!bookingExpectedPayoutManual) {
+                            setBookingExpectedPayoutInput(
+                              formatPriceInputWithCommas(baseRateNgn * nextNights)
+                            );
+                          }
+                          setBookingError(null);
+                        }}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                      />
+                    </div>
+
                     <div>
                       <label className="block font-medium text-slate-700 mb-1">
-                        Reservation Status
+                        Check-Out Date
                       </label>
-                      <select
-                        value={editStatus}
-                        onChange={(e) => setEditStatus(e.target.value as ReservationStatus)}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
-                      >
-                        <option value="confirmed">Confirmed</option>
-                        <option value="pending">Pending</option>
-                        <option value="checked_in">Checked-in</option>
-                        <option value="checked_out">Checked-out</option>
-                        <option value="cancelled">Cancelled</option>
-                        <option value="no_show">No-show</option>
-                      </select>
+                      <input
+                        type="date"
+                        min={addDaysIso(checkInDate, 1)}
+                        value={checkOutDate}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (!raw) return;
+                          const safeOut = raw <= checkInDate ? addDaysIso(checkInDate, 1) : raw;
+                          setCheckOutDate(safeOut);
+                          const nextNights = diffNights(checkInDate, safeOut);
+                          setNights(nextNights);
+                          if (!bookingExpectedPayoutManual) {
+                            setBookingExpectedPayoutInput(
+                              formatPriceInputWithCommas(baseRateNgn * nextNights)
+                            );
+                          }
+                          setBookingError(null);
+                        }}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
+                      />
                     </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Nights · Adults · Children
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          title="Nights"
+                          value={nights}
+                          onChange={(e) => {
+                            const nextN = Math.max(1, Number(e.target.value));
+                            setNights(nextN);
+                            if (!bookingExpectedPayoutManual) {
+                              setBookingExpectedPayoutInput(
+                                formatPriceInputWithCommas(baseRateNgn * nextN)
+                              );
+                            }
+                          }}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          title="Adults"
+                          value={adults}
+                          onChange={(e) => setAdults(Math.max(1, Number(e.target.value)))}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          title="Children"
+                          value={childrenCount}
+                          onChange={(e) => setChildrenCount(Math.max(0, Number(e.target.value)))}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-400">Nights / Adults / Children</span>
+                    </div>
+
+                    {isOta && (
+                      <>
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Original Currency &amp; FX Rate (₦)
+                          </label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <select
+                              value={bookingCurrency}
+                              onChange={(e) => {
+                                const nextCur = e.target.value as ChannelCurrency;
+                                setBookingCurrency(nextCur);
+                                const nextFx =
+                                  nextCur === 'NGN'
+                                    ? 1
+                                    : getFxRateToNgn(nextCur, property.usdExchangeRateNgn);
+                                setBookingFxRateInput(
+                                  nextCur === 'NGN' ? '1' : formatPriceInputWithCommas(nextFx)
+                                );
+                                if (!bookingExpectedPayoutManual) {
+                                  const srcAmt =
+                                    parseFormattedPriceInput(bookingOtaPaidSourceInput) ?? 0;
+                                  if (srcAmt > 0) {
+                                    setBookingExpectedPayoutInput(
+                                      formatPriceInputWithCommas(Math.round(srcAmt * nextFx))
+                                    );
+                                  }
+                                }
+                              }}
+                              className="border border-slate-200 rounded-lg px-2 py-2 bg-white font-semibold"
+                            >
+                              {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                                <option key={cur} value={cur}>
+                                  {cur}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              disabled={bookingCurrency === 'NGN'}
+                              value={bookingCurrency === 'NGN' ? '1' : bookingFxRateInput}
+                              onChange={(e) =>
+                                handleCommaPriceChange(
+                                  e,
+                                  bookingFxRateInput,
+                                  setBookingFxRateInput
+                                )
+                              }
+                              placeholder="FX Rate"
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular disabled:bg-slate-50"
+                            />
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-mono-tabular">
+                            1 {bookingCurrency} = ₦{fxRate.toLocaleString('en-NG')}
+                          </span>
+                        </div>
+
+                        <div>
+                          <label className="block font-medium text-blue-900 mb-1">
+                            Exact Amount Guest Paid to OTA ({bookingCurrency})
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            value={bookingOtaPaidSourceInput}
+                            onChange={(e) => {
+                              handleCommaPriceChange(
+                                e,
+                                bookingOtaPaidSourceInput,
+                                (nextVal) => {
+                                  setBookingOtaPaidSourceInput(nextVal);
+                                  if (!bookingExpectedPayoutManual) {
+                                    const parsedSrc = parseFormattedPriceInput(nextVal) ?? 0;
+                                    if (parsedSrc > 0) {
+                                      setBookingExpectedPayoutInput(
+                                        formatPriceInputWithCommas(Math.round(parsedSrc * fxRate))
+                                      );
+                                    }
+                                  }
+                                }
+                              );
+                            }}
+                            className="w-full border border-blue-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
+                          />
+                          {bookingCurrency !== 'NGN' && otaPaidSrc > 0 && (
+                            <span className="text-[10px] text-blue-700 font-mono-tabular">
+                              ≈ {formatNgn(otaPaidNgnEst)} at FX rate
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Expected Property Payout (₦)
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="e.g. 165,000"
+                            value={bookingExpectedPayoutInput}
+                            onChange={(e) => {
+                              setBookingExpectedPayoutManual(true);
+                              handleCommaPriceChange(
+                                e,
+                                bookingExpectedPayoutInput,
+                                setBookingExpectedPayoutInput
+                              );
+                            }}
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular font-semibold"
+                          />
+                          <span className="text-[10px] text-slate-400">
+                            Net NGN payout expected from {channel}
+                          </span>
+                        </div>
+                      </>
+                    )}
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        {isOta
+                          ? 'Additional Direct Payment to Property (₦) & Status'
+                          : 'Direct Payment to Property (₦) & Status'}
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={bookingHotelPaidInput}
+                          onChange={(e) =>
+                            handleCommaPriceChange(
+                              e,
+                              bookingHotelPaidInput,
+                              setBookingHotelPaidInput
+                            )
+                          }
+                          placeholder="0"
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+                        />
+                        <select
+                          value={immediateCheckIn ? 'checked_in' : initialBookingStatus}
+                          disabled={immediateCheckIn}
+                          onChange={(e) =>
+                            setInitialBookingStatus(e.target.value as 'confirmed' | 'pending')
+                          }
+                          className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white disabled:bg-slate-50"
+                        >
+                          <option value="confirmed">Confirmed</option>
+                          <option value="pending">Pending</option>
+                          {immediateCheckIn && <option value="checked_in">Checked-in</option>}
+                        </select>
+                      </div>
+                    </div>
+
                     <div>
                       <label className="block font-medium text-slate-700 mb-1">Payment Method</label>
                       <select
-                        value={editPaymentMethodRes}
+                        value={paymentMethod}
                         onChange={(e) =>
-                          setEditPaymentMethodRes(
-                            e.target.value as ReservationRecord['paymentMethod']
-                          )
+                          setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
                         }
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
                       >
                         <option value="Bank Transfer">Bank Transfer</option>
                         <option value="Card POS">Card POS</option>
@@ -5406,415 +6189,387 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       </select>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-500 font-mono-tabular">
-                      Updated Stay: {diffNights(editCheckInDate, editCheckOutDate)} night(s) ·{' '}
-                      {formatNgn(
-                        (rooms.find((r) => r.id === editRoomId)?.nightlyRateNgn ||
-                          activeFolioReservation.nightlyRateNgn) *
-                          diffNights(editCheckInDate, editCheckOutDate)
-                      )}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={busyId === `stay-${activeFolioReservation.id}`}
-                      onClick={() => handleSaveStayDetails(activeFolioReservation)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
-                    >
-                      <Save className="w-3 h-3" />
-                      <span>Save Reservation Changes</span>
-                    </button>
-                  </div>
-                </div>
-              )}
 
-              {(() => {
-                const folioPaySummary = getReservationPaymentSummary(
-                  activeFolioReservation,
-                  property.usdExchangeRateNgn
-                );
-                return (
-                  <>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">
-                        Room Accommodation ({activeFolioReservation.nights} nights)
-                      </span>
-                      <span className="font-mono-tabular font-semibold text-slate-900">
-                        {formatNgn(activeFolioReservation.roomChargesNgn)}
-                      </span>
-                    </div>
-                    {folioPaySummary.sourceCurrency !== 'NGN' &&
-                      folioPaySummary.sourceTotalAmount > 0 && (
-                        <div className="flex justify-between text-[11px] text-blue-700">
+                  {/* Separated Summary Strip */}
+                  <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-xs">
+                    <div className="flex flex-wrap items-center gap-4 text-slate-600 font-mono-tabular">
+                      {isOta && (
+                        <>
                           <span>
-                            Channel Customer Rate ({folioPaySummary.sourceCurrency} @ ₦
-                            {folioPaySummary.fxRateToNgn.toLocaleString('en-NG')} ·{' '}
-                            {formatChannelCurrency(
-                              folioPaySummary.sourceNightlyRate,
-                              folioPaySummary.sourceCurrency
+                            Guest Paid to OTA:{' '}
+                            <strong className="text-blue-700">
+                              {formatChannelCurrency(otaPaidSrc, activeCur)} {activeCur}
+                            </strong>
+                            {activeCur !== 'NGN' && otaPaidNgnEst > 0 && (
+                              <span className="text-slate-500 ml-1">
+                                (≈ {formatNgn(otaPaidNgnEst)})
+                              </span>
                             )}
-                            /nt)
                           </span>
-                          <span className="font-mono-tabular font-semibold">
-                            {formatChannelCurrency(
-                              folioPaySummary.sourceTotalAmount,
-                              folioPaySummary.sourceCurrency
-                            )}{' '}
-                            {folioPaySummary.sourceCurrency}
+                          <span>
+                            Expected Property Payout:{' '}
+                            <strong className="text-slate-900">
+                              {formatNgn(expectedPayoutEst)}
+                            </strong>
                           </span>
-                        </div>
+                        </>
                       )}
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Restaurant POS / Misc Folio Charges</span>
-                      <span className="font-mono-tabular font-semibold text-slate-900">
-                        {formatNgn(activeFolioReservation.posChargesNgn)}
-                      </span>
-                    </div>
-                    {(activeFolioReservation.lateCheckoutFeeNgn || 0) > 0 && (
-                      <div className="flex justify-between text-amber-800">
+                      {!isOta && (
                         <span>
-                          Late Check-Out Fee ({activeFolioReservation.checkOutTime || '14:00'})
+                          Total Room Charges:{' '}
+                          <strong className="text-slate-900">{formatNgn(estTotalCharges)}</strong>
                         </span>
-                        <span className="font-mono-tabular font-semibold">
-                          {formatNgn(activeFolioReservation.lateCheckoutFeeNgn || 0)}
-                        </span>
-                      </div>
-                    )}
-                    {activeFolioReservation.status === 'cancelled' &&
-                      activeFolioReservation.cancellationType === 'paid' && (
-                        <div className="flex justify-between text-rose-700">
-                          <span>Cancellation Fee Applied</span>
-                          <span className="font-mono-tabular font-semibold">
-                            {formatNgn(activeFolioReservation.cancellationFeeNgn || 0)}
-                          </span>
-                        </div>
                       )}
-                    <div className="flex justify-between pt-1.5 border-t border-slate-200/70">
-                      <span className="text-slate-700 font-semibold">Total Folio Charges</span>
-                      <span className="font-mono-tabular font-bold text-slate-900">
-                        {formatNgn(folioPaySummary.totalAmount)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">
-                        OTA payment received ({activeFolioReservation.channel})
-                      </span>
-                      <span className="font-mono-tabular font-semibold text-emerald-700">
-                        {formatNgn(folioPaySummary.otaPaidAmount)}
-                        {folioPaySummary.sourceCurrency !== 'NGN' &&
-                          folioPaySummary.otaPaidAmount > 0 &&
-                          folioPaySummary.otaPaidSourceAmount > 0 && (
-                            <span className="ml-1 text-[11px] font-normal">
-                              (
-                              {formatChannelCurrency(
-                                folioPaySummary.otaPaidSourceAmount,
-                                folioPaySummary.sourceCurrency
-                              )}{' '}
-                              {folioPaySummary.sourceCurrency})
-                            </span>
-                          )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">
-                        Hotel payment received (front desk)
-                      </span>
-                      <span className="font-mono-tabular font-semibold text-slate-900">
-                        {formatNgn(folioPaySummary.hotelPaidAmount)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-slate-900">
                       <span>
-                        Outstanding guest balance ({folioPaySummary.paymentStatus})
+                        Direct Payment to Property:{' '}
+                        <strong className="text-emerald-700">{formatNgn(directPaidEst)}</strong>
                       </span>
-                      <span
-                        className={`font-mono-tabular ${
-                          folioPaySummary.balance > 0 ? 'text-rose-700' : 'text-emerald-700'
-                        }`}
-                      >
-                        {formatNgn(folioPaySummary.balance)}
+                      <span>
+                        Remaining Property Balance:{' '}
+                        <strong className="text-slate-900">{formatNgn(estBalanceDue)}</strong>
                       </span>
-                    </div>
-                  </>
-                );
-              })()}
-              {cms.brand.folioFooterNote && (
-                <p className="text-[11px] text-slate-500 pt-1">
-                  {cms.brand.folioFooterNote}
-                </p>
-              )}
-            </div>
-
-            {activeFolioReservation.status !== 'checked_out' &&
-              activeFolioReservation.status !== 'cancelled' &&
-              activeFolioReservation.status !== 'no_show' && (
-                <div className="space-y-3 text-xs">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-                      <p className="font-semibold text-slate-900">Post Payment to Folio (₦)</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="number"
-                          min={500}
-                          step={500}
-                          value={folioPayAmount}
-                          onChange={(e) => setFolioPayAmount(Number(e.target.value))}
-                          className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                        />
-                        <select
-                          value={folioPayMethod}
-                          onChange={(e) =>
-                            setFolioPayMethod(e.target.value as ReservationRecord['paymentMethod'])
+                      <span>
+                        Status:{' '}
+                        <strong
+                          className={
+                            estPayStatus === 'Paid'
+                              ? 'text-emerald-700'
+                              : estPayStatus === 'Partial'
+                                ? 'text-amber-700'
+                                : 'text-rose-700'
                           }
-                          className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
                         >
-                          <option value="Bank Transfer">Bank Transfer</option>
-                          <option value="Card POS">Card POS</option>
-                          <option value="Cash NGN">Cash NGN</option>
-                          <option value="Corporate Invoice">Corporate Invoice</option>
-                          <option value="Online Gateway">Online Gateway</option>
-                        </select>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={busyId === activeFolioReservation.id || folioPayAmount <= 0}
-                        onClick={async () => {
-                          setActionError(null);
-                          setBusyId(activeFolioReservation.id);
-                          try {
-                            await recordReservationFolioPayment({
-                              property,
-                              reservation: activeFolioReservation,
-                              amountNgn: folioPayAmount,
-                              paymentMethod: folioPayMethod,
-                              actorRole,
-                            });
-                            onNotify(
-                              `Posted ${formatNgn(folioPayAmount)} to ${activeFolioReservation.bookingRef}`
-                            );
-                          } catch (err) {
-                            setActionError(parseReadableError(err));
-                          } finally {
-                            setBusyId(null);
-                          }
-                        }}
-                        className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
-                      >
-                        Post Payment
-                      </button>
+                          {estPayStatus}
+                        </strong>
+                      </span>
                     </div>
-
-                    <div className="border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-                      <p className="font-semibold text-slate-900">Add Folio / Extra Service Charge</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="text"
-                          value={miscChargeDesc}
-                          onChange={(e) => setMiscChargeDesc(e.target.value)}
-                          placeholder="Service label"
-                          className="border border-slate-200 rounded-lg px-2.5 py-1.5"
-                        />
-                        <input
-                          type="number"
-                          min={500}
-                          step={500}
-                          value={miscChargeAmount}
-                          onChange={(e) => setMiscChargeAmount(Number(e.target.value))}
-                          className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        disabled={busyId === activeFolioReservation.id || miscChargeAmount <= 0}
-                        onClick={async () => {
-                          setActionError(null);
-                          setBusyId(activeFolioReservation.id);
-                          try {
-                            await addMiscFolioCharge({
-                              property,
-                              reservation: activeFolioReservation,
-                              amountNgn: miscChargeAmount,
-                              description: miscChargeDesc.trim() || 'Extra Service Charge',
-                              actorRole,
-                            });
-                            onNotify(
-                              `Added ${formatNgn(miscChargeAmount)} charge to ${activeFolioReservation.bookingRef}`
-                            );
-                          } catch (err) {
-                            setActionError(parseReadableError(err));
-                          } finally {
-                            setBusyId(null);
-                          }
-                        }}
-                        className="w-full py-1.5 border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-semibold rounded-lg cursor-pointer"
-                      >
-                        Add Charge to Folio
-                      </button>
-                    </div>
+                    <span className="text-slate-500 font-mono-tabular">Date Booked: {todayIso}</span>
                   </div>
 
-                  {/* Late Check-Out Fee & Checkout Time Card */}
-                  <div className="border border-amber-200 bg-amber-50/50 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-                    <div className="grid grid-cols-2 gap-3 flex-1">
-                      <div>
-                        <label className="block font-semibold text-slate-800 mb-1">
-                          <span className="inline-flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5 text-amber-700" />
-                            <span>Check-Out Time</span>
-                          </span>
-                        </label>
-                        <input
-                          type="time"
-                          value={lateCheckoutTime}
-                          onChange={(e) => setLateCheckoutTime(e.target.value)}
-                          className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-semibold text-slate-800 mb-1">
-                          Late Check-Out Fee (₦)
-                        </label>
-                        <input
-                          type="number"
-                          min={0}
-                          step={500}
-                          value={lateCheckoutFeeDraft}
-                          onChange={(e) =>
-                            setLateCheckoutFeeDraft(Math.max(0, Number(e.target.value)))
-                          }
-                          className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 font-mono-tabular"
-                        />
-                      </div>
-                    </div>
+                  <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={immediateCheckIn}
+                        onChange={(e) => setImmediateCheckIn(e.target.checked)}
+                        className="rounded border-slate-300 text-emerald-600"
+                      />
+                      <span>Immediate Front Desk Check-In (requires verification steps)</span>
+                    </label>
+
                     <button
-                      type="button"
-                      disabled={busyId === `late-${activeFolioReservation.id}`}
-                      onClick={() => void handleApplyLateCheckout(activeFolioReservation)}
-                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                      type="submit"
+                      disabled={
+                        busyId === 'booking' ||
+                        (immediateCheckIn &&
+                          (!inlinePayConfirmed ||
+                            !inlineIdVerified ||
+                            inlineIdNumber.trim().length < 3 ||
+                            inlineKeyIssued !== 'yes' ||
+                            !inlineRoomReady))
+                      }
+                      className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
                     >
-                      {busyId === `late-${activeFolioReservation.id}`
-                        ? 'Applying...'
-                        : 'Apply Late Fee to Bill'}
+                      {busyId === 'booking'
+                        ? 'Saving...'
+                        : immediateCheckIn
+                          ? 'Verify & Check In Guest'
+                          : 'Create Confirmed Reservation'}
                     </button>
                   </div>
-                </div>
-              )}
 
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200 text-xs">
-              <div className="flex flex-wrap items-center gap-2">
-                {activeFolioReservation.status !== 'checked_out' &&
-                  activeFolioReservation.status !== 'cancelled' &&
-                  activeFolioReservation.status !== 'no_show' && (
-                    <>
+                  {immediateCheckIn && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
+                      <p className="font-bold text-slate-900">
+                        Mandatory Check-In Process (Required for Immediate Check-In)
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Guest ID Type
+                          </label>
+                          <select
+                            value={inlineIdType}
+                            onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                          >
+                            <option value="NIN">NIN</option>
+                            <option value="International Passport">International Passport</option>
+                            <option value="Driver License">Driver License</option>
+                            <option value="Voter Card">Voter Card</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Guest ID Number *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={inlineIdNumber}
+                            onChange={(e) => setInlineIdNumber(e.target.value)}
+                            placeholder="Enter NIN / Passport / License No."
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={inlinePayConfirmed}
+                            onChange={(e) => setInlinePayConfirmed(e.target.checked)}
+                          />
+                          <span>1. Payment Confirmed</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={inlineIdVerified}
+                            onChange={(e) => setInlineIdVerified(e.target.checked)}
+                          />
+                          <span>2. Guest ID Verified</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={inlineRoomReady}
+                            onChange={(e) => setInlineRoomReady(e.target.checked)}
+                          />
+                          <span>3. Room Inspected Ready</span>
+                        </label>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
+                        <span className="font-semibold text-slate-800">4. Key Issued? *</span>
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setInlineKeyIssued('yes')}
+                            className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
+                              inlineKeyIssued === 'yes'
+                                ? 'bg-emerald-600 border-emerald-600 text-white'
+                                : 'bg-white border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInlineKeyIssued('no')}
+                            className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
+                              inlineKeyIssued === 'no'
+                                ? 'bg-rose-600 border-rose-600 text-white'
+                                : 'bg-white border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            No
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </form>
+              );
+            })()
+          ) : selectedRoomDetail ? (
+            (() => {
+              const roomReservations = reservations.filter(
+                (r) =>
+                  r.roomId === selectedRoomDetail.id ||
+                  r.roomNumber === selectedRoomDetail.roomNumber
+              );
+              return (
+                <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                    <div className="flex items-center gap-3">
                       <button
                         type="button"
-                        disabled={busyId === activeFolioReservation.id}
-                        onClick={async () => {
-                          setBusyId(activeFolioReservation.id);
-                          try {
-                            await extendReservationStay({
-                              property,
-                              reservation: activeFolioReservation,
-                              extraNights: 1,
-                              actorRole,
-                            });
-                            onNotify(
-                              `Extended ${activeFolioReservation.bookingRef} by +1 night`
-                            );
-                          } finally {
-                            setBusyId(null);
-                          }
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg cursor-pointer"
+                        onClick={() => setSelectedRoomDetailId(null)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
                       >
-                        <CalendarPlus className="w-3.5 h-3.5" />
-                        <span>Extend +1 Night</span>
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>Back to Rooms</span>
                       </button>
+                      <div>
+                        <p className="text-xs font-mono-tabular text-slate-500">
+                          {selectedRoomDetail.roomNumber} · {getRoomSection(selectedRoomDetail)} · Floor{' '}
+                          {selectedRoomDetail.floor} · {systemPropertyId}
+                        </p>
+                        <h2 className="font-display text-lg font-bold text-slate-900">
+                          {selectedRoomDetail.name} — {selectedRoomDetail.roomType}
+                        </h2>
+                      </div>
+                    </div>
+                    {canManageRooms && (
                       <button
                         type="button"
                         onClick={() => {
-                          onSelectReservation?.(null);
-                          onNavigateSection?.('pos_kitchen');
+                          const target = selectedRoomDetail;
+                          setSelectedRoomDetailId(null);
+                          openRoomEditor(target);
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
                       >
-                        <ChefHat className="w-3.5 h-3.5" />
-                        <span>Order Restaurant POS</span>
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                        <span>Edit Room &amp; Rate</span>
                       </button>
-                    </>
-                  )}
-              </div>
+                    )}
+                  </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {(activeFolioReservation.status === 'confirmed' ||
-                  activeFolioReservation.status === 'pending') && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={busyId === activeFolioReservation.id}
-                      onClick={() => {
-                        const target = activeFolioReservation;
-                        onSelectReservation?.(null);
-                        openCancelDialog(target);
-                      }}
-                      className="px-3 py-2 border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg cursor-pointer"
-                    >
-                      Cancel Booking
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyId === activeFolioReservation.id}
-                      onClick={() => {
-                        const target = activeFolioReservation;
-                        onSelectReservation?.(null);
-                        setCheckInTarget(target);
-                      }}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
-                    >
-                      Check In Guest Now
-                    </button>
-                  </>
-                )}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <div className="lg:col-span-5 space-y-3">
+                      <div className="h-64 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+                        <img
+                          src={selectedRoomDetail.imageUrl || DEFAULT_SUITE_IMAGE}
+                          alt={selectedRoomDetail.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
+                          }}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="border border-slate-200 rounded-xl p-3">
+                          <p className="text-slate-500">Nightly Rate (NGN)</p>
+                          <p className="font-mono-tabular text-base font-bold text-slate-900 mt-0.5">
+                            {formatNgn(selectedRoomDetail.nightlyRateNgn)}
+                          </p>
+                          <p className="font-mono-tabular text-[11px] text-emerald-700">
+                            ≈{' '}
+                            {formatUsd(
+                              convertNgnToUsd(
+                                selectedRoomDetail.nightlyRateNgn,
+                                property.usdExchangeRateNgn
+                              ),
+                              2
+                            )}{' '}
+                            USD
+                          </p>
+                        </div>
+                        <div className="border border-slate-200 rounded-xl p-3">
+                          <p className="text-slate-500">Occupancy &amp; HK Status</p>
+                          <p className="text-sm font-bold text-slate-900 capitalize mt-0.5">
+                            {selectedRoomDetail.occupancyStatus.replace('_', ' ')}
+                          </p>
+                          <p className="text-[11px] text-slate-600 capitalize">
+                            HK: {selectedRoomDetail.housekeepingStatus} · Max{' '}
+                            {selectedRoomDetail.maxGuests} guests
+                          </p>
+                        </div>
+                      </div>
+                    </div>
 
-                {activeFolioReservation.status === 'checked_in' && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const target = activeFolioReservation;
-                        onSelectReservation?.(null);
-                        openChangeRoomModal(target);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded-lg cursor-pointer"
-                    >
-                      <ArrowLeftRight className="w-3.5 h-3.5" />
-                      <span>Change Room</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const target = activeFolioReservation;
-                        onSelectReservation?.(null);
-                        setCheckoutTarget(target);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Settle &amp; Check Out</span>
-                    </button>
-                  </>
-                )}
+                    <div className="lg:col-span-7 space-y-5 text-xs">
+                      <div className="border border-slate-200 rounded-xl p-4 space-y-3">
+                        <p className="font-semibold text-slate-900">Quick Housekeeping Actions</p>
+                        <div className="flex flex-wrap gap-2">
+                          {(['clean', 'inspected', 'dirty', 'cleaning'] as const).map((hk) => (
+                            <button
+                              key={hk}
+                              type="button"
+                              disabled={busyId === selectedRoomDetail.id}
+                              onClick={async () => {
+                                setBusyId(selectedRoomDetail.id);
+                                try {
+                                  await updateRoomStatus({
+                                    property,
+                                    room: selectedRoomDetail,
+                                    updates: { housekeepingStatus: hk },
+                                    actorRole,
+                                  });
+                                  onNotify(
+                                    `Marked ${selectedRoomDetail.roomNumber} as ${hk}`
+                                  );
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-lg border font-semibold capitalize cursor-pointer ${
+                                selectedRoomDetail.housekeepingStatus === hk
+                                  ? 'bg-emerald-600 border-emerald-600 text-white'
+                                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              {hk}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
 
-                <button
-                  type="button"
-                  onClick={() => onSelectReservation?.(null)}
-                  className="px-3.5 py-2 text-slate-600 hover:text-slate-900 font-medium cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
+                      <div className="border border-slate-200 rounded-xl p-4 space-y-2">
+                        <p className="font-semibold text-slate-900">Room Amenities</p>
+                        <p className="text-slate-600 leading-relaxed">
+                          {(selectedRoomDetail.amenities || []).length > 0
+                            ? (selectedRoomDetail.amenities || []).join(' · ')
+                            : 'No amenities listed yet.'}
+                        </p>
+                      </div>
+
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                          <h3 className="font-display text-xs font-bold text-slate-900">
+                            Reservations Linked to {selectedRoomDetail.roomNumber} (
+                            {roomReservations.length})
+                          </h3>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRoomId(selectedRoomDetail.id);
+                              setNewRequestedRoomType(selectedRoomDetail.roomType);
+                              setBookingExpectedPayoutManual(false);
+                              setBookingExpectedPayoutInput(
+                                formatPriceInputWithCommas(selectedRoomDetail.nightlyRateNgn)
+                              );
+                              setSelectedRoomDetailId(null);
+                              setShowBookingForm(true);
+                              onNavigateSection?.('reservations');
+                            }}
+                            className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+                          >
+                            + New Reservation for Room
+                          </button>
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                          {roomReservations.slice(0, 8).map((r) => (
+                            <div
+                              key={r.id}
+                              onClick={() => {
+                                setSelectedRoomDetailId(null);
+                                onSelectReservation?.(r.id);
+                              }}
+                              className="px-4 py-2.5 flex items-center justify-between hover:bg-emerald-50/40 cursor-pointer"
+                            >
+                              <div>
+                                <p className="font-semibold text-slate-900">
+                                  {r.guestName}{' '}
+                                  <span className="font-mono-tabular text-[11px] text-slate-500">
+                                    · {r.bookingRef}
+                                  </span>
+                                </p>
+                                <p className="font-mono-tabular text-[11px] text-slate-500">
+                                  {r.checkInDate} → {r.checkOutDate} ({r.nights}n) · {r.channel}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[11px] font-semibold text-emerald-700 capitalize">
+                                  {r.status.replace('_', ' ')} · Open Folio →
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                          {roomReservations.length === 0 && (
+                            <p className="px-4 py-5 text-center text-slate-500">
+                              No reservations logged for this room yet.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
+          ) : null}
         </div>
       )}
 
@@ -5833,6 +6588,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 checkoutTarget,
                 property.usdExchangeRateNgn
               );
+              const checkoutIsOta = isOtaBookingChannel(checkoutTarget.channel);
               return (
                 <div className="text-xs space-y-2 border-y border-slate-200 py-3">
                   <div className="flex justify-between">
@@ -5845,22 +6601,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     </span>
                     <span className="font-mono-tabular">{formatNgn(checkoutTarget.roomChargesNgn)}</span>
                   </div>
-                  {checkoutSummary.sourceCurrency !== 'NGN' &&
-                    checkoutSummary.sourceTotalAmount > 0 && (
-                      <div className="flex justify-between text-[11px] text-blue-700">
-                        <span>
-                          Channel Customer Rate ({checkoutSummary.sourceCurrency} @ ₦
-                          {checkoutSummary.fxRateToNgn.toLocaleString('en-NG')})
-                        </span>
-                        <span className="font-mono-tabular font-semibold">
-                          {formatChannelCurrency(
-                            checkoutSummary.sourceTotalAmount,
-                            checkoutSummary.sourceCurrency
-                          )}{' '}
-                          {checkoutSummary.sourceCurrency}
-                        </span>
-                      </div>
-                    )}
                   <div className="flex justify-between">
                     <span className="text-slate-600">Restaurant / Bar POS Charges</span>
                     <span className="font-mono-tabular">{formatNgn(checkoutTarget.posChargesNgn)}</span>
@@ -5875,22 +6615,46 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       </span>
                     </div>
                   )}
+                  {checkoutIsOta && (
+                    <>
+                      <div className="flex justify-between pt-1 border-t border-slate-100 text-blue-800">
+                        <span>
+                          Guest Paid to OTA ({checkoutSummary.sourceCurrency})
+                        </span>
+                        <span className="font-mono-tabular font-semibold">
+                          {formatChannelCurrency(
+                            checkoutSummary.otaPaidSourceAmount,
+                            checkoutSummary.sourceCurrency
+                          )}{' '}
+                          {checkoutSummary.sourceCurrency}
+                          {checkoutSummary.sourceCurrency !== 'NGN' &&
+                            checkoutSummary.otaPaidAmount > 0 && (
+                              <span className="ml-1 text-[10px] font-normal">
+                                (≈ {formatNgn(checkoutSummary.otaPaidAmount)})
+                              </span>
+                            )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Expected Property Payout (₦)</span>
+                        <span className="font-mono-tabular font-semibold text-slate-900">
+                          {formatNgn(checkoutSummary.expectedPayoutNgn)}
+                        </span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex justify-between pt-1 border-t border-slate-100">
                     <span className="text-slate-600">
-                      OTA payment received ({checkoutTarget.channel})
+                      {checkoutIsOta
+                        ? 'Direct Payment to Property (₦)'
+                        : 'Hotel Payment Received (₦)'}
                     </span>
                     <span className="font-mono-tabular font-semibold text-emerald-700">
-                      {formatNgn(checkoutSummary.otaPaidAmount)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Hotel payment received</span>
-                    <span className="font-mono-tabular font-semibold text-slate-900">
                       {formatNgn(checkoutSummary.hotelPaidAmount)}
                     </span>
                   </div>
                   <div className="flex justify-between pt-2 border-t border-slate-100 text-sm font-bold text-slate-900">
-                    <span>Outstanding guest balance (Due Now)</span>
+                    <span>Remaining Property Balance Due</span>
                     <span
                       className={`font-mono-tabular ${
                         checkoutSummary.balance > 0 ? 'text-rose-700' : 'text-emerald-700'

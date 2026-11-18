@@ -223,6 +223,7 @@
         "paymentCollectionMode": { "type": "string", "enum": ["ota_prepaid", "hotel_collect"] },
         "otaPaidNgn": { "type": "number" },
         "otaPaidSourceAmount": { "type": "number" },
+        "expectedPayoutNgn": { "type": "number" },
         "hotelPaidNgn": { "type": "number" },
         "status": { "type": "string", "enum": ["confirmed", "pending", "checked_in", "checked_out", "cancelled", "no_show"] },
         "paymentMethod": { "type": "string", "enum": ["Bank Transfer", "Card POS", "Cash NGN", "Corporate Invoice", "Online Gateway"] },

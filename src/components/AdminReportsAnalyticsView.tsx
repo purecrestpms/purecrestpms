@@ -28,7 +28,9 @@ import {
   AttendanceRecord,
   BlockedDateRecord,
   formatBookingSourceLabel,
+  formatChannelCurrency,
   formatNgn,
+  getPropertySystemId,
   getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
@@ -36,6 +38,7 @@ import {
   GuestRecord,
   HousekeepingTaskRecord,
   InventoryItemRecord,
+  isOtaBookingChannel,
   LedgerEntryRecord,
   MaintenanceTicketRecord,
   matchesBookingSourceFilter,
@@ -1481,27 +1484,33 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dailySummaryRows), 'Daily Booking Summary');
 
-    const dailyDetailRows = dailyBookingsDataset.rows.map(({ res, bookedDate, roomDisplay, payment, sourceLabel }) => ({
-      Booked_Date: bookedDate,
-      Booking_Ref: res.bookingRef,
-      Guest_Name: res.guestName,
-      Guest_Phone: res.guestPhone || '',
-      Room_Number: roomDisplay.roomNumberLabel,
-      Room_Type: roomDisplay.roomTypeLabel,
-      Check_In: res.checkInDate,
-      Check_Out: res.checkOutDate,
-      Nights: res.nights,
-      Adults: res.adults,
-      Children: res.children || 0,
-      Booking_Source: sourceLabel,
-      Channel_Currency: res.sourceCurrency || 'NGN',
-      Channel_Total_Amount: res.sourceTotalAmount ?? payment.totalAmount,
-      Total_Amount_NGN: payment.totalAmount,
-      Amount_Paid_NGN: payment.amountPaid,
-      Pending_Balance_NGN: payment.balance,
-      Payment_Status: payment.paymentStatus === 'Unpaid' ? 'Not Paid' : payment.paymentStatus,
-      Reservation_Status: RESERVATION_STATUS_LABELS[res.status] || res.status,
-    }));
+    const dailyDetailRows = dailyBookingsDataset.rows.map(({ res, bookedDate, roomDisplay, payment, sourceLabel }) => {
+      const isOta = isOtaBookingChannel(res.channel);
+      return {
+        Property_ID: getPropertySystemId(property),
+        Booked_Date: bookedDate,
+        Booking_Ref: res.bookingRef,
+        Guest_Name: res.guestName,
+        Guest_Phone: res.guestPhone || '',
+        Room_Number: roomDisplay.roomNumberLabel,
+        Room_Type: roomDisplay.roomTypeLabel,
+        Check_In: res.checkInDate,
+        Check_Out: res.checkOutDate,
+        Nights: res.nights,
+        Adults: res.adults,
+        Children: res.children || 0,
+        Booking_Source: sourceLabel,
+        Guest_Paid_OTA_Currency: isOta ? payment.sourceCurrency : 'NGN',
+        Guest_Paid_OTA_Amount: isOta ? payment.otaPaidSourceAmount : 0,
+        Guest_Paid_OTA_NGN: isOta ? payment.otaPaidAmount : 0,
+        Expected_Property_Payout_NGN: isOta ? payment.expectedPayoutNgn : payment.totalAmount,
+        Direct_Property_Paid_NGN: payment.hotelPaidAmount,
+        Total_Charges_NGN: payment.totalAmount,
+        Remaining_Property_Balance_NGN: payment.balance,
+        Payment_Status: payment.paymentStatus === 'Unpaid' ? 'Not Paid' : payment.paymentStatus,
+        Reservation_Status: RESERVATION_STATUS_LABELS[res.status] || res.status,
+      };
+    });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dailyDetailRows), 'Daily Room Bookings');
 
     const pnlRows = current.pnlByCategory.map((c) => ({
@@ -1617,7 +1626,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
 
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(propAddress, textLeft, 23);
+    doc.text(`${getPropertySystemId(property)} · ${propAddress}`, textLeft, 23);
     doc.text(`${propPhone} | ${propEmail} | Period: ${dateWindow.label}`, textLeft, 28);
     startY = 35;
 
@@ -1856,7 +1865,10 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                 {cms.pages.reports.title || 'Admin Management Reports & Analytics'}
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Live database analytics ({dateWindow.label})
+                <span className="font-mono-tabular font-semibold text-slate-700">
+                  {getPropertySystemId(property)}
+                </span>{' '}
+                · Live database analytics ({dateWindow.label})
               </p>
             </div>
           </div>
@@ -2449,53 +2461,81 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                     </td>
                   </tr>
                 ) : (
-                  current.pendingPaymentRows.map((row) => (
-                    <tr key={row.res.id} className="hover:bg-amber-50/30">
-                      <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                        {row.res.bookingRef}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <p className="font-semibold text-slate-900">{row.res.guestName}</p>
-                        {row.res.guestPhone && (
-                          <p className="text-[11px] font-mono-tabular text-slate-500">
-                            {row.res.guestPhone}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
-                        {row.roomDisplay.roomNumberLabel}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-slate-700 whitespace-nowrap">
-                        {row.res.checkInDate} → {row.res.checkOutDate}
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-700 font-medium whitespace-nowrap">
-                        {row.sourceLabel}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-slate-900">
-                        {formatNgn(row.totalAmount)}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right text-emerald-700">
-                        {formatNgn(row.amountPaid)}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right font-bold text-rose-700">
-                        {formatNgn(row.balance)}
-                      </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap">
-                        <span
-                          className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold ${
-                            row.paymentStatus === 'Unpaid'
-                              ? 'bg-rose-100 text-rose-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {row.paymentStatus === 'Unpaid' ? 'Not Paid' : 'Partial (Pending)'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap capitalize text-slate-700">
-                        {RESERVATION_STATUS_LABELS[row.res.status] || row.res.status}
-                      </td>
-                    </tr>
-                  ))
+                  current.pendingPaymentRows.map((row) => {
+                    const isOta = isOtaBookingChannel(row.res.channel);
+                    const paySummary = getReservationPaymentSummary(
+                      row.res,
+                      property.usdExchangeRateNgn
+                    );
+                    return (
+                      <tr key={row.res.id} className="hover:bg-amber-50/30">
+                        <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
+                          {row.res.bookingRef}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <p className="font-semibold text-slate-900">{row.res.guestName}</p>
+                          {row.res.guestPhone && (
+                            <p className="text-[11px] font-mono-tabular text-slate-500">
+                              {row.res.guestPhone}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
+                          {row.roomDisplay.roomNumberLabel}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono-tabular text-slate-700 whitespace-nowrap">
+                          {row.res.checkInDate} → {row.res.checkOutDate}
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-700 font-medium whitespace-nowrap">
+                          {row.sourceLabel}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-slate-900 whitespace-nowrap">
+                          <span className="block">{formatNgn(row.totalAmount)}</span>
+                          {isOta && (
+                            <span className="block text-[10px] font-normal text-slate-500">
+                              Exp. Payout: {formatNgn(paySummary.expectedPayoutNgn)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono-tabular text-right text-emerald-700 whitespace-nowrap">
+                          {isOta ? (
+                            <>
+                              <span className="block text-[11px] font-semibold text-blue-700">
+                                OTA:{' '}
+                                {formatChannelCurrency(
+                                  paySummary.otaPaidSourceAmount,
+                                  paySummary.sourceCurrency
+                                )}{' '}
+                                {paySummary.sourceCurrency}
+                              </span>
+                              <span className="block text-[10px] text-emerald-700">
+                                Direct: {formatNgn(paySummary.hotelPaidAmount)}
+                              </span>
+                            </>
+                          ) : (
+                            formatNgn(row.amountPaid)
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono-tabular text-right font-bold text-rose-700 whitespace-nowrap">
+                          {formatNgn(row.balance)}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                              row.paymentStatus === 'Unpaid'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {row.paymentStatus === 'Unpaid' ? 'Not Paid' : 'Partial (Pending)'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap capitalize text-slate-700">
+                          {RESERVATION_STATUS_LABELS[row.res.status] || row.res.status}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -3373,70 +3413,100 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                     </tr>
                   ) : (
                     dailyBookingsDataset.rows.map(
-                      ({ res, bookedDate, roomDisplay, payment, sourceLabel }) => (
-                        <tr key={res.id} className="hover:bg-slate-50/70">
-                          <td className="px-4 py-2.5 font-mono-tabular text-slate-600 whitespace-nowrap">
-                            {bookedDate}
-                          </td>
-                          <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                            {res.bookingRef}
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <p className="font-semibold text-slate-900">{res.guestName}</p>
-                            {res.guestPhone && (
-                              <p className="text-[11px] font-mono-tabular text-slate-500">
-                                {res.guestPhone}
-                              </p>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap">
-                            <span className="font-mono-tabular font-semibold text-slate-900">
-                              {roomDisplay.roomNumberLabel}
-                            </span>
-                            <span className="block text-[11px] text-slate-500">
-                              {roomDisplay.roomTypeLabel}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 font-mono-tabular text-slate-700 whitespace-nowrap">
-                            {res.checkInDate} → {res.checkOutDate}
-                          </td>
-                          <td className="px-4 py-2.5 font-mono-tabular text-right">
-                            {res.nights}
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap text-slate-700 font-medium">
-                            {sourceLabel}
-                          </td>
-                          <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-slate-900">
-                            {formatNgn(payment.totalAmount)}
-                          </td>
-                          <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-emerald-700">
-                            {formatNgn(payment.amountPaid)}
-                          </td>
-                          <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-rose-700">
-                            {formatNgn(payment.balance)}
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap">
-                            <span
-                              className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${
-                                payment.paymentStatus === 'Paid'
-                                  ? 'bg-emerald-50 text-emerald-700'
+                      ({ res, bookedDate, roomDisplay, payment, sourceLabel }) => {
+                        const isOta = isOtaBookingChannel(res.channel);
+                        return (
+                          <tr key={res.id} className="hover:bg-slate-50/70">
+                            <td className="px-4 py-2.5 font-mono-tabular text-slate-600 whitespace-nowrap">
+                              {bookedDate}
+                            </td>
+                            <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
+                              {res.bookingRef}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <p className="font-semibold text-slate-900">{res.guestName}</p>
+                              {res.guestPhone && (
+                                <p className="text-[11px] font-mono-tabular text-slate-500">
+                                  {res.guestPhone}
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap">
+                              <span className="font-mono-tabular font-semibold text-slate-900">
+                                {roomDisplay.roomNumberLabel}
+                              </span>
+                              <span className="block text-[11px] text-slate-500">
+                                {roomDisplay.roomTypeLabel}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 font-mono-tabular text-slate-700 whitespace-nowrap">
+                              {res.checkInDate} → {res.checkOutDate}
+                            </td>
+                            <td className="px-4 py-2.5 font-mono-tabular text-right">
+                              {res.nights}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-slate-700 font-medium">
+                              {sourceLabel}
+                            </td>
+                            <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-slate-900 whitespace-nowrap">
+                              <span className="block">{formatNgn(payment.totalAmount)}</span>
+                              {isOta && (
+                                <span className="block text-[10px] font-normal text-slate-500">
+                                  Exp. Payout: {formatNgn(payment.expectedPayoutNgn)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-emerald-700 whitespace-nowrap">
+                              {isOta ? (
+                                <>
+                                  <span className="block text-[11px] text-blue-700">
+                                    OTA:{' '}
+                                    {formatChannelCurrency(
+                                      payment.otaPaidSourceAmount,
+                                      payment.sourceCurrency
+                                    )}{' '}
+                                    {payment.sourceCurrency}
+                                  </span>
+                                  {payment.sourceCurrency !== 'NGN' &&
+                                    payment.otaPaidAmount > 0 && (
+                                      <span className="block text-[10px] font-normal text-slate-500">
+                                        ≈ {formatNgn(payment.otaPaidAmount)}
+                                      </span>
+                                    )}
+                                  <span className="block text-[10px] text-emerald-700">
+                                    Direct: {formatNgn(payment.hotelPaidAmount)}
+                                  </span>
+                                </>
+                              ) : (
+                                formatNgn(payment.amountPaid)
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-rose-700 whitespace-nowrap">
+                              {formatNgn(payment.balance)}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                                  payment.paymentStatus === 'Paid'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : payment.paymentStatus === 'Partial'
+                                      ? 'bg-amber-50 text-amber-700'
+                                      : 'bg-rose-50 text-rose-700'
+                                }`}
+                              >
+                                {payment.paymentStatus === 'Unpaid'
+                                  ? 'Not Paid'
                                   : payment.paymentStatus === 'Partial'
-                                    ? 'bg-amber-50 text-amber-700'
-                                    : 'bg-rose-50 text-rose-700'
-                              }`}
-                            >
-                              {payment.paymentStatus === 'Unpaid'
-                                ? 'Not Paid'
-                                : payment.paymentStatus === 'Partial'
-                                  ? 'Partial (Pending)'
-                                  : 'Paid'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap capitalize font-medium text-slate-700">
-                            {RESERVATION_STATUS_LABELS[res.status] || res.status}
-                          </td>
-                        </tr>
-                      )
+                                    ? 'Partial (Pending)'
+                                    : 'Paid'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap capitalize font-medium text-slate-700">
+                              {RESERVATION_STATUS_LABELS[res.status] || res.status}
+                            </td>
+                          </tr>
+                        );
+                      }
                     )
                   )}
                 </tbody>

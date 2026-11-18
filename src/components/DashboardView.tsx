@@ -36,12 +36,14 @@ import {
   formatChannelCurrency,
   formatNgn,
   formatUsd,
+  getPropertySystemId,
   getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
   getRoomSection,
   GuestRecord,
   HousekeepingTaskRecord,
+  isOtaBookingChannel,
   LedgerEntryRecord,
   LicenseRecord,
   MaintenanceTicketRecord,
@@ -464,7 +466,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {property.name}
               </h1>
               <p className="font-mono-tabular text-[11px] font-semibold text-slate-600">
-                Property Code: {property.code} · {rooms.length} Suites Configured
+                {getPropertySystemId(property)} · Code: {property.code} · {rooms.length} Rooms Configured
               </p>
             </div>
           </div>
@@ -1045,16 +1047,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {filteredDashboardReservations.map((res) => {
                 const {
                   totalAmount,
+                  expectedPayoutNgn,
                   otaPaidAmount,
                   hotelPaidAmount,
                   amountPaid,
                   balance,
                   paymentStatus,
                   sourceCurrency,
-                  sourceNightlyRate,
-                  sourceTotalAmount,
                   otaPaidSourceAmount,
                 } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
+                const isOtaSource = isOtaBookingChannel(res.channel);
                 const bookedDate = getReservationBookedDate(res);
                 const childCount = res.children ?? 0;
                 const sourceLabel = formatBookingSourceLabel(res.channel);
@@ -1163,27 +1165,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                     <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
                       <span className="block">{formatNgn(totalAmount)}</span>
-                      {sourceCurrency !== 'NGN' && sourceTotalAmount > 0 && (
-                        <span className="block text-[10px] font-medium text-blue-700">
-                          {formatChannelCurrency(sourceTotalAmount, sourceCurrency)} {sourceCurrency}
-                          {sourceNightlyRate > 0
-                            ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
-                            : ''}
+                      {isOtaSource && (
+                        <span className="block text-[10px] font-medium text-slate-500">
+                          Exp. Payout: {formatNgn(expectedPayoutNgn)}
                         </span>
                       )}
                     </td>
 
                     <td className="py-3 px-3.5 text-right font-mono-tabular font-medium text-emerald-700 whitespace-nowrap">
-                      <span className="block font-semibold">{formatNgn(amountPaid)}</span>
-                      <span className="block text-[10px] text-slate-500">
-                        OTA: {formatNgn(otaPaidAmount)}
-                        {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && otaPaidSourceAmount > 0
-                          ? ` (${formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)})`
-                          : ''}
-                      </span>
-                      <span className="block text-[10px] text-slate-500">
-                        Hotel: {formatNgn(hotelPaidAmount)}
-                      </span>
+                      {isOtaSource ? (
+                        <>
+                          <span className="block text-[11px] font-semibold text-blue-700">
+                            Paid OTA:{' '}
+                            {formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)}{' '}
+                            {sourceCurrency}
+                          </span>
+                          {sourceCurrency !== 'NGN' && otaPaidAmount > 0 && (
+                            <span className="block text-[10px] text-slate-500">
+                              ≈ {formatNgn(otaPaidAmount)}
+                            </span>
+                          )}
+                          <span className="block text-[10px] text-emerald-700">
+                            Direct Property: {formatNgn(hotelPaidAmount)}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="block font-semibold">{formatNgn(amountPaid)}</span>
+                          <span className="block text-[10px] text-slate-500">
+                            Direct Property: {formatNgn(hotelPaidAmount)}
+                          </span>
+                        </>
+                      )}
                     </td>
 
                     <td
@@ -1193,7 +1206,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     >
                       <span className="block">{formatNgn(balance)}</span>
                       <span className="block text-[10px] font-normal text-slate-500">
-                        {balance > 0 ? 'Guest bal due' : '₦0 guest bal'}
+                        {balance > 0 ? 'Property bal due' : '₦0 prop bal'}
                       </span>
                     </td>
 

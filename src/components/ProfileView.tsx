@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { saveMyUserProfile, updatePropertyProfile } from '../services/pmsService';
 import {
+  getPropertySystemId,
   LicenseRecord,
   PropertyRecord,
   RICHGATES_PROPERTY_INFO,
@@ -307,13 +308,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </h2>
             </div>
             <span className="font-mono-tabular text-[11px] font-semibold text-slate-500">
-              {property.code}
+              {getPropertySystemId(property)} · {property.code}
             </span>
           </div>
 
           {/* Live Contact Card Preview */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2 text-xs">
-            <p className="font-display font-bold text-slate-900">{propName}</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-display font-bold text-slate-900">{propName}</p>
+              <span className="font-mono-tabular text-[11px] font-bold text-[#1c46be]">
+                ID: {getPropertySystemId(property)}
+              </span>
+            </div>
             <p className="flex items-start gap-2 text-slate-600">
               <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
               <span>{propAddress}</span>

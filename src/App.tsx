@@ -40,6 +40,7 @@ import {
 import { FinanceInventoryView } from './components/FinanceInventoryView';
 import { HelpDocsTrainingView } from './components/HelpDocsTrainingView';
 import { HousekeepingMaintenanceView } from './components/HousekeepingMaintenanceView';
+import { InvoicesView } from './components/InvoicesView';
 import { PortalGateway } from './components/PortalGateway';
 import { PosKitchenView } from './components/PosKitchenView';
 import { ProfileView } from './components/ProfileView';
@@ -60,6 +61,7 @@ import {
   testConnection,
 } from './firebase';
 import {
+  backfillMissingSystemPropertyIdsWorkflow,
   buildPropertyIcalFeed,
   heartbeatStaffSessionWorkflow,
   markMessageReadWorkflow,
@@ -315,6 +317,7 @@ export default function App() {
   const licenseCapSyncedRef = useRef<Set<string>>(new Set());
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const messagesInitLoadedRef = useRef(false);
+  const propIdsBackfilledRef = useRef(false);
 
   const [activeSection, setActiveSection] = useState<NavSectionId>(detectInitialSection);
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
@@ -629,6 +632,15 @@ export default function App() {
         if (!snap.metadata.fromCache && needsBootstrapSeed && autoSeedAttemptedRef.current !== user.uid) {
           autoSeedAttemptedRef.current = user.uid;
           void runBootstrapSeed(RICHGATES_PROPERTY_ID);
+        }
+        if (
+          !snap.metadata.fromCache &&
+          isAdmin &&
+          !propIdsBackfilledRef.current &&
+          list.some((p) => !p.systemPropertyId)
+        ) {
+          propIdsBackfilledRef.current = true;
+          void backfillMissingSystemPropertyIdsWorkflow(list);
         }
       },
       onSnapshotErr('properties')
@@ -1580,6 +1592,19 @@ export default function App() {
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}
+                />
+              )}
+
+              {activeSection === 'invoices' && (
+                <InvoicesView
+                  key={`invoices-${activeProperty.id}`}
+                  property={activeProperty}
+                  rooms={rooms}
+                  reservations={reservations}
+                  guests={guests}
+                  posOrders={posOrders}
+                  activeRole={effectiveRole}
+                  onNotify={notify}
                 />
               )}
 
