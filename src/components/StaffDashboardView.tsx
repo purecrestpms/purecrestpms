@@ -9,10 +9,8 @@ import {
   ChefHat,
   ClipboardList,
   DoorOpen,
-  KeyRound,
   LogOut,
   PlaneLanding,
-  PlaneTakeoff,
   Printer,
   Sparkles,
   UserCheck,
@@ -105,9 +103,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
     label: string;
     sub: string;
     value: number;
-    icon: React.ComponentType<{ className?: string }>;
     accent: string;
-    iconBox: string;
     target: NavSectionId;
   }> = [
     {
@@ -115,9 +111,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       label: 'Arrivals Today',
       sub: 'Expected check-ins',
       value: arrivalsToday.length,
-      icon: PlaneLanding,
       accent: 'border-t-[#1c46be]',
-      iconBox: 'bg-blue-50 text-[#1c46be] border-blue-200',
       target: 'arrivals',
     },
     {
@@ -125,9 +119,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       label: 'Departures Today',
       sub: 'Due check-outs',
       value: departuresToday.length,
-      icon: PlaneTakeoff,
       accent: 'border-t-amber-500',
-      iconBox: 'bg-amber-50 text-amber-700 border-amber-200',
       target: 'in_house',
     },
     {
@@ -135,9 +127,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       label: 'In-House Guests',
       sub: `${occupiedRooms.length} rooms occupied`,
       value: inHouseList.length,
-      icon: DoorOpen,
       accent: 'border-t-emerald-600',
-      iconBox: 'bg-emerald-50 text-emerald-700 border-emerald-200',
       target: 'in_house',
     },
     {
@@ -145,9 +135,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       label: 'Available Rooms',
       sub: `${dirtyRooms.length} need housekeeping`,
       value: availableRooms.length,
-      icon: KeyRound,
       accent: 'border-t-slate-700',
-      iconBox: 'bg-slate-100 text-slate-800 border-slate-200',
       target: 'rooms',
     },
   ];
@@ -250,23 +238,17 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       {/* 4 Clean Operational KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpiCards.map((card) => {
-          const Icon = card.icon;
           const reachable = canAccess(card.target);
           return (
             <div
               key={card.id}
               className={`bg-white border border-slate-200 border-t-4 ${card.accent} rounded-xl p-5 flex flex-col justify-between gap-3`}
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-extrabold uppercase tracking-wide text-[#061539]">
-                    {card.label}
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">{card.sub}</p>
-                </div>
-                <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${card.iconBox}`}>
-                  <Icon className="w-4 h-4" />
-                </div>
+              <div>
+                <p className="text-xs font-extrabold uppercase tracking-wide text-[#061539]">
+                  {card.label}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{card.sub}</p>
               </div>
               <div className="flex items-end justify-between pt-1">
                 <span className="font-mono-tabular text-3xl font-bold text-slate-900 leading-none">

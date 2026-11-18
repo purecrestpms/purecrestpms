@@ -214,6 +214,8 @@ export async function createReservationWorkflow(params: {
   guestEmail?: string;
   guestAddress?: string;
   guestCity?: string;
+  guestState?: string;
+  guestCountry?: string;
   guestNationality?: string;
   guestIdType?: GuestRecord['idType'];
   guestIdNumber?: string;
@@ -278,7 +280,8 @@ export async function createReservationWorkflow(params: {
     : params.initialStatus || 'confirmed';
   const authEmails = params.property.authorizedEmails;
 
-  const sourceCurrency: ChannelCurrency = params.sourceCurrency || 'NGN';
+  const sourceCurrency: ChannelCurrency =
+    params.sourceCurrency || (isOta ? getDefaultOtaChannelCurrency(params.channel) : 'NGN');
   const fxRateToNgn =
     params.fxRateToNgn && params.fxRateToNgn > 0
       ? params.fxRateToNgn
@@ -331,7 +334,9 @@ export async function createReservationWorkflow(params: {
     phone: params.guestPhone || '+234 706 352 2668',
     address: params.guestAddress || '',
     city: params.guestCity || '',
-    nationality: params.guestNationality || 'Nigeria',
+    state: params.guestState || '',
+    country: params.guestCountry || params.guestNationality || 'Nigeria',
+    nationality: params.guestNationality || params.guestCountry || 'Nigeria',
     idType: params.guestIdType || 'NIN',
     idNumber: params.guestIdNumber || '',
     vipTier: 'Standard',
@@ -353,6 +358,11 @@ export async function createReservationWorkflow(params: {
     guestId,
     guestName: params.guestName,
     guestPhone: params.guestPhone || '+234 800 000 0000',
+    ...(params.guestEmail?.trim() ? { guestEmail: params.guestEmail.trim().slice(0, 120) } : {}),
+    ...(params.guestAddress?.trim() ? { guestAddress: params.guestAddress.trim().slice(0, 200) } : {}),
+    ...(params.guestCity?.trim() ? { guestCity: params.guestCity.trim().slice(0, 80) } : {}),
+    ...(params.guestState?.trim() ? { guestState: params.guestState.trim().slice(0, 80) } : {}),
+    ...(params.guestCountry?.trim() ? { guestCountry: params.guestCountry.trim().slice(0, 80) } : {}),
     checkInDate: params.checkInDate,
     checkOutDate: params.checkOutDate,
     bookedDate: params.bookedDate || todayIso,
@@ -852,6 +862,11 @@ export async function updateReservationDetailsWorkflow(params: {
   oldRoom?: RoomRecord;
   guestName?: string;
   guestPhone?: string;
+  guestEmail?: string;
+  guestAddress?: string;
+  guestCity?: string;
+  guestState?: string;
+  guestCountry?: string;
   checkInDate: string;
   checkOutDate: string;
   nights: number;
@@ -860,7 +875,10 @@ export async function updateReservationDetailsWorkflow(params: {
   channel: ReservationRecord['channel'];
   status?: ReservationRecord['status'];
   paymentMethod?: ReservationRecord['paymentMethod'];
+  nightlyRateNgn?: number;
   sourceCurrency?: ChannelCurrency;
+  sourceNightlyRate?: number;
+  sourceTotalAmount?: number;
   fxRateToNgn?: number;
   otaPaidSourceAmount?: number;
   expectedPayoutNgn?: number;
@@ -888,9 +906,11 @@ export async function updateReservationDetailsWorkflow(params: {
   const isOta = isOtaBookingChannel(params.channel);
   const roomChanged = targetRoomId !== params.reservation.roomId;
   const baseNightlyRate =
-    roomChanged && params.newRoom
-      ? params.newRoom.nightlyRateNgn
-      : params.reservation.nightlyRateNgn;
+    typeof params.nightlyRateNgn === 'number' && params.nightlyRateNgn >= 0
+      ? Math.round(params.nightlyRateNgn)
+      : roomChanged && params.newRoom
+        ? params.newRoom.nightlyRateNgn
+        : params.reservation.nightlyRateNgn;
 
   const hasExplicitExpectedPayout =
     typeof params.expectedPayoutNgn === 'number' && params.expectedPayoutNgn >= 0;
@@ -912,7 +932,9 @@ export async function updateReservationDetailsWorkflow(params: {
       : baseNightlyRate;
 
   const srcCurrency: ChannelCurrency =
-    params.sourceCurrency || params.reservation.sourceCurrency || 'NGN';
+    params.sourceCurrency ||
+    params.reservation.sourceCurrency ||
+    (isOta ? getDefaultOtaChannelCurrency(params.channel) : 'NGN');
   const fxRate =
     params.fxRateToNgn && params.fxRateToNgn > 0
       ? params.fxRateToNgn
@@ -945,15 +967,19 @@ export async function updateReservationDetailsWorkflow(params: {
   const nextPaidNgn = otaCoveredFolio + nextHotelPaidNgn;
 
   const nextSourceNightlyRate =
-    srcCurrency === 'NGN'
-      ? nextNightlyRate
-      : Number((nextNightlyRate / fxRate).toFixed(2));
-  const nextSourceTotalAmount =
-    nextOtaPaidSourceAmount > 0 && srcCurrency !== 'NGN'
-      ? nextOtaPaidSourceAmount
+    typeof params.sourceNightlyRate === 'number' && params.sourceNightlyRate >= 0
+      ? Number(params.sourceNightlyRate.toFixed(2))
       : srcCurrency === 'NGN'
-        ? nextRoomCharges
-        : Number((nextRoomCharges / fxRate).toFixed(2));
+        ? nextNightlyRate
+        : Number((nextNightlyRate / fxRate).toFixed(2));
+  const nextSourceTotalAmount =
+    typeof params.sourceTotalAmount === 'number' && params.sourceTotalAmount >= 0
+      ? Number(params.sourceTotalAmount.toFixed(2))
+      : nextOtaPaidSourceAmount > 0 && srcCurrency !== 'NGN'
+        ? nextOtaPaidSourceAmount
+        : srcCurrency === 'NGN'
+          ? nextRoomCharges
+          : Number((nextRoomCharges / fxRate).toFixed(2));
   const nextStatus = params.status || params.reservation.status;
   const nextGuestName = (params.guestName || params.reservation.guestName).trim();
   const nextGuestPhone = (params.guestPhone ?? params.reservation.guestPhone ?? '').trim();
@@ -968,6 +994,11 @@ export async function updateReservationDetailsWorkflow(params: {
     requestedRoomType: nextRequestedRoomType,
     guestName: nextGuestName,
     guestPhone: nextGuestPhone,
+    ...(params.guestEmail !== undefined ? { guestEmail: params.guestEmail.trim().slice(0, 120) } : {}),
+    ...(params.guestAddress !== undefined ? { guestAddress: params.guestAddress.trim().slice(0, 200) } : {}),
+    ...(params.guestCity !== undefined ? { guestCity: params.guestCity.trim().slice(0, 80) } : {}),
+    ...(params.guestState !== undefined ? { guestState: params.guestState.trim().slice(0, 80) } : {}),
+    ...(params.guestCountry !== undefined ? { guestCountry: params.guestCountry.trim().slice(0, 80) } : {}),
     checkInDate: params.checkInDate,
     checkOutDate: params.checkOutDate,
     nights: safeNights,
@@ -1688,7 +1719,7 @@ export async function updateGuestRecord(params: {
   updates: Partial<
     Pick<
       GuestRecord,
-      'fullName' | 'email' | 'phone' | 'address' | 'city' | 'nationality' | 'idType' | 'idNumber' | 'vipTier' | 'notes'
+      'fullName' | 'email' | 'phone' | 'address' | 'city' | 'state' | 'country' | 'nationality' | 'idType' | 'idNumber' | 'vipTier' | 'notes'
     >
   >;
   actorRole: string;
@@ -3166,13 +3197,30 @@ export async function syncOtaChannelWorkflow(params: {
     return sortedByLoad[0] || roomList[0];
   };
 
+  const isInternationalOta =
+    params.channel.channelName === 'Airbnb' ||
+    params.channel.channelName === 'Booking.com' ||
+    params.channel.channelName === 'Expedia' ||
+    params.channel.channelName === 'VRBO' ||
+    params.channel.channelName === 'Custom iCal';
+
+  const effectiveChannelDefaultCur: ChannelCurrency =
+    isInternationalOta && (!params.channel.defaultCurrency || params.channel.defaultCurrency === 'NGN')
+      ? getDefaultOtaChannelCurrency(params.channel.channelName)
+      : params.channel.defaultCurrency || getDefaultOtaChannelCurrency(params.channel.channelName);
+
   const resolveChannelRoomPricing = (ev: ParsedIcalEvent, assignedRoom: RoomRecord) => {
-    const channelCurrency: ChannelCurrency =
-      ev.paidCurrency ||
-      params.channel.defaultCurrency ||
-      getDefaultOtaChannelCurrency(params.channel.channelName);
+    const channelCurrency: ChannelCurrency = ev.paidCurrency || effectiveChannelDefaultCur;
     const fxRateToNgn = getFxRateToNgn(channelCurrency, params.property.usdExchangeRateNgn);
-    const channelDefaultNightly = Math.max(0, Number(params.channel.defaultNightlyRate ?? 0));
+    const rawDefaultRate = Math.max(0, Number(params.channel.defaultNightlyRate ?? 0));
+    // Guard against legacy OTA channel docs that saved NGN nightly rates (e.g. 65500) with stale NGN default
+    const channelDefaultNightly =
+      isInternationalOta &&
+      params.channel.defaultCurrency === 'NGN' &&
+      rawDefaultRate >= 2000 &&
+      channelCurrency !== 'NGN'
+        ? Number((rawDefaultRate / Math.max(1, fxRateToNgn)).toFixed(2))
+        : rawDefaultRate;
 
     let sourceNightlyRate = 0;
     let sourceTotalAmount = 0;
@@ -3313,6 +3361,10 @@ export async function syncOtaChannelWorkflow(params: {
       fullName: safeName,
       ...(emailKey ? { email: emailKey } : {}),
       phone: validPhone,
+      ...(ev.guestAddress ? { address: ev.guestAddress } : {}),
+      ...(ev.guestCity ? { city: ev.guestCity } : {}),
+      ...(ev.guestState ? { state: ev.guestState } : {}),
+      ...(ev.guestCountry ? { country: ev.guestCountry } : {}),
       idType: 'International Passport',
       vipTier: 'Standard',
       totalStays: 1,
@@ -3426,16 +3478,20 @@ export async function syncOtaChannelWorkflow(params: {
       const hasExplicitIcalPayment =
         (ev.paidAmount !== undefined && ev.paidAmount > 0) ||
         (ev.sourceTotalAmount !== undefined && ev.sourceTotalAmount > 0) ||
+        (ev.sourceNightlyRate !== undefined && ev.sourceNightlyRate > 0) ||
         Boolean(ev.paidCurrency);
       const currencyOrAmountUpgradeNeeded =
         existing.sourceCurrency !== pricing.sourceCurrency ||
         ((existing.otaPaidSourceAmount ?? 0) === 0 && pricing.otaPaidSourceAmount > 0) ||
+        ((existing.sourceTotalAmount ?? 0) === 0 && pricing.sourceTotalAmount > 0) ||
         (channelDefaultRateSet &&
-          (existing.sourceNightlyRate !== pricing.sourceNightlyRate ||
-            existing.sourceTotalAmount !== pricing.sourceTotalAmount));
+          (Math.abs((existing.sourceNightlyRate ?? 0) - pricing.sourceNightlyRate) > 0.01 ||
+            Math.abs((existing.sourceTotalAmount ?? 0) - pricing.sourceTotalAmount) > 0.01));
       const shouldUpdatePayment =
         (hasExplicitIcalPayment &&
-          (existing.otaPaidSourceAmount !== pricing.otaPaidSourceAmount ||
+          (Math.abs((existing.otaPaidSourceAmount ?? 0) - pricing.otaPaidSourceAmount) > 0.01 ||
+            Math.abs((existing.sourceTotalAmount ?? 0) - pricing.sourceTotalAmount) > 0.01 ||
+            Math.abs((existing.sourceNightlyRate ?? 0) - pricing.sourceNightlyRate) > 0.01 ||
             existing.sourceCurrency !== pricing.sourceCurrency)) ||
         currencyOrAmountUpgradeNeeded;
 
@@ -3445,6 +3501,11 @@ export async function syncOtaChannelWorkflow(params: {
         existing.nights !== ev.nights ||
         existing.guestName !== safeGuestName ||
         (ev.guestPhone && existing.guestPhone !== ev.guestPhone) ||
+        (ev.guestEmail && existing.guestEmail !== ev.guestEmail) ||
+        (ev.guestAddress && existing.guestAddress !== ev.guestAddress) ||
+        (ev.guestCity && existing.guestCity !== ev.guestCity) ||
+        (ev.guestState && existing.guestState !== ev.guestState) ||
+        (ev.guestCountry && existing.guestCountry !== ev.guestCountry) ||
         (linkedGuestId && existing.guestId !== linkedGuestId) ||
         existing.bookingRef !== targetBookingRef ||
         existing.adults !== nextAdults ||
@@ -3489,6 +3550,11 @@ export async function syncOtaChannelWorkflow(params: {
             children: nextChildren,
             guestName: safeGuestName,
             ...(ev.guestPhone ? { guestPhone: ev.guestPhone.slice(0, 32) } : {}),
+            ...(ev.guestEmail ? { guestEmail: ev.guestEmail.slice(0, 120) } : {}),
+            ...(ev.guestAddress ? { guestAddress: ev.guestAddress.slice(0, 200) } : {}),
+            ...(ev.guestCity ? { guestCity: ev.guestCity.slice(0, 80) } : {}),
+            ...(ev.guestState ? { guestState: ev.guestState.slice(0, 80) } : {}),
+            ...(ev.guestCountry ? { guestCountry: ev.guestCountry.slice(0, 80) } : {}),
             status: targetStatus,
             ...paymentPatch,
             updatedAt: now,
@@ -3505,6 +3571,8 @@ export async function syncOtaChannelWorkflow(params: {
         existing.status = targetStatus;
         if (shouldUpdatePayment) {
           existing.sourceCurrency = pricing.sourceCurrency;
+          existing.sourceNightlyRate = pricing.sourceNightlyRate;
+          existing.sourceTotalAmount = pricing.sourceTotalAmount;
           existing.otaPaidSourceAmount = pricing.otaPaidSourceAmount;
           existing.otaPaidNgn = pricing.otaPaidNgn;
           existing.expectedPayoutNgn = pricing.expectedPayoutNgn;
@@ -3539,6 +3607,11 @@ export async function syncOtaChannelWorkflow(params: {
       ...(guestId ? { guestId } : {}),
       guestName: safeGuestName,
       ...(ev.guestPhone ? { guestPhone: ev.guestPhone.slice(0, 32) } : {}),
+      ...(ev.guestEmail ? { guestEmail: ev.guestEmail.slice(0, 120) } : {}),
+      ...(ev.guestAddress ? { guestAddress: ev.guestAddress.slice(0, 200) } : {}),
+      ...(ev.guestCity ? { guestCity: ev.guestCity.slice(0, 80) } : {}),
+      ...(ev.guestState ? { guestState: ev.guestState.slice(0, 80) } : {}),
+      ...(ev.guestCountry ? { guestCountry: ev.guestCountry.slice(0, 80) } : {}),
       checkInDate: ev.checkInDate,
       checkOutDate: ev.checkOutDate,
       bookedDate: todayIso,
@@ -3616,6 +3689,9 @@ export async function syncOtaChannelWorkflow(params: {
     data: {
       lastSyncedIso: new Date().toISOString(),
       bookingsImported: Math.max(totalActiveChannelBookings, params.channel.bookingsImported + created),
+      ...(isInternationalOta && (!params.channel.defaultCurrency || params.channel.defaultCurrency === 'NGN')
+        ? { defaultCurrency: effectiveChannelDefaultCur }
+        : {}),
       updatedAt: now,
     },
   });

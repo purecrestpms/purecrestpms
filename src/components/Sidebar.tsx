@@ -66,6 +66,8 @@ interface SidebarProps {
   onSwitchPropertyPortal: (portal: 'richgates-admin' | 'staff') => void;
   onSignOut: () => void;
   unreadMessageCount?: number;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 const NAV_GROUPS: Array<{
@@ -149,9 +151,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSwitchPropertyPortal,
   onSignOut,
   unreadMessageCount = 0,
+  collapsed: controlledCollapsed,
+  onToggleCollapse,
 }) => {
   const { cms } = useCms();
-  const [collapsed, setCollapsed] = useState(false);
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const collapsed = controlledCollapsed ?? internalCollapsed;
+  const handleToggleCollapse = () => {
+    if (onToggleCollapse) {
+      onToggleCollapse();
+    } else {
+      setInternalCollapsed((v) => !v);
+    }
+  };
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -240,7 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Desktop Collapse / Expand Toggle */}
           <button
             type="button"
-            onClick={() => setCollapsed((v) => !v)}
+            onClick={handleToggleCollapse}
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             className="hidden lg:inline-flex p-1.5 rounded-lg text-[#061539] hover:bg-blue-50 hover:text-[#1c46be] transition-colors cursor-pointer"
@@ -433,11 +445,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Desktop Sticky Collapsible Sidebar */}
+      {/* Desktop Fixed Collapsible Sidebar */}
       <aside
         className={`no-print hidden lg:block ${
           collapsed ? 'w-[76px]' : 'w-64'
-        } shrink-0 h-screen sticky top-0 transition-all duration-200`}
+        } fixed inset-y-0 left-0 z-30 h-screen transition-all duration-200`}
       >
         {renderSidebarBody(collapsed)}
       </aside>

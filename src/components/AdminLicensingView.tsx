@@ -933,8 +933,16 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           {/* Connected Channels Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {otaChannels.map((ch) => {
+              const isIntlOta =
+                ch.channelName === 'Airbnb' ||
+                ch.channelName === 'Booking.com' ||
+                ch.channelName === 'Expedia' ||
+                ch.channelName === 'VRBO' ||
+                ch.channelName === 'Custom iCal';
               const effectiveDefaultCurrency: ChannelCurrency =
-                ch.defaultCurrency || getDefaultOtaChannelCurrency(ch.channelName);
+                isIntlOta && (!ch.defaultCurrency || ch.defaultCurrency === 'NGN')
+                  ? getDefaultOtaChannelCurrency(ch.channelName)
+                  : ch.defaultCurrency || getDefaultOtaChannelCurrency(ch.channelName);
               const effectiveCollectionMode: OtaPaymentCollectionMode =
                 ch.paymentCollectionMode ||
                 (ch.channelName === 'Direct Website Engine' ? 'hotel_collect' : 'ota_prepaid');

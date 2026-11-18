@@ -235,7 +235,7 @@ service cloud.firestore {
         'totalStays', 'lifetimeSpendNgn', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'propertyId', 'fullName', 'email', 'phone', 'address', 'city', 'nationality', 'idType', 'idNumber',
+        'propertyId', 'fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber',
         'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
@@ -244,6 +244,8 @@ service cloud.firestore {
       data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 32 &&
       (!('address' in data) || (data.address is string && data.address.size() <= 200)) &&
       (!('city' in data) || (data.city is string && data.city.size() <= 80)) &&
+      (!('state' in data) || (data.state is string && data.state.size() <= 80)) &&
+      (!('country' in data) || (data.country is string && data.country.size() <= 80)) &&
       (!('nationality' in data) || (data.nationality is string && data.nationality.size() <= 64)) &&
       data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'] &&
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
@@ -265,6 +267,7 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'propertyId', 'bookingRef', 'roomId', 'roomNumber', 'requestedRoomType', 'guestId', 'guestName', 'guestPhone',
+        'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry',
         'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'channel', 'nightlyRateNgn',
         'roomChargesNgn', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn',
         'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn',
@@ -282,13 +285,18 @@ service cloud.firestore {
       (!('guestId' in data) || (data.guestId is string && data.guestId.size() <= 128)) &&
       data.guestName is string && data.guestName.size() >= 2 && data.guestName.size() <= 120 &&
       (!('guestPhone' in data) || (data.guestPhone is string && data.guestPhone.size() <= 32)) &&
+      (!('guestEmail' in data) || (data.guestEmail is string && data.guestEmail.size() <= 120)) &&
+      (!('guestAddress' in data) || (data.guestAddress is string && data.guestAddress.size() <= 200)) &&
+      (!('guestCity' in data) || (data.guestCity is string && data.guestCity.size() <= 80)) &&
+      (!('guestState' in data) || (data.guestState is string && data.guestState.size() <= 80)) &&
+      (!('guestCountry' in data) || (data.guestCountry is string && data.guestCountry.size() <= 80)) &&
       data.checkInDate is string && data.checkInDate.size() <= 24 &&
       data.checkOutDate is string && data.checkOutDate.size() <= 24 &&
       (!('bookedDate' in data) || (data.bookedDate is string && data.bookedDate.size() <= 24)) &&
       data.nights is number && data.nights >= 1 &&
       data.adults is number && data.adults >= 1 &&
       (!('children' in data) || (data.children is number && data.children >= 0 && data.children <= 20)) &&
-      data.channel in ['Walk-in', 'Website', 'Direct Walk-In', 'Direct Web', 'Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Custom iCal'] &&
+      data.channel in ['Walk-in', 'Website', 'Phone', 'WhatsApp', 'Direct Walk-In', 'Direct Web', 'Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Custom iCal'] &&
       data.nightlyRateNgn is number && data.nightlyRateNgn >= 0 &&
       data.roomChargesNgn is number && data.roomChargesNgn >= 0 &&
       data.posChargesNgn is number && data.posChargesNgn >= 0 &&
@@ -770,7 +778,7 @@ service cloud.firestore {
           isValidGuest(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'nationality', 'idType', 'idNumber', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId);
       }
@@ -786,7 +794,7 @@ service cloud.firestore {
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
       }

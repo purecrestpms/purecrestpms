@@ -359,6 +359,7 @@ export default function App() {
   const [activePropertyId, setActivePropertyId] = useState<string>(RICHGATES_PROPERTY_ID);
   const [toast, setToast] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showPortalModal, setShowPortalModal] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [copiedPortalId, setCopiedPortalId] = useState<string | null>(null);
@@ -1585,9 +1586,15 @@ export default function App() {
         }}
         onSignOut={handleSignOut}
         unreadMessageCount={unreadMessages.length}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
       />
 
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div
+        className={`flex-1 min-w-0 flex flex-col transition-all duration-200 ${
+          sidebarCollapsed ? 'lg:pl-[76px]' : 'lg:pl-64'
+        }`}
+      >
         {/* Top Bar Contract: Breadcrumb on Left, Today's Date + Notification Bell + Admin Profile on Right */}
         <header className="no-print h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 sm:gap-8 sticky top-0 z-20">
           <div className="flex items-center gap-2.5 text-xs text-slate-600 min-w-0">

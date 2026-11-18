@@ -10,6 +10,10 @@ export interface ParsedIcalEvent {
   guestName: string;
   guestPhone?: string;
   guestEmail?: string;
+  guestAddress?: string;
+  guestCity?: string;
+  guestState?: string;
+  guestCountry?: string;
   adults?: number;
   children?: number;
   otaBookingRef?: string;
@@ -195,6 +199,13 @@ function parseMoneyAndCurrencyFromSnippet(
     if (Number.isFinite(amount) && amount > 0) return { amount, currency: cur };
   }
 
+  const symbolAfter = snippet.match(/([\d,]+(?:\.\d{1,2})?)\s*(US\$|[$£€₦])/i);
+  if (symbolAfter) {
+    const amount = Number(symbolAfter[1].replace(/,/g, ''));
+    const cur = normalizeCurrencyToken(symbolAfter[2]) || fallbackCurrency;
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: cur };
+  }
+
   const bareNumber = snippet.match(/\b([\d,]+(?:\.\d{1,2})?)\b/);
   if (bareNumber) {
     const amount = Number(bareNumber[1].replace(/,/g, ''));
@@ -245,44 +256,47 @@ function extractPaymentHints(params: {
     xRateParsed.currency ||
     detectedCurrency;
 
-  // 2. Parse labeled paid lines from description/summary (e.g., "Paid to OTA: 200 USD", "Guest Paid: $200")
+  // 2. Parse labeled paid lines from description/summary (e.g., "Paid to OTA: 200 USD", "Guest Paid (USD): $200")
   if (paidAmount === undefined) {
     const paidLabelMatch = combined.match(
-      /(?:Guest\s*Paid(?:\s*to\s*OTA)?|Paid\s*to\s*OTA|OTA\s*Paid|OTA\s*Payment(?:\s*Received)?|Amount\s*(?:Paid|Charged)|Prepaid|Payment\s*Received|Paid)\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Guest\s*Paid(?:\s*to\s*OTA)?|Paid\s*to\s*OTA|OTA\s*Paid|OTA\s*Payment(?:\s*Received)?|Amount\s*(?:Paid|Charged)|Prepaid|Payment\s*Received|Paid)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
     );
     if (paidLabelMatch) {
-      const parsed = parseMoneyAndCurrencyFromSnippet(paidLabelMatch[1], paidCurrency);
+      const labelCur = normalizeCurrencyToken(paidLabelMatch[1]) || paidCurrency;
+      const parsed = parseMoneyAndCurrencyFromSnippet(paidLabelMatch[2], labelCur);
       if (parsed.amount !== undefined) {
         paidAmount = parsed.amount;
-        paidCurrency = parsed.currency || paidCurrency;
+        paidCurrency = parsed.currency || labelCur;
       }
     }
   }
 
-  // 3. Parse labeled total/amount lines (e.g., "Total: 200 USD", "Total Price: $200")
+  // 3. Parse labeled total/amount lines (e.g., "Total: 200 USD", "Total Price (USD): $200", "Accommodation: $200")
   if (sourceTotalAmount === undefined) {
     const totalLabelMatch = combined.match(
-      /(?:Grand\s*Total|Total\s*Price|Total\s*Amount|Total\s*Cost|Total\s*Payout|Booking\s*Total|Reservation\s*Total|Guest\s*Total|Payout\s*Amount|Total|Price|Amount|Payout)\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Grand\s*Total|Total\s*Price|Total\s*Amount|Total\s*Cost|Total\s*Payout|Booking\s*Total|Reservation\s*Total|Guest\s*Total|Payout\s*Amount|Accommodation(?:\s*Total)?|Room\s*Total|Total|Price|Amount|Payout)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
     );
     if (totalLabelMatch) {
-      const parsed = parseMoneyAndCurrencyFromSnippet(totalLabelMatch[1], paidCurrency);
+      const labelCur = normalizeCurrencyToken(totalLabelMatch[1]) || paidCurrency;
+      const parsed = parseMoneyAndCurrencyFromSnippet(totalLabelMatch[2], labelCur);
       if (parsed.amount !== undefined) {
         sourceTotalAmount = parsed.amount;
-        paidCurrency = parsed.currency || paidCurrency;
+        paidCurrency = parsed.currency || labelCur;
       }
     }
   }
 
-  // 4. Parse nightly rate lines (e.g., "Nightly Rate: $100", "Rate: 100 USD")
+  // 4. Parse nightly rate lines (e.g., "Nightly Rate: $100", "Rate/night (USD): 100")
   if (sourceNightlyRate === undefined) {
     const rateLabelMatch = combined.match(
-      /(?:Nightly\s*Rate|Rate\s*per\s*Night|ADR|Rate)\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Nightly\s*Rate|Rate\s*(?:per|\/)\s*Night|ADR|Rate)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
     );
     if (rateLabelMatch) {
-      const parsed = parseMoneyAndCurrencyFromSnippet(rateLabelMatch[1], paidCurrency);
+      const labelCur = normalizeCurrencyToken(rateLabelMatch[1]) || paidCurrency;
+      const parsed = parseMoneyAndCurrencyFromSnippet(rateLabelMatch[2], labelCur);
       if (parsed.amount !== undefined) {
         sourceNightlyRate = parsed.amount;
-        paidCurrency = parsed.currency || paidCurrency;
+        paidCurrency = parsed.currency || labelCur;
       }
     }
   }
@@ -513,6 +527,10 @@ export function parseIcalEvents(
   let xChildren = '';
   let xPhone = '';
   let xEmail = '';
+  let xAddress = '';
+  let xCity = '';
+  let xState = '';
+  let xCountry = '';
   let xBookingRef = '';
   let xListingId = '';
   let xCurrency = '';
@@ -541,6 +559,10 @@ export function parseIcalEvents(
       xChildren = '';
       xPhone = '';
       xEmail = '';
+      xAddress = '';
+      xCity = '';
+      xState = '';
+      xCountry = '';
       xBookingRef = '';
       xListingId = '';
       xCurrency = '';
@@ -585,6 +607,10 @@ export function parseIcalEvents(
             status.trim().toUpperCase() === 'CANCELLED' ||
             calendarMethod.trim().toUpperCase() === 'CANCEL' ||
             /^cancelled\b/i.test(cleanSummary);
+          const addrMatch = cleanDesc.match(/(?:Guest\s*)?Address\s*[:=-]\s*([^\n|;]{2,180})/i);
+          const cityMatch = cleanDesc.match(/(?:Guest\s*)?City\s*[:=-]\s*([^\n|;,]{2,70})/i);
+          const stateMatch = cleanDesc.match(/(?:Guest\s*)?State\s*[:=-]\s*([^\n|;,]{2,70})/i);
+          const countryMatch = cleanDesc.match(/(?:Guest\s*)?Country\s*[:=-]\s*([^\n|;,]{2,70})/i);
 
           events.push({
             uid: stableUid.slice(0, 155),
@@ -596,6 +622,10 @@ export function parseIcalEvents(
             guestName: guestNames.guestName,
             guestPhone: extractPhoneHint(cleanDesc, xPhone),
             guestEmail: extractEmailHint(cleanDesc, attendeeEmail, xEmail),
+            guestAddress: (xAddress.trim() || addrMatch?.[1]?.trim() || '').slice(0, 200) || undefined,
+            guestCity: (xCity.trim() || cityMatch?.[1]?.trim() || '').slice(0, 80) || undefined,
+            guestState: (xState.trim() || stateMatch?.[1]?.trim() || '').slice(0, 80) || undefined,
+            guestCountry: (xCountry.trim() || countryMatch?.[1]?.trim() || '').slice(0, 80) || undefined,
             adults: occupancy.adults,
             children: occupancy.children,
             otaBookingRef: extractOtaBookingRef(cleanDesc, cleanSummary, xBookingRef),
@@ -655,6 +685,14 @@ export function parseIcalEvents(
       xPhone = valuePart;
     } else if (propName === 'X-GUEST-EMAIL') {
       xEmail = valuePart;
+    } else if (propName === 'X-GUEST-ADDRESS') {
+      xAddress = valuePart;
+    } else if (propName === 'X-GUEST-CITY') {
+      xCity = valuePart;
+    } else if (propName === 'X-GUEST-STATE') {
+      xState = valuePart;
+    } else if (propName === 'X-GUEST-COUNTRY') {
+      xCountry = valuePart;
     } else if (propName === 'X-BOOKING-REF') {
       xBookingRef = valuePart;
     } else if (propName === 'X-LISTING-ID') {

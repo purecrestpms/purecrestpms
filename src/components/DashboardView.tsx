@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ArrowRight,
   BarChart3,
-  BedDouble,
   BookOpenCheck,
   Building2,
   Calendar,
@@ -12,19 +11,14 @@ import {
   ChefHat,
   DoorOpen,
   Globe,
-  KeyRound,
   LogOut,
-  PieChart,
   PlaneLanding,
-  PlaneTakeoff,
   Search,
   ShieldCheck,
   Sparkles,
   Trash2,
-  TrendingUp,
   UserCheck,
   Users,
-  Wallet,
   Wrench,
   X,
 } from 'lucide-react';
@@ -461,11 +455,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     label: string;
     subtitle: string;
     value: string;
-    icon: React.ComponentType<{ className?: string }>;
     borderAccent: string;
     cardTint: string;
-    iconBg: string;
-    iconColor: string;
     valueColor: string;
     barColor: string;
     barTrack: string;
@@ -478,11 +469,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       label: 'Arrivals Today',
       subtitle: 'Confirmed check-ins expected today',
       value: String(arrivalsTodayList.length),
-      icon: PlaneLanding,
       borderAccent: 'border-t-[#1c46be]',
       cardTint: 'bg-gradient-to-br from-white via-white to-blue-50/70',
-      iconBg: 'bg-blue-100 border border-blue-200',
-      iconColor: 'text-[#1c46be]',
       valueColor: 'text-[#0B245B]',
       barColor: 'bg-gradient-to-r from-[#1c46be] to-sky-500',
       barTrack: 'bg-blue-100',
@@ -498,11 +486,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       label: 'Departures Today',
       subtitle: 'Checked-in guests due out today',
       value: String(departuresTodayList.length),
-      icon: PlaneTakeoff,
       borderAccent: 'border-t-amber-500',
       cardTint: 'bg-gradient-to-br from-white via-white to-amber-50/70',
-      iconBg: 'bg-amber-100 border border-amber-200',
-      iconColor: 'text-amber-700',
       valueColor: 'text-amber-950',
       barColor: 'bg-gradient-to-r from-amber-500 to-orange-500',
       barTrack: 'bg-amber-100',
@@ -518,11 +503,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       label: 'In-House Guests',
       subtitle: 'Currently occupied suites',
       value: String(inHouseList.length),
-      icon: DoorOpen,
       borderAccent: 'border-t-emerald-600',
       cardTint: 'bg-gradient-to-br from-white via-white to-emerald-50/70',
-      iconBg: 'bg-emerald-100 border border-emerald-200',
-      iconColor: 'text-emerald-700',
       valueColor: 'text-emerald-950',
       barColor: 'bg-gradient-to-r from-emerald-600 to-teal-500',
       barTrack: 'bg-emerald-100',
@@ -536,10 +518,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     id: string;
     label: string;
     value: string;
-    icon: React.ComponentType<{ className?: string }>;
     borderAccent: string;
-    iconBg: string;
-    iconColor: string;
     barColor: string;
     barTrack: string;
     barPct: number;
@@ -549,10 +528,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       id: 'kpi-occupied',
       label: `Occupied (${occupancyPct}%)`,
       value: String(occupiedRoomsCount),
-      icon: BedDouble,
       borderAccent: 'border-t-violet-600',
-      iconBg: 'bg-violet-100 border border-violet-200',
-      iconColor: 'text-violet-700',
       barColor: 'bg-violet-600',
       barTrack: 'bg-violet-100',
       barPct: occupancyPct,
@@ -562,10 +538,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       id: 'kpi-available',
       label: 'Available Suites',
       value: String(availableRoomsCount),
-      icon: KeyRound,
       borderAccent: 'border-t-cyan-600',
-      iconBg: 'bg-cyan-100 border border-cyan-200',
-      iconColor: 'text-cyan-700',
       barColor: 'bg-cyan-600',
       barTrack: 'bg-cyan-100',
       barPct:
@@ -576,10 +549,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       id: 'kpi-revenue',
       label: 'Revenue Today',
       value: formatNgn(revenueTodayNgn),
-      icon: Wallet,
       borderAccent: 'border-t-indigo-600',
-      iconBg: 'bg-indigo-100 border border-indigo-200',
-      iconColor: 'text-indigo-700',
       barColor: 'bg-indigo-600',
       barTrack: 'bg-indigo-100',
       barPct:
@@ -771,97 +741,79 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Prominent Arrivals, Departures, In-House Flagship Hero KPI Cards with Utilization Bars */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {primaryKpiCards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div
-              key={card.id}
-              className={`${card.cardTint} border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl p-5 sm:p-6 flex flex-col justify-between gap-4 shadow-xs`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className={`w-11 h-11 rounded-xl ${card.iconBg} flex items-center justify-center shrink-0`}>
-                    <Icon className={`w-5 h-5 ${card.iconColor}`} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-extrabold text-[#061539]">{card.label}</p>
-                    <p className="text-[11px] text-slate-600">{card.subtitle}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-end justify-between gap-3 pt-1">
-                <p className={`font-mono-tabular text-3xl sm:text-4xl font-bold leading-none ${card.valueColor}`}>
-                  {card.value}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => onNavigate(card.target)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-[#1c46be] cursor-pointer"
-                >
-                  <span>Open</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <div className="space-y-1.5 pt-1 border-t border-slate-200/70">
-                <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
-                  <span>{card.barHint}</span>
-                  <span className="font-mono-tabular font-bold text-slate-800">{card.barPct}%</span>
-                </div>
-                <div className={`h-2 w-full rounded-full overflow-hidden ${card.barTrack}`}>
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${card.barColor}`}
-                    style={{ width: `${Math.max(card.barPct > 0 ? 6 : 0, card.barPct)}%` }}
-                  />
-                </div>
-              </div>
+        {primaryKpiCards.map((card) => (
+          <div
+            key={card.id}
+            className={`${card.cardTint} border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl p-5 sm:p-6 flex flex-col justify-between gap-4 shadow-xs`}
+          >
+            <div>
+              <p className="text-sm font-extrabold text-[#061539]">{card.label}</p>
+              <p className="text-[11px] text-slate-600 mt-0.5">{card.subtitle}</p>
             </div>
-          );
-        })}
-      </div>
 
-      {/* Secondary Metrics Strip: Occupied, Available, Revenue Today */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {secondaryKpiCards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div
-              key={card.id}
-              className={`bg-white border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl px-5 py-4 space-y-3 shadow-xs`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 rounded-lg ${card.iconBg} flex items-center justify-center shrink-0`}>
-                    <Icon className={`w-4 h-4 ${card.iconColor}`} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-mono-tabular text-xl font-bold text-slate-900 leading-tight truncate">
-                      {card.value}
-                    </p>
-                    <p className="text-xs text-slate-500">{card.label}</p>
-                  </div>
-                </div>
-                {card.target && (
-                  <button
-                    type="button"
-                    onClick={() => onNavigate(card.target!)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
-                  >
-                    <span>View</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                )}
+            <div className="flex items-end justify-between gap-3 pt-1">
+              <p className={`font-mono-tabular text-3xl sm:text-4xl font-bold leading-none ${card.valueColor}`}>
+                {card.value}
+              </p>
+              <button
+                type="button"
+                onClick={() => onNavigate(card.target)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-[#1c46be] cursor-pointer"
+              >
+                <span>Open</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5 pt-1 border-t border-slate-200/70">
+              <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
+                <span>{card.barHint}</span>
+                <span className="font-mono-tabular font-bold text-slate-800">{card.barPct}%</span>
               </div>
-              <div className={`h-1.5 w-full rounded-full overflow-hidden ${card.barTrack}`}>
+              <div className={`h-2 w-full rounded-full overflow-hidden ${card.barTrack}`}>
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${card.barColor}`}
                   style={{ width: `${Math.max(card.barPct > 0 ? 6 : 0, card.barPct)}%` }}
                 />
               </div>
             </div>
-          );
-        })}
+          </div>
+        ))}
+      </div>
+
+      {/* Secondary Metrics Strip: Occupied, Available, Revenue Today */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {secondaryKpiCards.map((card) => (
+          <div
+            key={card.id}
+            className={`bg-white border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl px-5 py-4 space-y-3 shadow-xs`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-mono-tabular text-xl font-bold text-slate-900 leading-tight truncate">
+                  {card.value}
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">{card.label}</p>
+              </div>
+              {card.target && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate(card.target!)}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
+                >
+                  <span>View</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <div className={`h-1.5 w-full rounded-full overflow-hidden ${card.barTrack}`}>
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${card.barColor}`}
+                style={{ width: `${Math.max(card.barPct > 0 ? 6 : 0, card.barPct)}%` }}
+              />
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Daily USD Exchange Rate & Currency Converter */}
@@ -880,18 +832,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* 7-Day Revenue vs Expense Column Bar Chart */}
           <div className="lg:col-span-2 bg-white border border-slate-200 border-t-4 border-t-emerald-600 rounded-xl p-5 flex flex-col justify-between gap-4 shadow-xs">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
-                  <TrendingUp className="w-4 h-4 text-emerald-700" />
-                </div>
-                <div>
-                  <h2 className="font-display text-base font-extrabold text-[#061539]">
-                    7-Day Revenue vs Expense Flow
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    Daily posted ledger inflows vs operating expenses (click any day bar to inspect)
-                  </p>
-                </div>
+              <div>
+                <h2 className="font-display text-base font-extrabold text-[#061539]">
+                  7-Day Revenue vs Expense Flow
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Daily posted ledger inflows vs operating expenses (click any day bar to inspect)
+                </p>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono-tabular">
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
@@ -997,18 +944,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Booking Channel Mix & Exact Original Currency Breakdown */}
           <div className="bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-5 flex flex-col justify-between gap-4 shadow-xs">
             <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0">
-                  <PieChart className="w-4 h-4 text-[#1c46be]" />
-                </div>
-                <div>
-                  <h2 className="font-display text-base font-extrabold text-[#061539]">
-                    Booking Sources &amp; Currency
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    Share across {analytics.nonCancelledCount} active/completed stays
-                  </p>
-                </div>
+              <div>
+                <h2 className="font-display text-base font-extrabold text-[#061539]">
+                  Booking Sources &amp; Currency
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Share across {analytics.nonCancelledCount} active/completed stays
+                </p>
               </div>
               <button
                 type="button"
@@ -1661,6 +1603,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   balance,
                   paymentStatus,
                   sourceCurrency,
+                  sourceNightlyRate,
                   sourceTotalAmount,
                   otaPaidSourceAmount,
                 } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
@@ -1779,6 +1722,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             {sourceCurrency}
                           </span>
                           <span className="block text-[10px] font-medium text-slate-500">
+                            {sourceNightlyRate > 0
+                              ? `${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt · `
+                              : ''}
                             Exp. Payout: {formatNgn(expectedPayoutNgn)}
                           </span>
                         </>

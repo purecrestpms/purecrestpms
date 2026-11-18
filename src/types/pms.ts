@@ -383,6 +383,8 @@ export interface GuestRecord {
   phone: string;
   address?: string;
   city?: string;
+  state?: string;
+  country?: string;
   nationality?: string;
   idType: 'NIN' | 'International Passport' | 'Driver License' | 'Voter Card';
   idNumber?: string;
@@ -397,6 +399,8 @@ export interface GuestRecord {
 export type BookingSourceOption =
   | 'Walk-in'
   | 'Website'
+  | 'Phone'
+  | 'WhatsApp'
   | 'Direct Walk-In'
   | 'Direct Web'
   | 'Booking.com'
@@ -409,6 +413,8 @@ export type BookingSourceOption =
 export const PRIMARY_BOOKING_SOURCES: Array<{ value: BookingSourceOption; label: string }> = [
   { value: 'Walk-in', label: 'Walk-in' },
   { value: 'Website', label: 'Website' },
+  { value: 'Phone', label: 'Phone' },
+  { value: 'WhatsApp', label: 'WhatsApp' },
   { value: 'Booking.com', label: 'Booking.com' },
   { value: 'Airbnb', label: 'Airbnb' },
   { value: 'Expedia', label: 'Expedia' },
@@ -446,6 +452,11 @@ export interface ReservationRecord {
   guestId?: string;
   guestName: string;
   guestPhone?: string;
+  guestEmail?: string;
+  guestAddress?: string;
+  guestCity?: string;
+  guestState?: string;
+  guestCountry?: string;
   checkInDate: string;
   checkOutDate: string;
   bookedDate?: string;
@@ -519,7 +530,9 @@ export function getDefaultOtaChannelCurrency(channelName: string | undefined): C
     ch === 'direct web' ||
     ch === 'direct walk-in' ||
     ch === 'walk-in' ||
-    ch === 'website'
+    ch === 'website' ||
+    ch === 'phone' ||
+    ch === 'whatsapp'
   ) {
     return 'NGN';
   }
@@ -593,9 +606,15 @@ export function getReservationPaymentSummary(
       : Math.max(0, effectiveRoomCharge + (res.posChargesNgn || 0) + lateFee);
 
   const isOtaChannel = isOtaBookingChannel(res.channel);
-  const sourceCurrency: ChannelCurrency = res.sourceCurrency || 'NGN';
+  const isIntlOtaChannel = isOtaChannel && getDefaultOtaChannelCurrency(res.channel) === 'USD';
+  const wasLegacyNgnOnIntlOta = isIntlOtaChannel && (!res.sourceCurrency || res.sourceCurrency === 'NGN');
+  const sourceCurrency: ChannelCurrency = isIntlOtaChannel
+    ? res.sourceCurrency && res.sourceCurrency !== 'NGN'
+      ? res.sourceCurrency
+      : 'USD'
+    : res.sourceCurrency || (isOtaChannel ? getDefaultOtaChannelCurrency(res.channel) : 'NGN');
   const fxRate =
-    res.fxRateToNgn && res.fxRateToNgn > 0
+    res.fxRateToNgn && res.fxRateToNgn > 0 && !(wasLegacyNgnOnIntlOta && res.fxRateToNgn === 1)
       ? res.fxRateToNgn
       : getFxRateToNgn(sourceCurrency, usdExchangeRateNgn);
 
@@ -607,9 +626,11 @@ export function getReservationPaymentSummary(
     otaPaidAmount =
       typeof res.otaPaidNgn === 'number' && res.otaPaidNgn >= 0
         ? Math.round(res.otaPaidNgn)
-        : sourceCurrency === 'NGN'
+        : wasLegacyNgnOnIntlOta
           ? Math.round(res.otaPaidSourceAmount)
-          : Math.round(res.otaPaidSourceAmount * fxRate);
+          : sourceCurrency === 'NGN'
+            ? Math.round(res.otaPaidSourceAmount)
+            : Math.round(res.otaPaidSourceAmount * fxRate);
     hotelPaidAmount =
       typeof res.hotelPaidNgn === 'number' && res.hotelPaidNgn >= 0
         ? Math.round(res.hotelPaidNgn)
@@ -655,19 +676,25 @@ export function getReservationPaymentSummary(
   }
 
   const sourceNightlyRate =
-    typeof res.sourceNightlyRate === 'number' && res.sourceNightlyRate > 0
+    typeof res.sourceNightlyRate === 'number' &&
+    res.sourceNightlyRate > 0 &&
+    !(wasLegacyNgnOnIntlOta && res.sourceNightlyRate >= 2000)
       ? res.sourceNightlyRate
       : sourceCurrency === 'NGN'
         ? res.nightlyRateNgn || 0
         : Number(((res.nightlyRateNgn || 0) / fxRate).toFixed(2));
   const otaPaidSourceAmount =
-    typeof res.otaPaidSourceAmount === 'number' && res.otaPaidSourceAmount >= 0
+    typeof res.otaPaidSourceAmount === 'number' &&
+    res.otaPaidSourceAmount >= 0 &&
+    !(wasLegacyNgnOnIntlOta && res.otaPaidSourceAmount === otaPaidAmount && otaPaidAmount >= 2000)
       ? res.otaPaidSourceAmount
       : sourceCurrency === 'NGN'
         ? otaPaidAmount
         : Number((otaPaidAmount / fxRate).toFixed(2));
   const sourceTotalAmount =
-    typeof res.sourceTotalAmount === 'number' && res.sourceTotalAmount > 0
+    typeof res.sourceTotalAmount === 'number' &&
+    res.sourceTotalAmount > 0 &&
+    !(wasLegacyNgnOnIntlOta && res.sourceTotalAmount >= 2000 && res.sourceTotalAmount === totalAmount)
       ? res.sourceTotalAmount
       : otaPaidSourceAmount > 0 && sourceCurrency !== 'NGN'
         ? otaPaidSourceAmount
