@@ -20,10 +20,10 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   BOOTSTRAPPED_ADMIN_EMAILS,
+  effectiveFirebaseConfig,
   getPchActionCodeSettings,
   isBootstrappedAdminEmail,
   OperationType,
@@ -45,6 +45,7 @@ import {
   DEFAULT_CMS_CONTENT,
   DepartmentName,
   formatSystemPropertyId,
+  getDefaultOtaChannelCurrency,
   getFxRateToNgn,
   getPropertyCodePrefix,
   getPropertySubdomainSlug,
@@ -3167,7 +3168,9 @@ export async function syncOtaChannelWorkflow(params: {
 
   const resolveChannelRoomPricing = (ev: ParsedIcalEvent, assignedRoom: RoomRecord) => {
     const channelCurrency: ChannelCurrency =
-      ev.paidCurrency || params.channel.defaultCurrency || 'NGN';
+      ev.paidCurrency ||
+      params.channel.defaultCurrency ||
+      getDefaultOtaChannelCurrency(params.channel.channelName);
     const fxRateToNgn = getFxRateToNgn(channelCurrency, params.property.usdExchangeRateNgn);
     const channelDefaultNightly = Math.max(0, Number(params.channel.defaultNightlyRate ?? 0));
 
@@ -3204,15 +3207,22 @@ export async function syncOtaChannelWorkflow(params: {
     }
 
     const commissionPct = Math.max(0, Math.min(50, Number(params.channel.commissionPct ?? 0)));
+    const isDirectChannel =
+      params.channel.channelName === 'Direct Website Engine' ||
+      resolvedChannelSource === 'Direct Web';
     const collectionMode: OtaPaymentCollectionMode =
       params.channel.paymentCollectionMode ||
-      (typeof ev.paidAmount === 'number' && ev.paidAmount > 0 ? 'ota_prepaid' : 'hotel_collect');
+      (typeof ev.paidAmount === 'number' && ev.paidAmount > 0
+        ? 'ota_prepaid'
+        : isDirectChannel
+          ? 'hotel_collect'
+          : 'ota_prepaid');
 
     // Keep exact Guest Paid to OTA in the original booking currency (never convert otaPaidSourceAmount into NGN)
     const otaPaidSourceAmount =
       typeof ev.paidAmount === 'number' && ev.paidAmount > 0
         ? Number(ev.paidAmount.toFixed(2))
-        : collectionMode === 'ota_prepaid' && (channelDefaultNightly > 0 || (ev.sourceTotalAmount && ev.sourceTotalAmount > 0))
+        : collectionMode === 'ota_prepaid' && sourceTotalAmount > 0
           ? sourceTotalAmount
           : 0;
 
@@ -3412,14 +3422,22 @@ export async function syncOtaChannelWorkflow(params: {
       const targetStatus = existing.status === 'cancelled' ? 'confirmed' : existing.status;
 
       const existingHotelPaid = Math.max(0, Number(existing.hotelPaidNgn ?? 0));
+      const channelDefaultRateSet = Math.max(0, Number(params.channel.defaultNightlyRate ?? 0)) > 0;
       const hasExplicitIcalPayment =
         (ev.paidAmount !== undefined && ev.paidAmount > 0) ||
         (ev.sourceTotalAmount !== undefined && ev.sourceTotalAmount > 0) ||
         Boolean(ev.paidCurrency);
+      const currencyOrAmountUpgradeNeeded =
+        existing.sourceCurrency !== pricing.sourceCurrency ||
+        ((existing.otaPaidSourceAmount ?? 0) === 0 && pricing.otaPaidSourceAmount > 0) ||
+        (channelDefaultRateSet &&
+          (existing.sourceNightlyRate !== pricing.sourceNightlyRate ||
+            existing.sourceTotalAmount !== pricing.sourceTotalAmount));
       const shouldUpdatePayment =
-        hasExplicitIcalPayment &&
-        (existing.otaPaidSourceAmount !== pricing.otaPaidSourceAmount ||
-          existing.sourceCurrency !== pricing.sourceCurrency);
+        (hasExplicitIcalPayment &&
+          (existing.otaPaidSourceAmount !== pricing.otaPaidSourceAmount ||
+            existing.sourceCurrency !== pricing.sourceCurrency)) ||
+        currencyOrAmountUpgradeNeeded;
 
       const needsUpdate =
         existing.checkInDate !== ev.checkInDate ||
@@ -3662,7 +3680,8 @@ export async function createOtaChannelWithIcal(params: {
   const icalExportUrl = `${origin}/?ical=${encodeURIComponent(params.property.id)}&room=${exportRoom}`;
   const cleanListingId = params.propertyListingId.trim().slice(0, 120) || `ICAL-${id.slice(-5).toUpperCase()}`;
   const cleanImportUrl = params.icalImportUrl.trim().slice(0, 2000);
-  const defaultCurrency: ChannelCurrency = params.defaultCurrency || 'NGN';
+  const defaultCurrency: ChannelCurrency =
+    params.defaultCurrency || getDefaultOtaChannelCurrency(params.channelName);
   const defaultNightlyRate = Math.max(0, Number(params.defaultNightlyRate ?? 0));
   const paymentCollectionMode: OtaPaymentCollectionMode =
     params.paymentCollectionMode || 'ota_prepaid';
@@ -3977,12 +3996,12 @@ export async function createNewPropertyWithRooms(params: {
   let authProvisioned = false;
   let authNote: string | undefined;
   if (params.adminPassword && params.adminPassword.trim().length > 0 && cleanAdminEmail) {
-    const targetAdminUrl = `https://${subdomainSlug}.pchpms.com/auth-action`;
+    const targetAdminPortalUrl = `https://${subdomainSlug}.pchpms.com`;
     const authRes = await provisionStaffAuthAccount(
       cleanAdminEmail,
       params.adminPassword,
       cleanAdminName,
-      targetAdminUrl
+      targetAdminPortalUrl
     );
     authProvisioned = authRes.provisioned;
     authNote = authRes.note;
@@ -4324,9 +4343,18 @@ export async function authorizeUserEmailForProperty(params: {
   actorRole: string;
 }) {
   const { uid } = getActorContext();
-  const normalizedEmail = params.email.trim().toLowerCase();
+  const rawEmail = params.email.trim();
+  const normalizedEmail = rawEmail.toLowerCase();
   const userDocId = normalizedEmail.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100);
-  const nextEmails = Array.from(new Set([...params.property.authorizedEmails, normalizedEmail])).slice(0, 25);
+  const nextEmails = sanitizeAuthorizedEmailList(
+    [
+      ...params.property.authorizedEmails,
+      normalizedEmail,
+      ...(rawEmail && rawEmail !== normalizedEmail ? [rawEmail] : []),
+    ],
+    params.property,
+    normalizedEmail
+  );
 
   const batch = writeBatch(db);
   const now = serverTimestamp();
@@ -4434,13 +4462,18 @@ function sanitizeAuthorizedEmailList(
   property: PropertyRecord,
   fallbackEmail: string
 ): string[] {
-  const cleaned = Array.from(
-    new Set(
-      [...BOOTSTRAPPED_ADMIN_EMAILS, ...emails]
-        .map((e) => e.trim().toLowerCase())
-        .filter((e) => e && !DEMO_SEED_EMAILS_TO_STRIP.has(e))
-    )
-  );
+  const cleanedSet = new Set<string>();
+  for (const raw of [...BOOTSTRAPPED_ADMIN_EMAILS, ...emails]) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    if (DEMO_SEED_EMAILS_TO_STRIP.has(lower)) continue;
+    cleanedSet.add(lower);
+    if (trimmed !== lower) {
+      cleanedSet.add(trimmed);
+    }
+  }
+  const cleaned = Array.from(cleanedSet);
   if (cleaned.length === 0) {
     const fallback = (property.adminEmail || fallbackEmail || BOOTSTRAPPED_ADMIN_EMAIL)
       .trim()
@@ -4546,7 +4579,7 @@ async function provisionStaffAuthAccount(
   }
   const secApp =
     getApps().find((appInstance) => appInstance.name === 'AccountProvisioner') ||
-    initializeApp(firebaseConfig, 'AccountProvisioner');
+    initializeApp(effectiveFirebaseConfig, 'AccountProvisioner');
   const secAuth = getAuth(secApp);
   try {
     const cred = await createUserWithEmailAndPassword(secAuth, cleanEmail, cleanPassword);
@@ -4554,9 +4587,7 @@ async function provisionStaffAuthAccount(
       await updateProfile(cred.user, { displayName: fullName.trim() }).catch(() => undefined);
     }
     const actionSettings = getPchActionCodeSettings(customActionUrl);
-    await sendEmailVerification(cred.user, actionSettings).catch(() =>
-      sendEmailVerification(cred.user).catch(() => undefined)
-    );
+    await sendEmailVerification(cred.user, actionSettings).catch(() => undefined);
     await signOut(secAuth).catch(() => undefined);
     return {
       provisioned: true,
@@ -4587,8 +4618,9 @@ export async function sendBrandedPasswordResetWorkflow(
   } catch (err) {
     const code = (err as { code?: string })?.code || '';
     if (code === 'auth/unauthorized-continue-uri' || code === 'auth/invalid-continue-uri') {
-      await sendPasswordResetEmail(auth, cleanEmail);
-      return;
+      throw new Error(
+        'Custom auth domain "pchpms.com" must be added to Authorized Domains before sending branded password reset links.'
+      );
     }
     throw err;
   }
@@ -4648,7 +4680,7 @@ export async function createPropertyUserAccountWorkflow(params: {
       cleanEmail,
       params.password,
       fullName,
-      `${tenantOrigin}/auth-action`
+      tenantOrigin
     );
     authProvisioned = authRes.provisioned;
     authNote = authRes.note;
@@ -4751,16 +4783,17 @@ export async function updatePropertyUserRolePrivilegesWorkflow(params: {
     ? []
     : Array.from(new Set(params.privileges)).slice(0, 30);
   const nextActive = !isUnassigned && params.active && effectivePrivileges.length > 0;
-  const accountEmail = params.account.email.trim().toLowerCase();
+  const rawAccountEmail = params.account.email.trim();
+  const accountEmail = rawAccountEmail.toLowerCase();
 
   const shouldRetainInProperty =
     isBootstrappedAdminEmail(accountEmail) ||
     params.property.adminEmail.trim().toLowerCase() === accountEmail;
 
-  const baseEmails = params.property.authorizedEmails.map((e) => e.toLowerCase());
+  const baseEmails = params.property.authorizedEmails.map((e) => e.trim()).filter(Boolean);
   const updatedEmails = nextActive
-    ? [...baseEmails, accountEmail]
-    : baseEmails.filter((e) => e !== accountEmail || shouldRetainInProperty);
+    ? [...baseEmails, accountEmail, ...(rawAccountEmail !== accountEmail ? [rawAccountEmail] : [])]
+    : baseEmails.filter((e) => e.toLowerCase() !== accountEmail || shouldRetainInProperty);
   const nextEmails = sanitizeAuthorizedEmailList(updatedEmails, params.property, '');
 
   const ref = doc(db, 'properties', params.property.id, 'user_accounts', params.account.id);
@@ -4839,8 +4872,8 @@ export async function deletePropertyUserAccountWorkflow(params: {
     params.property.adminEmail.trim().toLowerCase() === accountEmail;
   const nextEmails = sanitizeAuthorizedEmailList(
     params.property.authorizedEmails
-      .map((e) => e.toLowerCase())
-      .filter((e) => e !== accountEmail || shouldRetain),
+      .map((e) => e.trim())
+      .filter((e) => e.toLowerCase() !== accountEmail || shouldRetain),
     params.property,
     ''
   );

@@ -8,17 +8,20 @@ import {
   Building2,
   Calendar,
   CalendarCheck2,
+  CheckCircle2,
   ChefHat,
   DoorOpen,
   Globe,
   KeyRound,
   LogOut,
+  PieChart,
   PlaneLanding,
   PlaneTakeoff,
   Search,
   ShieldCheck,
   Sparkles,
   Trash2,
+  TrendingUp,
   UserCheck,
   Users,
   Wallet,
@@ -145,6 +148,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [confirmDeleteResId, setConfirmDeleteResId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyResId, setBusyResId] = useState<string | null>(null);
+  const [selectedChartDay, setSelectedChartDay] = useState<string | null>(null);
 
   const arrivalsTodayList = reservations.filter(
     (r) => r.status === 'confirmed' && r.checkInDate <= todayIso
@@ -154,7 +158,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
   const inHouseList = reservations.filter((r) => r.status === 'checked_in');
   const occupiedRoomsCount = rooms.filter((r) => r.occupancyStatus === 'occupied').length;
+  const reservedRoomsCount = rooms.filter((r) => r.occupancyStatus === 'reserved').length;
   const availableRoomsCount = rooms.filter((r) => r.occupancyStatus === 'vacant').length;
+  const maintenanceRoomsCount = rooms.filter((r) => r.occupancyStatus === 'out_of_order').length;
   const occupancyPct =
     rooms.length > 0 ? Math.round((occupiedRoomsCount / rooms.length) * 100) : 0;
 
@@ -167,6 +173,157 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
   const openKitchen = posOrders.filter((o) => o.kitchenStatus !== 'served');
   const openMaintenance = maintenanceTickets.filter((t) => t.status !== 'resolved');
+
+  const analytics = useMemo(() => {
+    const days: Array<{
+      iso: string;
+      shortLabel: string;
+      fullLabel: string;
+      revenueNgn: number;
+      expenseNgn: number;
+    }> = [];
+    const baseDate = new Date(`${todayIso}T00:00:00Z`);
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const d = new Date(baseDate);
+      d.setUTCDate(baseDate.getUTCDate() - offset);
+      const iso = d.toISOString().slice(0, 10);
+      const shortLabel = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+      const fullLabel = d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC',
+      });
+      const dayRev = ledgerEntries
+        .filter((e) => e.entryType === 'revenue' && e.entryDate === iso)
+        .reduce((s, e) => s + e.amountNgn, 0);
+      const dayExp = ledgerEntries
+        .filter((e) => e.entryType === 'expense' && e.entryDate === iso)
+        .reduce((s, e) => s + e.amountNgn, 0);
+      days.push({ iso, shortLabel, fullLabel, revenueNgn: dayRev, expenseNgn: dayExp });
+    }
+    const maxDailyVal = Math.max(
+      100000,
+      ...days.map((d) => Math.max(d.revenueNgn, d.expenseNgn))
+    );
+    const total7DayRevenue = days.reduce((s, d) => s + d.revenueNgn, 0);
+    const total7DayExpense = days.reduce((s, d) => s + d.expenseNgn, 0);
+    const avgDailyRevenue = Math.round(total7DayRevenue / 7);
+
+    // Channel Mix & Exact Original Currency Breakdown
+    const channelStyleMap: Record<string, { bar: string; dot: string; badge: string }> = {
+      Airbnb: {
+        bar: 'bg-gradient-to-r from-rose-500 to-pink-500',
+        dot: 'bg-rose-500',
+        badge: 'bg-rose-50 text-rose-700 border-rose-200',
+      },
+      'Booking.com': {
+        bar: 'bg-gradient-to-r from-blue-600 to-indigo-600',
+        dot: 'bg-blue-600',
+        badge: 'bg-blue-50 text-blue-700 border-blue-200',
+      },
+      Expedia: {
+        bar: 'bg-gradient-to-r from-amber-500 to-orange-500',
+        dot: 'bg-amber-500',
+        badge: 'bg-amber-50 text-amber-800 border-amber-200',
+      },
+      'Hotels.ng': {
+        bar: 'bg-gradient-to-r from-cyan-500 to-sky-600',
+        dot: 'bg-cyan-500',
+        badge: 'bg-cyan-50 text-cyan-800 border-cyan-200',
+      },
+      VRBO: {
+        bar: 'bg-gradient-to-r from-teal-500 to-emerald-500',
+        dot: 'bg-teal-500',
+        badge: 'bg-teal-50 text-teal-800 border-teal-200',
+      },
+      'Direct Walk-In': {
+        bar: 'bg-gradient-to-r from-emerald-500 to-green-600',
+        dot: 'bg-emerald-600',
+        badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      },
+      'Direct Web': {
+        bar: 'bg-gradient-to-r from-violet-500 to-purple-600',
+        dot: 'bg-violet-600',
+        badge: 'bg-violet-50 text-violet-700 border-violet-200',
+      },
+      Corporate: {
+        bar: 'bg-gradient-to-r from-indigo-500 to-blue-700',
+        dot: 'bg-indigo-600',
+        badge: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      },
+    };
+    const defaultChannelStyle = {
+      bar: 'bg-gradient-to-r from-slate-500 to-slate-700',
+      dot: 'bg-slate-600',
+      badge: 'bg-slate-100 text-slate-700 border-slate-200',
+    };
+
+    const nonCancelled = reservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show'
+    );
+    const channelTotals = new Map<
+      string,
+      { label: string; count: number; ngnTotal: number; usdTotal: number }
+    >();
+    for (const r of nonCancelled) {
+      const label = formatBookingSourceLabel(r.channel);
+      const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+      const cur = channelTotals.get(label) || { label, count: 0, ngnTotal: 0, usdTotal: 0 };
+      cur.count += 1;
+      cur.ngnTotal += isOtaBookingChannel(r.channel) ? pay.expectedPayoutNgn : pay.totalAmount;
+      if (pay.sourceCurrency === 'USD') {
+        cur.usdTotal += pay.otaPaidSourceAmount > 0 ? pay.otaPaidSourceAmount : pay.sourceTotalAmount;
+      }
+      channelTotals.set(label, cur);
+    }
+    const channelMix = Array.from(channelTotals.values())
+      .sort((a, b) => b.count - a.count || b.ngnTotal - a.ngnTotal)
+      .map((item) => ({
+        ...item,
+        pct: nonCancelled.length > 0 ? Math.round((item.count / nonCancelled.length) * 100) : 0,
+        style: channelStyleMap[item.label] || defaultChannelStyle,
+      }));
+
+    // Housekeeping counts
+    const hkClean = rooms.filter((r) => r.housekeepingStatus === 'clean').length;
+    const hkInspected = rooms.filter((r) => r.housekeepingStatus === 'inspected').length;
+    const hkCleaning = rooms.filter((r) => r.housekeepingStatus === 'cleaning').length;
+    const hkDirty = rooms.filter((r) => r.housekeepingStatus === 'dirty').length;
+
+    // Settlement health
+    let paidCount = 0;
+    let partialCount = 0;
+    let unpaidCount = 0;
+    let totalSettledNgn = 0;
+    let totalBalanceDueNgn = 0;
+    for (const r of nonCancelled) {
+      const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+      if (pay.paymentStatus === 'Paid') paidCount += 1;
+      else if (pay.paymentStatus === 'Partial') partialCount += 1;
+      else unpaidCount += 1;
+      totalSettledNgn += pay.amountPaid;
+      totalBalanceDueNgn += pay.balance;
+    }
+
+    return {
+      days,
+      maxDailyVal,
+      total7DayRevenue,
+      total7DayExpense,
+      avgDailyRevenue,
+      channelMix,
+      nonCancelledCount: nonCancelled.length,
+      hkClean,
+      hkInspected,
+      hkCleaning,
+      hkDirty,
+      paidCount,
+      partialCount,
+      unpaidCount,
+      totalSettledNgn,
+      totalBalanceDueNgn,
+    };
+  }, [ledgerEntries, reservations, rooms, property.usdExchangeRateNgn, todayIso]);
 
   const dashboardStatusCounts = useMemo(() => {
     const counts: Record<'all' | ReservationStatus, number> = {
@@ -306,9 +463,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     value: string;
     icon: React.ComponentType<{ className?: string }>;
     borderAccent: string;
+    cardTint: string;
     iconBg: string;
     iconColor: string;
     valueColor: string;
+    barColor: string;
+    barTrack: string;
+    barPct: number;
+    barHint: string;
     target: NavSectionId;
   }> = [
     {
@@ -318,9 +480,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       value: String(arrivalsTodayList.length),
       icon: PlaneLanding,
       borderAccent: 'border-t-[#1c46be]',
-      iconBg: 'bg-blue-50 border border-blue-200',
+      cardTint: 'bg-gradient-to-br from-white via-white to-blue-50/70',
+      iconBg: 'bg-blue-100 border border-blue-200',
       iconColor: 'text-[#1c46be]',
       valueColor: 'text-[#0B245B]',
+      barColor: 'bg-gradient-to-r from-[#1c46be] to-sky-500',
+      barTrack: 'bg-blue-100',
+      barPct:
+        rooms.length > 0
+          ? Math.min(100, Math.round((arrivalsTodayList.length / rooms.length) * 100))
+          : 0,
+      barHint: `${arrivalsTodayList.length} of ${rooms.length || 0} rooms incoming`,
       target: 'arrivals',
     },
     {
@@ -330,9 +500,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       value: String(departuresTodayList.length),
       icon: PlaneTakeoff,
       borderAccent: 'border-t-amber-500',
-      iconBg: 'bg-amber-50 border border-amber-200',
+      cardTint: 'bg-gradient-to-br from-white via-white to-amber-50/70',
+      iconBg: 'bg-amber-100 border border-amber-200',
       iconColor: 'text-amber-700',
-      valueColor: 'text-slate-900',
+      valueColor: 'text-amber-950',
+      barColor: 'bg-gradient-to-r from-amber-500 to-orange-500',
+      barTrack: 'bg-amber-100',
+      barPct:
+        inHouseList.length > 0
+          ? Math.min(100, Math.round((departuresTodayList.length / inHouseList.length) * 100))
+          : 0,
+      barHint: `${departuresTodayList.length} of ${inHouseList.length} in-house due out`,
       target: 'in_house',
     },
     {
@@ -342,9 +520,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       value: String(inHouseList.length),
       icon: DoorOpen,
       borderAccent: 'border-t-emerald-600',
-      iconBg: 'bg-emerald-50 border border-emerald-200',
+      cardTint: 'bg-gradient-to-br from-white via-white to-emerald-50/70',
+      iconBg: 'bg-emerald-100 border border-emerald-200',
       iconColor: 'text-emerald-700',
-      valueColor: 'text-emerald-900',
+      valueColor: 'text-emerald-950',
+      barColor: 'bg-gradient-to-r from-emerald-600 to-teal-500',
+      barTrack: 'bg-emerald-100',
+      barPct: occupancyPct,
+      barHint: `${occupancyPct}% suite occupancy rate`,
       target: 'in_house',
     },
   ];
@@ -354,8 +537,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     label: string;
     value: string;
     icon: React.ComponentType<{ className?: string }>;
+    borderAccent: string;
     iconBg: string;
     iconColor: string;
+    barColor: string;
+    barTrack: string;
+    barPct: number;
     target?: NavSectionId;
   }> = [
     {
@@ -363,8 +550,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       label: `Occupied (${occupancyPct}%)`,
       value: String(occupiedRoomsCount),
       icon: BedDouble,
-      iconBg: 'bg-violet-50',
+      borderAccent: 'border-t-violet-600',
+      iconBg: 'bg-violet-100 border border-violet-200',
       iconColor: 'text-violet-700',
+      barColor: 'bg-violet-600',
+      barTrack: 'bg-violet-100',
+      barPct: occupancyPct,
       target: 'rooms',
     },
     {
@@ -372,8 +563,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       label: 'Available Suites',
       value: String(availableRoomsCount),
       icon: KeyRound,
-      iconBg: 'bg-amber-50',
-      iconColor: 'text-amber-700',
+      borderAccent: 'border-t-cyan-600',
+      iconBg: 'bg-cyan-100 border border-cyan-200',
+      iconColor: 'text-cyan-700',
+      barColor: 'bg-cyan-600',
+      barTrack: 'bg-cyan-100',
+      barPct:
+        rooms.length > 0 ? Math.min(100, Math.round((availableRoomsCount / rooms.length) * 100)) : 0,
       target: 'walk_in',
     },
     {
@@ -381,8 +577,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       label: 'Revenue Today',
       value: formatNgn(revenueTodayNgn),
       icon: Wallet,
-      iconBg: 'bg-indigo-50',
+      borderAccent: 'border-t-indigo-600',
+      iconBg: 'bg-indigo-100 border border-indigo-200',
       iconColor: 'text-indigo-700',
+      barColor: 'bg-indigo-600',
+      barTrack: 'bg-indigo-100',
+      barPct:
+        analytics.avgDailyRevenue > 0
+          ? Math.min(100, Math.round((revenueTodayNgn / analytics.avgDailyRevenue) * 100))
+          : revenueTodayNgn > 0
+            ? 100
+            : 0,
       target: 'accounting',
     },
   ];
@@ -454,51 +659,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      {/* Clean Property Name Bar & Quick Operations (No logo upload, no exterior photo, no address/contacts, no date) */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-[#0B245B] text-white flex items-center justify-center shrink-0">
-              <Building2 className="w-5 h-5 text-amber-300" />
+      {/* Colorful Property Header Banner & Quick Operations */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+        <div className="bg-gradient-to-r from-[#061539] via-[#0B245B] to-[#1c46be] px-5 sm:px-6 py-5 text-white">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-11 h-11 rounded-xl bg-white/15 border border-white/25 text-white flex items-center justify-center shrink-0">
+                <Building2 className="w-5 h-5 text-amber-300" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="font-display text-xl sm:text-2xl font-extrabold text-white tracking-tight truncate">
+                  {property.name}
+                </h1>
+                <p className="font-mono-tabular text-[11px] font-semibold text-blue-100/90 mt-0.5">
+                  {getPropertySystemId(property)} · Code: {property.code} · {rooms.length} Rooms Configured · Occupancy {occupancyPct}%
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h1 className="font-display text-xl sm:text-2xl font-extrabold text-[#061539] tracking-tight truncate">
-                {property.name}
-              </h1>
-              <p className="font-mono-tabular text-[11px] font-semibold text-slate-600">
-                {getPropertySystemId(property)} · Code: {property.code} · {rooms.length} Rooms Configured
-              </p>
-            </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => onNavigate('profile')}
-              className="px-3 py-1.5 text-xs font-semibold text-[#1c46be] bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors cursor-pointer"
-            >
-              Edit Profile
-            </button>
-            {onSignOut && (
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={onSignOut}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg transition-colors cursor-pointer"
+                onClick={() => onNavigate('profile')}
+                className="px-3.5 py-1.5 text-xs font-semibold text-[#061539] bg-white hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Sign Out</span>
+                Edit Profile
               </button>
-            )}
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-rose-500/90 hover:bg-rose-500 border border-rose-400/50 text-white rounded-lg transition-colors cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-100">
+        <div className="px-5 sm:px-6 py-3.5 bg-slate-50/70 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => onNavigate('walk_in')}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-[#0B245B] hover:bg-[#082c70] text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
-            <UserCheck className="w-3.5 h-3.5" />
+            <UserCheck className="w-3.5 h-3.5 text-amber-300" />
             <span>{cms.dashboard.quickWalkInLabel || 'Walk-in Check-in'}</span>
           </button>
           <button
@@ -512,64 +719,64 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('arrivals')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-sky-200 bg-sky-50 hover:bg-sky-100 text-sky-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
-            <PlaneLanding className="w-3.5 h-3.5" />
+            <PlaneLanding className="w-3.5 h-3.5 text-sky-700" />
             <span>{cms.dashboard.quickArrivalsLabel || 'Arrivals'}</span>
           </button>
           <button
             type="button"
             onClick={() => onNavigate('in_house')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
-            <DoorOpen className="w-3.5 h-3.5" />
+            <DoorOpen className="w-3.5 h-3.5 text-violet-700" />
             <span>{cms.dashboard.quickInHouseLabel || 'In-House'}</span>
           </button>
           <button
             type="button"
             onClick={() => onNavigate('front_desk')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
-            <BookOpenCheck className="w-3.5 h-3.5" />
+            <BookOpenCheck className="w-3.5 h-3.5 text-indigo-700" />
             <span>{cms.dashboard.quickFrontDeskLabel || 'Front Desk & Folios'}</span>
           </button>
           <button
             type="button"
             onClick={() => onNavigate('calendar')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
-            <Calendar className="w-3.5 h-3.5" />
+            <Calendar className="w-3.5 h-3.5 text-teal-700" />
             <span>{cms.dashboard.quickCalendarLabel || 'Calendar'}</span>
           </button>
           <button
             type="button"
             onClick={() => onNavigate('ota_channels')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-cyan-200 bg-cyan-50 hover:bg-cyan-100 text-cyan-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
-            <Globe className="w-3.5 h-3.5" />
+            <Globe className="w-3.5 h-3.5 text-cyan-700" />
             <span>{cms.dashboard.quickChannelManagerLabel || 'Channel Manager'}</span>
           </button>
           {canManageRooms && (
             <button
               type="button"
               onClick={() => onNavigate('reports')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#1c46be] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
-              <BarChart3 className="w-3.5 h-3.5" />
+              <BarChart3 className="w-3.5 h-3.5 text-amber-700" />
               <span>{cms.pages.reports?.navLabel || 'Management Reports'}</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Prominent Arrivals, Departures, In-House Flagship Hero KPI Cards */}
+      {/* Prominent Arrivals, Departures, In-House Flagship Hero KPI Cards with Utilization Bars */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {primaryKpiCards.map((card) => {
           const Icon = card.icon;
           return (
             <div
               key={card.id}
-              className={`bg-white border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl p-5 sm:p-6 flex flex-col justify-between gap-4 shadow-xs`}
+              className={`${card.cardTint} border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl p-5 sm:p-6 flex flex-col justify-between gap-4 shadow-xs`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -590,11 +797,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigate(card.target)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-[#1c46be] cursor-pointer"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-[#1c46be] cursor-pointer"
                 >
                   <span>Open</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
+              </div>
+
+              <div className="space-y-1.5 pt-1 border-t border-slate-200/70">
+                <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
+                  <span>{card.barHint}</span>
+                  <span className="font-mono-tabular font-bold text-slate-800">{card.barPct}%</span>
+                </div>
+                <div className={`h-2 w-full rounded-full overflow-hidden ${card.barTrack}`}>
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${card.barColor}`}
+                    style={{ width: `${Math.max(card.barPct > 0 ? 6 : 0, card.barPct)}%` }}
+                  />
+                </div>
               </div>
             </div>
           );
@@ -608,35 +828,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           return (
             <div
               key={card.id}
-              className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex items-center justify-between gap-3"
+              className={`bg-white border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl px-5 py-4 space-y-3 shadow-xs`}
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`w-9 h-9 rounded-lg ${card.iconBg} flex items-center justify-center shrink-0`}>
-                  <Icon className={`w-4 h-4 ${card.iconColor}`} />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-9 h-9 rounded-lg ${card.iconBg} flex items-center justify-center shrink-0`}>
+                    <Icon className={`w-4 h-4 ${card.iconColor}`} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-mono-tabular text-xl font-bold text-slate-900 leading-tight truncate">
+                      {card.value}
+                    </p>
+                    <p className="text-xs text-slate-500">{card.label}</p>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="font-mono-tabular text-xl font-bold text-slate-900 leading-tight truncate">
-                    {card.value}
-                  </p>
-                  <p className="text-xs text-slate-500">{card.label}</p>
-                </div>
+                {card.target && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate(card.target!)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
+                  >
+                    <span>View</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
+                )}
               </div>
-              {card.target && (
-                <button
-                  type="button"
-                  onClick={() => onNavigate(card.target!)}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
-                >
-                  <span>View</span>
-                  <ArrowRight className="w-3 h-3" />
-                </button>
-              )}
+              <div className={`h-1.5 w-full rounded-full overflow-hidden ${card.barTrack}`}>
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${card.barColor}`}
+                  style={{ width: `${Math.max(card.barPct > 0 ? 6 : 0, card.barPct)}%` }}
+                />
+              </div>
             </div>
           );
         })}
       </div>
-
-      {/* Secondary Metrics Strip ends; User Management moved before footer */}
 
       {/* Daily USD Exchange Rate & Currency Converter */}
       <CurrencyConverterWidget
@@ -647,6 +873,387 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         compact
         onNotify={onNotify}
       />
+
+      {/* Colorful Visual Analytics: 7-Day Revenue vs Expense Chart, Channel Currency Mix Bars, & Operations Pulse */}
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* 7-Day Revenue vs Expense Column Bar Chart */}
+          <div className="lg:col-span-2 bg-white border border-slate-200 border-t-4 border-t-emerald-600 rounded-xl p-5 flex flex-col justify-between gap-4 shadow-xs">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
+                  <TrendingUp className="w-4 h-4 text-emerald-700" />
+                </div>
+                <div>
+                  <h2 className="font-display text-base font-extrabold text-[#061539]">
+                    7-Day Revenue vs Expense Flow
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Daily posted ledger inflows vs operating expenses (click any day bar to inspect)
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono-tabular">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                  Rev: {formatNgn(analytics.total7DayRevenue)}
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-rose-600" />
+                  Exp: {formatNgn(analytics.total7DayExpense)}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 font-bold">
+                  Net: {formatNgn(analytics.total7DayRevenue - analytics.total7DayExpense)}
+                </span>
+              </div>
+            </div>
+
+            {(() => {
+              const activeDay =
+                analytics.days.find((d) => d.iso === selectedChartDay) ||
+                analytics.days[analytics.days.length - 1];
+              return (
+                <div className="space-y-3">
+                  <div className="relative bg-slate-50/70 border border-slate-100 rounded-xl px-3 sm:px-4 pt-5 pb-3">
+                    {/* Horizontal subtle grid lines */}
+                    <div className="relative h-44 flex items-end justify-between gap-2 sm:gap-4">
+                      <div className="pointer-events-none absolute inset-x-0 top-0 bottom-6 flex flex-col justify-between">
+                        <div className="border-b border-dashed border-slate-200/80 w-full" />
+                        <div className="border-b border-dashed border-slate-200/80 w-full" />
+                        <div className="border-b border-dashed border-slate-200/80 w-full" />
+                        <div className="border-b border-slate-200 w-full" />
+                      </div>
+
+                      {analytics.days.map((day) => {
+                        const revPct = Math.round((day.revenueNgn / analytics.maxDailyVal) * 100);
+                        const expPct = Math.round((day.expenseNgn / analytics.maxDailyVal) * 100);
+                        const isSelected = activeDay?.iso === day.iso;
+                        return (
+                          <button
+                            key={day.iso}
+                            type="button"
+                            onClick={() => setSelectedChartDay(day.iso)}
+                            title={`${day.fullLabel}: Revenue ${formatNgn(day.revenueNgn)} · Expense ${formatNgn(day.expenseNgn)}`}
+                            className={`relative z-10 flex-1 flex flex-col items-center gap-1.5 group cursor-pointer rounded-lg p-1 transition-colors ${
+                              isSelected ? 'bg-blue-50/80 ring-1 ring-blue-200' : 'hover:bg-slate-100/70'
+                            }`}
+                          >
+                            <div className="w-full h-36 flex items-end justify-center gap-1 sm:gap-1.5">
+                              <div
+                                className="w-3.5 sm:w-5 rounded-t-md bg-gradient-to-t from-emerald-600 to-teal-400 group-hover:from-emerald-700 group-hover:to-teal-500 transition-all duration-300"
+                                style={{
+                                  height: `${day.revenueNgn > 0 ? Math.max(8, revPct) : 3}%`,
+                                  opacity: day.revenueNgn > 0 ? 1 : 0.25,
+                                }}
+                              />
+                              <div
+                                className="w-3.5 sm:w-5 rounded-t-md bg-gradient-to-t from-rose-600 to-orange-400 group-hover:from-rose-700 group-hover:to-orange-500 transition-all duration-300"
+                                style={{
+                                  height: `${day.expenseNgn > 0 ? Math.max(8, expPct) : 3}%`,
+                                  opacity: day.expenseNgn > 0 ? 1 : 0.25,
+                                }}
+                              />
+                            </div>
+                            <span
+                              className={`text-[10px] sm:text-[11px] font-semibold ${
+                                day.iso === todayIso
+                                  ? 'text-[#1c46be]'
+                                  : isSelected
+                                    ? 'text-slate-900'
+                                    : 'text-slate-500'
+                              }`}
+                            >
+                              {day.iso === todayIso ? 'Today' : day.shortLabel}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {activeDay && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#061539]/5 border border-slate-200 text-xs">
+                      <span className="font-semibold text-[#061539]">
+                        {activeDay.fullLabel} ({activeDay.iso})
+                      </span>
+                      <div className="flex flex-wrap items-center gap-3 font-mono-tabular">
+                        <span className="text-emerald-700 font-bold">
+                          Revenue: {formatNgn(activeDay.revenueNgn)}
+                        </span>
+                        <span className="text-rose-700 font-bold">
+                          Expense: {formatNgn(activeDay.expenseNgn)}
+                        </span>
+                        <span className="text-[#1c46be] font-bold">
+                          Net: {formatNgn(activeDay.revenueNgn - activeDay.expenseNgn)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Booking Channel Mix & Exact Original Currency Breakdown */}
+          <div className="bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-5 flex flex-col justify-between gap-4 shadow-xs">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0">
+                  <PieChart className="w-4 h-4 text-[#1c46be]" />
+                </div>
+                <div>
+                  <h2 className="font-display text-base font-extrabold text-[#061539]">
+                    Booking Sources &amp; Currency
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Share across {analytics.nonCancelledCount} active/completed stays
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigate('ota_channels')}
+                className="text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
+              >
+                Channels →
+              </button>
+            </div>
+
+            {analytics.channelMix.length === 0 ? (
+              <div className="py-10 text-center text-xs text-slate-500">
+                Channel mix bars populate automatically as bookings arrive from Direct, Airbnb, or Booking.com.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {analytics.channelMix.slice(0, 6).map((ch) => (
+                  <div key={ch.label} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${ch.style.dot}`} />
+                        <span className="font-semibold text-slate-800 truncate">{ch.label}</span>
+                        <span className="font-mono-tabular text-[11px] text-slate-500">
+                          ({ch.count})
+                        </span>
+                      </div>
+                      <div className="text-right font-mono-tabular shrink-0">
+                        {ch.usdTotal > 0 ? (
+                          <span className="font-bold text-blue-800">
+                            {formatUsd(ch.usdTotal)} USD
+                          </span>
+                        ) : (
+                          <span className="font-bold text-slate-900">{formatNgn(ch.ngnTotal)}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${ch.style.bar}`}
+                        style={{ width: `${Math.max(8, ch.pct)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+              <span>OTA USD payments preserved verbatim</span>
+              <button
+                type="button"
+                onClick={() => onNavigate('reports')}
+                className="font-semibold text-emerald-700 hover:underline cursor-pointer"
+              >
+                Full Revenue Report →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Operations & Settlement Pulse Stacked Bars Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* 1. Suite Occupancy Stacked Bar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-[#061539]">Suite Occupancy Split</span>
+              <span className="font-mono-tabular text-xs font-bold text-blue-700">
+                {occupancyPct}% Occupied
+              </span>
+            </div>
+            <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex">
+              {rooms.length > 0 && (
+                <>
+                  <div
+                    className="h-full bg-blue-600 transition-all"
+                    style={{ width: `${(occupiedRoomsCount / rooms.length) * 100}%` }}
+                    title={`Occupied: ${occupiedRoomsCount}`}
+                  />
+                  <div
+                    className="h-full bg-amber-400 transition-all"
+                    style={{ width: `${(reservedRoomsCount / rooms.length) * 100}%` }}
+                    title={`Reserved: ${reservedRoomsCount}`}
+                  />
+                  <div
+                    className="h-full bg-emerald-500 transition-all"
+                    style={{ width: `${(availableRoomsCount / rooms.length) * 100}%` }}
+                    title={`Available: ${availableRoomsCount}`}
+                  />
+                  <div
+                    className="h-full bg-slate-400 transition-all"
+                    style={{ width: `${(maintenanceRoomsCount / rooms.length) * 100}%` }}
+                    title={`Maintenance: ${maintenanceRoomsCount}`}
+                  />
+                </>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] font-mono-tabular text-slate-600">
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-blue-600" />
+                  Occupied
+                </span>
+                <strong className="text-slate-900">{occupiedRoomsCount}</strong>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  Reserved
+                </span>
+                <strong className="text-slate-900">{reservedRoomsCount}</strong>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Available
+                </span>
+                <strong className="text-slate-900">{availableRoomsCount}</strong>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-slate-400" />
+                  Out of Order
+                </span>
+                <strong className="text-slate-900">{maintenanceRoomsCount}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* 2. Housekeeping Readiness Stacked Bar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-[#061539]">Housekeeping Readiness</span>
+              <span className="inline-flex items-center gap-1 font-mono-tabular text-xs font-bold text-emerald-700">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {rooms.length > 0
+                  ? Math.round(((analytics.hkClean + analytics.hkInspected) / rooms.length) * 100)
+                  : 0}
+                % Ready
+              </span>
+            </div>
+            <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex">
+              {rooms.length > 0 && (
+                <>
+                  <div
+                    className="h-full bg-emerald-500 transition-all"
+                    style={{ width: `${(analytics.hkClean / rooms.length) * 100}%` }}
+                  />
+                  <div
+                    className="h-full bg-cyan-500 transition-all"
+                    style={{ width: `${(analytics.hkInspected / rooms.length) * 100}%` }}
+                  />
+                  <div
+                    className="h-full bg-amber-400 transition-all"
+                    style={{ width: `${(analytics.hkCleaning / rooms.length) * 100}%` }}
+                  />
+                  <div
+                    className="h-full bg-rose-500 transition-all"
+                    style={{ width: `${(analytics.hkDirty / rooms.length) * 100}%` }}
+                  />
+                </>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] font-mono-tabular text-slate-600">
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Clean
+                </span>
+                <strong className="text-slate-900">{analytics.hkClean}</strong>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-cyan-500" />
+                  Inspected
+                </span>
+                <strong className="text-slate-900">{analytics.hkInspected}</strong>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  Cleaning
+                </span>
+                <strong className="text-slate-900">{analytics.hkCleaning}</strong>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-rose-500" />
+                  Dirty
+                </span>
+                <strong className="text-slate-900">{analytics.hkDirty}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* 3. Folio Settlement Mix Stacked Bar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-[#061539]">Folio Settlement Mix</span>
+              <span className="font-mono-tabular text-xs font-bold text-indigo-700">
+                {formatNgn(analytics.totalSettledNgn)}
+              </span>
+            </div>
+            <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex">
+              {analytics.nonCancelledCount > 0 && (
+                <>
+                  <div
+                    className="h-full bg-emerald-500 transition-all"
+                    style={{ width: `${(analytics.paidCount / analytics.nonCancelledCount) * 100}%` }}
+                  />
+                  <div
+                    className="h-full bg-amber-400 transition-all"
+                    style={{
+                      width: `${(analytics.partialCount / analytics.nonCancelledCount) * 100}%`,
+                    }}
+                  />
+                  <div
+                    className="h-full bg-rose-500 transition-all"
+                    style={{ width: `${(analytics.unpaidCount / analytics.nonCancelledCount) * 100}%` }}
+                  />
+                </>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-tabular text-slate-600">
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Paid: <strong className="text-slate-900">{analytics.paidCount}</strong>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                Partial: <strong className="text-slate-900">{analytics.partialCount}</strong>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                Unpaid: <strong className="text-slate-900">{analytics.unpaidCount}</strong>
+              </span>
+            </div>
+            <p className="text-[11px] font-mono-tabular text-slate-500">
+              Property Balance Due:{' '}
+              <strong className={analytics.totalBalanceDueNgn > 0 ? 'text-rose-700' : 'text-emerald-700'}>
+                {formatNgn(analytics.totalBalanceDueNgn)}
+              </strong>
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Room Overview Matrix + Today's Schedule */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1048,12 +1655,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 const {
                   totalAmount,
                   expectedPayoutNgn,
-                  otaPaidAmount,
+                  otaPaidAmount: _otaPaidAmount,
                   hotelPaidAmount,
                   amountPaid,
                   balance,
                   paymentStatus,
                   sourceCurrency,
+                  sourceTotalAmount,
                   otaPaidSourceAmount,
                 } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
                 const isOtaSource = isOtaBookingChannel(res.channel);
@@ -1164,11 +1772,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </td>
 
                     <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                      <span className="block">{formatNgn(totalAmount)}</span>
-                      {isOtaSource && (
-                        <span className="block text-[10px] font-medium text-slate-500">
-                          Exp. Payout: {formatNgn(expectedPayoutNgn)}
-                        </span>
+                      {isOtaSource && sourceCurrency !== 'NGN' && sourceTotalAmount > 0 ? (
+                        <>
+                          <span className="block text-blue-800">
+                            {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
+                            {sourceCurrency}
+                          </span>
+                          <span className="block text-[10px] font-medium text-slate-500">
+                            Exp. Payout: {formatNgn(expectedPayoutNgn)}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="block">{formatNgn(totalAmount)}</span>
+                          {isOtaSource && (
+                            <span className="block text-[10px] font-medium text-slate-500">
+                              Exp. Payout: {formatNgn(expectedPayoutNgn)}
+                            </span>
+                          )}
+                        </>
                       )}
                     </td>
 

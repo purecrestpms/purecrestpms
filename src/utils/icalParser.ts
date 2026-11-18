@@ -248,7 +248,7 @@ function extractPaymentHints(params: {
   // 2. Parse labeled paid lines from description/summary (e.g., "Paid to OTA: 200 USD", "Guest Paid: $200")
   if (paidAmount === undefined) {
     const paidLabelMatch = combined.match(
-      /(?:Guest\s*Paid(?:\s*to\s*OTA)?|Paid\s*to\s*OTA|OTA\s*Paid|OTA\s*Payment(?:\s*Received)?|Amount\s*Paid|Prepaid|Paid)\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Guest\s*Paid(?:\s*to\s*OTA)?|Paid\s*to\s*OTA|OTA\s*Paid|OTA\s*Payment(?:\s*Received)?|Amount\s*(?:Paid|Charged)|Prepaid|Payment\s*Received|Paid)\s*[:=-]\s*([^\n|;]+)/i
     );
     if (paidLabelMatch) {
       const parsed = parseMoneyAndCurrencyFromSnippet(paidLabelMatch[1], paidCurrency);
@@ -262,7 +262,7 @@ function extractPaymentHints(params: {
   // 3. Parse labeled total/amount lines (e.g., "Total: 200 USD", "Total Price: $200")
   if (sourceTotalAmount === undefined) {
     const totalLabelMatch = combined.match(
-      /(?:Total\s*Price|Total\s*Amount|Booking\s*Total|Reservation\s*Total|Total|Price|Amount|Payout)\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Grand\s*Total|Total\s*Price|Total\s*Amount|Total\s*Cost|Total\s*Payout|Booking\s*Total|Reservation\s*Total|Guest\s*Total|Payout\s*Amount|Total|Price|Amount|Payout)\s*[:=-]\s*([^\n|;]+)/i
     );
     if (totalLabelMatch) {
       const parsed = parseMoneyAndCurrencyFromSnippet(totalLabelMatch[1], paidCurrency);
@@ -308,6 +308,9 @@ function extractPaymentHints(params: {
   if (sourceNightlyRate === undefined && (sourceTotalAmount || paidAmount) && params.nights > 0) {
     const base = sourceTotalAmount || paidAmount || 0;
     if (base > 0) sourceNightlyRate = Number((base / params.nights).toFixed(2));
+  }
+  if (paidAmount === undefined && sourceTotalAmount !== undefined && /\bpaid\b/i.test(combined)) {
+    paidAmount = sourceTotalAmount;
   }
 
   return {

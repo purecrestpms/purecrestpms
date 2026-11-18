@@ -63,6 +63,7 @@ import {
   googleProvider,
   isBootstrappedAdminEmail,
   isFirestoreOfflineError,
+  isSafePchRedirectUrl,
   testConnection,
 } from './firebase';
 import {
@@ -279,9 +280,15 @@ function detectInitialSection(): NavSectionId {
 function formatAuthErrorMessage(err: unknown): string {
   const code = (err as { code?: string })?.code || '';
   const raw = err instanceof Error ? err.message : String(err);
-  if (code === 'auth/unauthorized-domain' || raw.includes('auth/unauthorized-domain')) {
-    const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
-    return `Domain "${host}" is not authorized for sign-in yet. Add "${host}" under Authorized Domains in your authentication settings.`;
+  if (
+    code === 'auth/unauthorized-domain' ||
+    code === 'auth/unauthorized-continue-uri' ||
+    code === 'auth/invalid-continue-uri' ||
+    raw.includes('auth/unauthorized-domain') ||
+    raw.includes('auth/unauthorized-continue-uri')
+  ) {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'pchpms.com';
+    return `Domain "${host}" / "pchpms.com" must be added under Authentication → Settings → Authorized domains.`;
   }
   if (code === 'auth/operation-not-allowed') {
     return 'Email and password sign-in is not currently enabled. Please sign in with Google or contact your administrator.';
@@ -371,13 +378,33 @@ export default function App() {
   const hostContext = getHostPortalContext();
 
   // Branded in-app email verification & password reset action state (/auth-action)
-  const [authActionParams] = useState<{ mode: string; oobCode: string; continueUrl: string } | null>(() => {
+  const [authActionParams] = useState<{
+    mode: string;
+    oobCode: string;
+    continueUrl: string;
+    nextUrl: string;
+  } | null>(() => {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
     const mode = params.get('mode') || '';
     const oobCode = params.get('oobCode') || '';
+    const continueUrl = params.get('continueUrl') || '';
+    let nextUrl = params.get('next') || '';
+    if (!nextUrl && continueUrl) {
+      try {
+        const parsedContinue = new URL(continueUrl);
+        nextUrl = parsedContinue.searchParams.get('next') || '';
+      } catch {
+        // ignore invalid continueUrl
+      }
+    }
     if ((window.location.pathname.toLowerCase().startsWith('/auth-action') || (mode && oobCode)) && mode && oobCode) {
-      return { mode, oobCode, continueUrl: params.get('continueUrl') || '' };
+      return {
+        mode,
+        oobCode,
+        continueUrl,
+        nextUrl: isSafePchRedirectUrl(nextUrl) ? nextUrl : '',
+      };
     }
     return null;
   });
@@ -543,26 +570,35 @@ export default function App() {
   };
 
   useEffect(() => {
+    let active = true;
     void getRedirectResult(auth).catch((err) => {
-      setAuthError(formatAuthErrorMessage(err));
+      if (active) setAuthError(formatAuthErrorMessage(err));
     });
     const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setAuthReady(true);
-      setDbError(null);
-      setPropsLoaded(false);
-      setUserAccountsLoaded(false);
-      if (!u) {
-        autoSeedAttemptedRef.current = null;
-        setProperties([]);
-        setLicenses([]);
-        setAuditLogs([]);
-        setUserProfile(null);
-        setUserAccounts([]);
-        setStaffSessions([]);
-      }
+      const finalizeAuth = async () => {
+        if (u) {
+          await u.getIdToken().catch(() => undefined);
+        }
+        if (!active) return;
+        setUser(u);
+        setAuthReady(true);
+        setDbError(null);
+        setPropsLoaded(false);
+        setUserAccountsLoaded(false);
+        if (!u) {
+          autoSeedAttemptedRef.current = null;
+          setProperties([]);
+          setLicenses([]);
+          setAuditLogs([]);
+          setUserProfile(null);
+          setUserAccounts([]);
+          setStaffSessions([]);
+        }
+      };
+      void finalizeAuth();
     });
     return () => {
+      active = false;
       unsub();
     };
   }, []);
@@ -678,26 +714,27 @@ export default function App() {
   // Root Firestore subscriptions (gated strictly on verified email & internal non-marketing portals)
   useEffect(() => {
     if (!authReady || !user || !user.email || !user.emailVerified || portalMode === 'home') return;
-    const userEmail = user.email.toLowerCase();
-    const isAdmin = isBootstrappedAdminEmail(userEmail);
+    const tokenEmail = user.email;
+    const userEmailLower = tokenEmail.toLowerCase();
+    const isAdmin = isBootstrappedAdminEmail(userEmailLower);
 
     const propsQuery = isAdmin
       ? collection(db, 'properties')
       : query(
           collection(db, 'properties'),
-          where('authorizedEmails', 'array-contains', userEmail)
+          where('authorizedEmails', 'array-contains', tokenEmail)
         );
     const licQuery = isAdmin
       ? collection(db, 'licenses')
       : query(
           collection(db, 'licenses'),
-          where('authorizedEmails', 'array-contains', userEmail)
+          where('authorizedEmails', 'array-contains', tokenEmail)
         );
     const audQuery = isAdmin
       ? query(collection(db, 'audit_logs'), orderBy('timestampIso', 'desc'))
       : query(
           collection(db, 'audit_logs'),
-          where('authorizedEmails', 'array-contains', userEmail)
+          where('authorizedEmails', 'array-contains', tokenEmail)
         );
 
     const onSnapshotErr = (path: string) => (err: unknown) => {
@@ -822,8 +859,8 @@ export default function App() {
   // Property-scoped subcollection subscriptions
   useEffect(() => {
     if (!authReady || !user || !user.email || !user.emailVerified || portalMode === 'home' || !activePropertyId) return;
-    const userEmail = user.email.toLowerCase();
-    const isAdmin = isBootstrappedAdminEmail(userEmail);
+    const tokenEmail = user.email;
+    const isAdmin = isBootstrappedAdminEmail(tokenEmail.toLowerCase());
     setUserAccountsLoaded(false);
 
     const sub = <T,>(
@@ -834,7 +871,7 @@ export default function App() {
       const colRef = collection(db, 'properties', activePropertyId, subName);
       const q = isAdmin
         ? colRef
-        : query(colRef, where('authorizedEmails', 'array-contains', userEmail));
+        : query(colRef, where('authorizedEmails', 'array-contains', tokenEmail));
       return onSnapshot(
         q,
         (snap) => {
@@ -1154,9 +1191,7 @@ export default function App() {
       await cred.user.getIdToken(true).catch(() => undefined);
       if (!cred.user.emailVerified) {
         const actionSettings = getPchActionCodeSettings();
-        await sendEmailVerification(cred.user, actionSettings).catch(() =>
-          sendEmailVerification(cred.user).catch(() => undefined)
-        );
+        await sendEmailVerification(cred.user, actionSettings).catch(() => undefined);
         await signOut(auth);
         setAuthNotice(
           `Please verify your email address (${cred.user.email}). We sent a PCHPMS verification link to your inbox (and spam folder) — click it and sign in again, or use "Continue with Google".`
@@ -1254,7 +1289,8 @@ export default function App() {
     };
 
     const returnHref =
-      typeof window !== 'undefined' ? `${window.location.origin}/` : '/';
+      authActionParams.nextUrl ||
+      (typeof window !== 'undefined' ? `${window.location.origin}/` : '/');
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#020d26] via-[#08245e] to-[#03153a] flex items-center justify-center p-4">

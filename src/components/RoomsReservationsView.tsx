@@ -3445,22 +3445,36 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </td>
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                          <span className="block">{formatNgn(totalAmount)}</span>
-                          {isOtaRow ? (
-                            <span className="block text-[10px] font-medium text-blue-700">
-                              Exp. Payout: {formatNgn(expectedPayoutNgn)}
-                            </span>
-                          ) : (
-                            sourceCurrency !== 'NGN' &&
-                            sourceTotalAmount > 0 && (
-                              <span className="block text-[10px] font-medium text-blue-700">
+                          {isOtaRow && sourceCurrency !== 'NGN' && sourceTotalAmount > 0 ? (
+                            <>
+                              <span className="block text-slate-900 font-bold">
                                 {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
                                 {sourceCurrency}
-                                {sourceNightlyRate > 0
-                                  ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
-                                  : ''}
                               </span>
-                            )
+                              <span className="block text-[10px] font-medium text-blue-700">
+                                Exp. Payout: {formatNgn(expectedPayoutNgn)}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="block">{formatNgn(totalAmount)}</span>
+                              {isOtaRow ? (
+                                <span className="block text-[10px] font-medium text-blue-700">
+                                  Exp. Payout: {formatNgn(expectedPayoutNgn)}
+                                </span>
+                              ) : (
+                                sourceCurrency !== 'NGN' &&
+                                sourceTotalAmount > 0 && (
+                                  <span className="block text-[10px] font-medium text-blue-700">
+                                    {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
+                                    {sourceCurrency}
+                                    {sourceNightlyRate > 0
+                                      ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
+                                      : ''}
+                                  </span>
+                                )
+                              )}
+                            </>
                           )}
                         </td>
 

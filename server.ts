@@ -139,6 +139,80 @@ async function startServer() {
     res.status(200).send(body);
   });
 
+  // Proxy /__/auth/* and /__/firebase/* so custom domain pchpms.com serves sign-in popups & handlers cleanly
+  const UPSTREAM_AUTH_ORIGIN = 'https://gen-lang-client-0691436027.firebaseapp.com';
+  const UPSTREAM_AUTH_HOST = new URL(UPSTREAM_AUTH_ORIGIN).host;
+  app.all('/__/*', express.raw({ type: '*/*', limit: '2mb' }), async (req, res) => {
+    try {
+      const reqHost = String(req.headers['x-forwarded-host'] || req.headers.host || 'pchpms.com');
+      const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https');
+      const reqOrigin = `${proto}://${reqHost}`;
+
+      if (req.path === '/__/auth/action' || req.path.startsWith('/__/auth/action/')) {
+        const queryIdx = req.originalUrl.indexOf('?');
+        const search = queryIdx >= 0 ? req.originalUrl.slice(queryIdx) : '';
+        res.redirect(302, `/auth-action${search}`);
+        return;
+      }
+
+      const targetUrl = `${UPSTREAM_AUTH_ORIGIN}${req.originalUrl}`;
+      const forwardHeaders: Record<string, string> = {};
+      for (const [k, v] of Object.entries(req.headers)) {
+        const lower = k.toLowerCase();
+        if (lower === 'host' || lower === 'content-length' || lower === 'connection') continue;
+        if (typeof v === 'string') forwardHeaders[k] = v;
+        else if (Array.isArray(v)) forwardHeaders[k] = v.join(', ');
+      }
+      forwardHeaders['x-forwarded-host'] = reqHost;
+
+      const method = req.method.toUpperCase();
+      const hasBody = method !== 'GET' && method !== 'HEAD';
+      const bodyBuffer =
+        hasBody && Buffer.isBuffer(req.body) && req.body.length > 0 ? new Uint8Array(req.body) : undefined;
+
+      const upstreamRes = await fetch(targetUrl, {
+        method,
+        headers: forwardHeaders,
+        body: bodyBuffer,
+        redirect: 'manual',
+      });
+
+      upstreamRes.headers.forEach((value, key) => {
+        const lower = key.toLowerCase();
+        if (lower === 'content-encoding' || lower === 'content-length' || lower === 'transfer-encoding') {
+          return;
+        }
+        if (lower === 'location') {
+          res.setHeader(key, value.replaceAll(UPSTREAM_AUTH_ORIGIN, reqOrigin));
+          return;
+        }
+        res.setHeader(key, value);
+      });
+
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+      const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
+      const isTextLike =
+        contentType.includes('text/') ||
+        contentType.includes('application/json') ||
+        contentType.includes('application/javascript') ||
+        contentType.includes('application/x-javascript');
+
+      if (isTextLike) {
+        const rawText = await upstreamRes.text();
+        const rewritten = rawText
+          .replaceAll(UPSTREAM_AUTH_ORIGIN, reqOrigin)
+          .replaceAll(UPSTREAM_AUTH_HOST, reqHost);
+        res.status(upstreamRes.status).send(rewritten);
+        return;
+      }
+
+      const payload = Buffer.from(await upstreamRes.arrayBuffer());
+      res.status(upstreamRes.status).send(payload);
+    } catch (err) {
+      res.status(502).send(err instanceof Error ? err.message : 'Unable to reach authentication handler.');
+    }
+  });
+
   // Server-side OTA iCal Proxy (bypasses browser CORS while blocking SSRF to private IPs)
   app.get('/api/ical-proxy', async (req, res) => {
     const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';

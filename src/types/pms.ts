@@ -511,6 +511,21 @@ export function isOtaBookingChannel(channel: string | undefined): boolean {
   );
 }
 
+export function getDefaultOtaChannelCurrency(channelName: string | undefined): ChannelCurrency {
+  const ch = String(channelName || '').trim().toLowerCase();
+  if (
+    ch === 'hotels.ng' ||
+    ch === 'direct website engine' ||
+    ch === 'direct web' ||
+    ch === 'direct walk-in' ||
+    ch === 'walk-in' ||
+    ch === 'website'
+  ) {
+    return 'NGN';
+  }
+  return 'USD';
+}
+
 export function getReservationPaymentSummary(
   res: Pick<ReservationRecord, 'roomChargesNgn' | 'posChargesNgn' | 'paidNgn'> &
     Partial<

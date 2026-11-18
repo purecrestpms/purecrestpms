@@ -13,7 +13,12 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+export const effectiveFirebaseConfig = {
+  ...firebaseConfig,
+  authDomain: 'pchpms.com',
+};
+
+const app = initializeApp(effectiveFirebaseConfig);
 
 function createFirestoreInstance(): Firestore {
   try {
@@ -56,13 +61,53 @@ export function isBootstrappedAdminEmail(email?: string | null): boolean {
   return BOOTSTRAPPED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
 }
 
-export function getPchActionCodeSettings(targetUrl?: string): ActionCodeSettings {
-  const defaultOrigin =
-    typeof window !== 'undefined' && window.location?.origin
-      ? window.location.origin
-      : 'https://app.pchpms.com';
+export const CENTRAL_AUTH_DOMAIN = 'pchpms.com';
+export const CENTRAL_AUTH_ORIGIN = 'https://pchpms.com';
+export const CENTRAL_AUTH_HANDLER_URL = 'https://pchpms.com/__/auth/handler';
+export const CENTRAL_AUTH_ACTION_URL = 'https://pchpms.com/auth-action';
+
+export function isSafePchRedirectUrl(candidate?: string | null): boolean {
+  if (!candidate) return false;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === 'pchpms.com' ||
+      host.endsWith('.pchpms.com') ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.endsWith('.run.app')
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function getPchActionCodeSettings(targetPortalUrl?: string): ActionCodeSettings {
+  const currentHost =
+    typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
+  const currentOrigin =
+    typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+  const isPchDomain = currentHost === 'pchpms.com' || currentHost.endsWith('.pchpms.com');
+
+  const baseActionUrl =
+    isPchDomain || !currentOrigin ? CENTRAL_AUTH_ACTION_URL : `${currentOrigin}/auth-action`;
+
+  const returnCandidate =
+    targetPortalUrl && isSafePchRedirectUrl(targetPortalUrl)
+      ? targetPortalUrl
+      : currentOrigin && isSafePchRedirectUrl(currentOrigin)
+        ? currentOrigin
+        : '';
+
+  const url =
+    returnCandidate && !returnCandidate.startsWith(CENTRAL_AUTH_ORIGIN)
+      ? `${baseActionUrl}?next=${encodeURIComponent(returnCandidate)}`
+      : baseActionUrl;
+
   return {
-    url: targetUrl || `${defaultOrigin}/auth-action`,
+    url,
     handleCodeInApp: true,
   };
 }

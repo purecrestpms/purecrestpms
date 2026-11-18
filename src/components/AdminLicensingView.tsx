@@ -38,13 +38,17 @@ import {
   BlockedDateRecord,
   buildAllSubdomainLinks,
   ChannelCurrency,
+  formatBookingSourceLabel,
   formatChannelCurrency,
   formatNgn,
   formatUsd,
   getConnectedRootDomain,
+  getDefaultOtaChannelCurrency,
   getPortalUrl,
   getPropertySubdomainSlug,
   getPropertySystemId,
+  getReservationPaymentSummary,
+  isOtaBookingChannel,
   LicenseRecord,
   NavSectionId,
   normalizeSubdomainSlug,
@@ -464,22 +468,26 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   ): Promise<OtaIntegrationRecord> => {
     const draft = icalDrafts[channel.id];
     if (!draft) return channel;
+    const currentDefaultCurrency: ChannelCurrency =
+      channel.defaultCurrency || getDefaultOtaChannelCurrency(channel.channelName);
+    const currentMode: OtaPaymentCollectionMode =
+      channel.paymentCollectionMode ||
+      (channel.channelName === 'Direct Website Engine' ? 'hotel_collect' : 'ota_prepaid');
     const nextUrl = draft.url.trim();
     const nextRoom = normalizeChannelRoom(draft.room);
     const nextListingId = draft.listingId.trim() || channel.propertyListingId;
-    const nextCurrency: ChannelCurrency = draft.defaultCurrency || channel.defaultCurrency || 'NGN';
+    const nextCurrency: ChannelCurrency = draft.defaultCurrency || currentDefaultCurrency;
     const parsedRate = Number(draft.defaultNightlyRate.replace(/,/g, ''));
     const nextRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : channel.defaultNightlyRate ?? 0;
-    const nextMode: OtaPaymentCollectionMode =
-      draft.paymentCollectionMode || channel.paymentCollectionMode || 'ota_prepaid';
+    const nextMode: OtaPaymentCollectionMode = draft.paymentCollectionMode || currentMode;
 
     const isDirty =
       nextUrl !== (channel.icalImportUrl || '').trim() ||
       nextRoom !== normalizeChannelRoom(channel.roomNumber) ||
       nextListingId !== (channel.propertyListingId || '').trim() ||
-      nextCurrency !== (channel.defaultCurrency || 'NGN') ||
+      nextCurrency !== currentDefaultCurrency ||
       nextRate !== (channel.defaultNightlyRate ?? 0) ||
-      nextMode !== (channel.paymentCollectionMode || 'ota_prepaid');
+      nextMode !== currentMode;
 
     if (!isDirty) return channel;
 
@@ -925,16 +933,21 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           {/* Connected Channels Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {otaChannels.map((ch) => {
+              const effectiveDefaultCurrency: ChannelCurrency =
+                ch.defaultCurrency || getDefaultOtaChannelCurrency(ch.channelName);
+              const effectiveCollectionMode: OtaPaymentCollectionMode =
+                ch.paymentCollectionMode ||
+                (ch.channelName === 'Direct Website Engine' ? 'hotel_collect' : 'ota_prepaid');
               const draft = icalDrafts[ch.id] ?? {
                 url: ch.icalImportUrl || '',
                 room: normalizeChannelRoom(ch.roomNumber),
                 listingId: ch.propertyListingId || '',
-                defaultCurrency: ch.defaultCurrency || 'NGN',
+                defaultCurrency: effectiveDefaultCurrency,
                 defaultNightlyRate:
                   ch.defaultNightlyRate && ch.defaultNightlyRate > 0
                     ? String(ch.defaultNightlyRate)
                     : '',
-                paymentCollectionMode: ch.paymentCollectionMode || 'ota_prepaid',
+                paymentCollectionMode: effectiveCollectionMode,
               };
               const suiteParam = encodeURIComponent(
                 !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
@@ -1275,6 +1288,126 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               );
             })}
           </div>
+
+          {/* Synced OTA Reservations — Exact Original Booking Currency & Paid to OTA Ledger */}
+          {(() => {
+            const otaBookings = reservations
+              .filter((r) => isOtaBookingChannel(r.channel))
+              .sort((a, b) => b.checkInDate.localeCompare(a.checkInDate));
+            const usdOtaPaidTotal = otaBookings.reduce((sum, r) => {
+              const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+              return p.sourceCurrency === 'USD' ? sum + p.otaPaidSourceAmount : sum;
+            }, 0);
+            const expectedNgnTotal = otaBookings.reduce((sum, r) => {
+              const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+              return sum + p.expectedPayoutNgn;
+            }, 0);
+            const needsUsdResync = otaBookings.some((r) => {
+              const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+              const chDefault = getDefaultOtaChannelCurrency(r.channel);
+              return chDefault !== 'NGN' && p.sourceCurrency === 'NGN';
+            });
+
+            return (
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-display text-sm font-bold text-slate-900">
+                      Synced OTA Reservations — Original Currency &amp; Guest Paid to OTA
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Displays the exact guest booking amount captured in original currency (e.g.{' '}
+                      <span className="font-mono-tabular font-semibold text-blue-800">$200.00 USD</span>) alongside expected property payout in ₦.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular">
+                    <span className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 font-bold">
+                      OTA Paid (USD): {formatUsd(usdOtaPaidTotal)} USD
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 font-bold">
+                      Exp. Payout: {formatNgn(expectedNgnTotal)}
+                    </span>
+                    {needsUsdResync && (
+                      <button
+                        type="button"
+                        disabled={syncingAllChannels}
+                        onClick={() => void handleSyncAllChannels()}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-sans font-semibold cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${syncingAllChannels ? 'animate-spin' : ''}`} />
+                        <span>Refresh USD Currency</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {otaBookings.length === 0 ? (
+                  <div className="px-5 py-8 text-center text-xs text-slate-500">
+                    No OTA bookings imported yet. Paste an Airbnb or Booking.com iCal URL above and click <span className="font-semibold text-slate-800">Sync Live iCal</span> to capture bookings in USD.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[920px] text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          <th className="py-2.5 px-4">Guest &amp; Ref</th>
+                          <th className="py-2.5 px-4">OTA Channel</th>
+                          <th className="py-2.5 px-4">Room &amp; Dates</th>
+                          <th className="py-2.5 px-4 text-right">Booking Total (Orig. Currency)</th>
+                          <th className="py-2.5 px-4 text-right">Guest Paid to OTA</th>
+                          <th className="py-2.5 px-4 text-right">Expected Payout (₦)</th>
+                          <th className="py-2.5 px-4 text-right">Direct at Property</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {otaBookings.map((r) => {
+                          const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+                          return (
+                            <tr key={r.id} className="hover:bg-slate-50/70">
+                              <td className="py-2.5 px-4 whitespace-nowrap">
+                                <p className="font-semibold text-slate-900">{r.guestName}</p>
+                                <p className="font-mono-tabular text-[11px] text-slate-500">
+                                  {r.bookingRef}
+                                </p>
+                              </td>
+                              <td className="py-2.5 px-4 whitespace-nowrap">
+                                <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-semibold text-[11px]">
+                                  {formatBookingSourceLabel(r.channel)}
+                                </span>
+                                <span className="ml-1.5 font-mono-tabular text-[10px] font-bold text-blue-700">
+                                  {pay.sourceCurrency}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-4 font-mono-tabular text-slate-700 whitespace-nowrap">
+                                <span className="font-semibold text-slate-900">
+                                  {r.roomNumber || 'Unassigned'}
+                                </span>{' '}
+                                · {r.checkInDate} → {r.checkOutDate} ({r.nights}n)
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono-tabular font-bold text-slate-900 whitespace-nowrap">
+                                {formatChannelCurrency(pay.sourceTotalAmount, pay.sourceCurrency)}{' '}
+                                {pay.sourceCurrency}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono-tabular font-bold text-blue-800 whitespace-nowrap">
+                                {formatChannelCurrency(pay.otaPaidSourceAmount, pay.sourceCurrency)}{' '}
+                                {pay.sourceCurrency}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono-tabular font-semibold text-emerald-700 whitespace-nowrap">
+                                {formatNgn(pay.expectedPayoutNgn)}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono-tabular text-slate-700 whitespace-nowrap">
+                                {formatNgn(pay.hotelPaidAmount)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -2203,8 +2336,7 @@ npm run build
 npx wrangler pages deploy dist --project-name=pch-pms`}
               </pre>
               <p className="text-xs text-slate-500">
-                After deploying to Cloudflare Pages, register your <code className="font-mono-tabular">*.pages.dev</code> domain
-                under Authentication → Authorized Domains.
+                Central authentication routes through <code className="font-mono-tabular">https://{savedRootDomain}/__/auth/handler</code> and <code className="font-mono-tabular">https://{savedRootDomain}/auth-action</code> for all properties.
               </p>
             </div>
 
@@ -2359,8 +2491,10 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
               </li>
               <li>
                 In <strong>Authentication Settings → Authorized domains</strong>, register{' '}
-                <code className="font-mono-tabular">app.{savedRootDomain}</code>,{' '}
-                <code className="font-mono-tabular">admin.{savedRootDomain}</code>, and each property subdomain so Google Sign-In works everywhere.
+                <code className="font-mono-tabular">{savedRootDomain}</code> (used centrally by all properties),{' '}
+                <code className="font-mono-tabular">app.{savedRootDomain}</code>, and{' '}
+                <code className="font-mono-tabular">admin.{savedRootDomain}</code>, and add{' '}
+                <code className="font-mono-tabular">https://{savedRootDomain}/__/auth/handler</code> to your Google OAuth Authorized Redirect URIs.
               </li>
             </ol>
           </div>
