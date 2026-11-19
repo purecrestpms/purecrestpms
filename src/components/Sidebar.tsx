@@ -83,6 +83,7 @@ const PRIMARY_NAV_ITEMS: SidebarNavItem[] = [
   { id: 'calendar', label: 'Calendar', icon: Calendar },
   { id: 'rooms', label: 'Rooms', icon: BedDouble },
   { id: 'accounting', label: 'Payments', icon: CreditCard },
+  { id: 'ota_channels', label: 'Channel Manager', icon: Globe },
   { id: 'reports', label: 'Reports', icon: FileSpreadsheet },
   { id: 'profile', label: 'Settings', icon: Settings },
 ];
@@ -116,9 +117,8 @@ const SECONDARY_NAV_GROUPS: Array<{
     ],
   },
   {
-    group: 'Channels & Team',
+    group: 'Team & HR',
     items: [
-      { id: 'ota_channels', label: 'Channel Manager & iCal', icon: Globe },
       { id: 'user_management', label: 'User Management', icon: ShieldCheck },
       { id: 'staff', label: 'Staff & Performance', icon: Users },
       { id: 'staff_sessions', label: 'Staff Sessions & Links', icon: Activity },

@@ -97,6 +97,8 @@ import {
   StaffRole,
   SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
+import { checkRoomDateRangeAvailability } from '../utils/availability';
+import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
@@ -1025,35 +1027,18 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       return;
     }
 
-    if (checkOutDate <= checkInDate) {
-      setBookingError('Check-out date must be after check-in date.');
+    const availabilityCheck = checkRoomDateRangeAvailability({
+      room: targetRoom,
+      roomType: targetRoom ? targetRoom.roomType : newRequestedRoomType,
+      rooms,
+      checkInDate,
+      checkOutDate,
+      reservations,
+      blockedDates,
+    });
+    if (!availabilityCheck.available) {
+      setBookingError(availabilityCheck.message);
       return;
-    }
-
-    if (targetRoom) {
-      const resOverlap = reservations.find(
-        (r) =>
-          r.roomId === targetRoom.id &&
-          (r.status === 'confirmed' || r.status === 'checked_in') &&
-          datesOverlap(checkInDate, checkOutDate, r.checkInDate, r.checkOutDate)
-      );
-      if (resOverlap) {
-        setBookingError(
-          `${targetRoom.roomNumber} already has ${resOverlap.bookingRef} (${resOverlap.guestName}) from ${resOverlap.checkInDate} to ${resOverlap.checkOutDate}.`
-        );
-        return;
-      }
-
-      const blockOverlap = blockedDates.find(
-        (b) =>
-          b.roomId === targetRoom.id && datesOverlap(checkInDate, checkOutDate, b.startDate, b.endDate)
-      );
-      if (blockOverlap) {
-        setBookingError(
-          `${targetRoom.roomNumber} is blocked (${blockOverlap.category}: ${blockOverlap.reason}) from ${blockOverlap.startDate} to ${blockOverlap.endDate}.`
-        );
-        return;
-      }
     }
 
     if (immediateCheckIn) {
@@ -1246,6 +1231,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setInlineIdVerified(false);
       setInlineRoomReady(false);
       setInlineKeyIssued(null);
+    } catch (err) {
+      setBookingError(
+        err instanceof Error ? err.message : 'Unable to save reservation. Please try again.'
+      );
     } finally {
       setBusyId(null);
     }
@@ -1268,32 +1257,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setWalkInError('Please select an available room.');
       return;
     }
-    if (walkInCheckOut <= todayIso) {
-      setWalkInError('Check-out date must be after today.');
-      return;
-    }
-
-    const resOverlap = reservations.find(
-      (r) =>
-        r.roomId === targetRoom.id &&
-        (r.status === 'confirmed' || r.status === 'checked_in') &&
-        datesOverlap(todayIso, walkInCheckOut, r.checkInDate, r.checkOutDate)
-    );
-    if (resOverlap) {
-      setWalkInError(
-        `${targetRoom.roomNumber} is already booked (${resOverlap.bookingRef} · ${resOverlap.guestName}) until ${resOverlap.checkOutDate}.`
-      );
-      return;
-    }
-
-    const blockOverlap = blockedDates.find(
-      (b) =>
-        b.roomId === targetRoom.id && datesOverlap(todayIso, walkInCheckOut, b.startDate, b.endDate)
-    );
-    if (blockOverlap) {
-      setWalkInError(
-        `${targetRoom.roomNumber} is blocked (${blockOverlap.category}: ${blockOverlap.reason}) during those dates.`
-      );
+    const walkInAvailability = checkRoomDateRangeAvailability({
+      room: targetRoom,
+      checkInDate: todayIso,
+      checkOutDate: walkInCheckOut,
+      reservations,
+      blockedDates,
+    });
+    if (!walkInAvailability.available) {
+      setWalkInError(walkInAvailability.message);
       return;
     }
 
@@ -1352,6 +1324,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setWalkInRoomReady(false);
       setWalkInKeyIssued(null);
       onNavigateSection?.('in_house');
+    } catch (err) {
+      setWalkInError(
+        err instanceof Error ? err.message : 'Unable to complete walk-in check-in.'
+      );
     } finally {
       setBusyId(null);
     }
@@ -1376,6 +1352,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       });
       onNotify(`Updated ${room.roomNumber} rate to ${formatNgn(cleanRate)}`);
       setEditingRateRoomId(null);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Unable to update room rate right now.'
+      );
     } finally {
       setBusyId(null);
     }
@@ -1398,29 +1378,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
     const willOccupyRoom =
       editStatus === 'confirmed' || editStatus === 'pending' || editStatus === 'checked_in';
-    if (willOccupyRoom && targetRoom) {
-      const resOverlap = reservations.find(
-        (r) =>
-          r.id !== res.id &&
-          r.roomId === targetRoom.id &&
-          (r.status === 'confirmed' || r.status === 'pending' || r.status === 'checked_in') &&
-          datesOverlap(editCheckInDate, editCheckOutDate, r.checkInDate, r.checkOutDate)
-      );
-      if (resOverlap) {
-        setEditStayError(
-          `Dates conflict with ${resOverlap.bookingRef} (${resOverlap.guestName}: ${resOverlap.checkInDate} → ${resOverlap.checkOutDate}).`
-        );
-        return;
-      }
-      const blockOverlap = blockedDates.find(
-        (b) =>
-          b.roomId === targetRoom.id &&
-          datesOverlap(editCheckInDate, editCheckOutDate, b.startDate, b.endDate)
-      );
-      if (blockOverlap) {
-        setEditStayError(
-          `Dates conflict with blocked hold (${blockOverlap.category}: ${blockOverlap.startDate} → ${blockOverlap.endDate}).`
-        );
+    if (willOccupyRoom) {
+      const editAvail = checkRoomDateRangeAvailability({
+        room: targetRoom,
+        roomType: targetRoom ? targetRoom.roomType : editRequestedRoomType,
+        rooms,
+        checkInDate: editCheckInDate,
+        checkOutDate: editCheckOutDate,
+        reservations,
+        blockedDates,
+        excludeReservationId: res.id,
+      });
+      if (!editAvail.available) {
+        setEditStayError(editAvail.message);
         return;
       }
     }
@@ -2451,20 +2421,28 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               </select>
             </div>
 
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Check-out *</label>
-              <input
-                required
-                type="date"
-                min={addDaysIso(todayIso, 1)}
-                value={walkInCheckOut}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  const nextOut = !raw || raw <= todayIso ? addDaysIso(todayIso, 1) : raw;
-                  setWalkInCheckOut(nextOut);
-                  setWalkInDepositNgn(walkInRateNgn * diffNights(todayIso, nextOut));
+            <div className="sm:col-span-2 lg:col-span-2">
+              <AvailabilityDateRangePicker
+                checkInDate={todayIso}
+                checkOutDate={walkInCheckOut}
+                onChangeDates={(_, nextOut) => {
+                  const safeOut = !nextOut || nextOut <= todayIso ? addDaysIso(todayIso, 1) : nextOut;
+                  setWalkInCheckOut(safeOut);
+                  setWalkInDepositNgn(walkInRateNgn * diffNights(todayIso, safeOut));
+                  setWalkInError(null);
                 }}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+                room={rooms.find((r) => r.id === walkInRoomId)}
+                rooms={sortedRooms}
+                reservations={reservations}
+                blockedDates={blockedDates}
+                onSelectAlternativeRoom={(alt) => {
+                  setWalkInRoomId(alt.id);
+                  setWalkInRateNgn(alt.nightlyRateNgn);
+                  setWalkInDepositNgn(alt.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
+                  setWalkInError(null);
+                }}
+                checkOutLabel={`Check-Out Date * (Check-in: Today ${todayIso})`}
+                lockCheckIn
               />
             </div>
 
@@ -5437,45 +5415,31 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             <h4 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
                               1. Stay Details
                             </h4>
+                            <div className="space-y-3">
+                              <AvailabilityDateRangePicker
+                                checkInDate={editCheckInDate}
+                                checkOutDate={editCheckOutDate}
+                                onChangeDates={(nextIn, nextOut) => {
+                                  setEditCheckInDate(nextIn);
+                                  setEditCheckOutDate(nextOut);
+                                  setEditStayError(null);
+                                }}
+                                room={rooms.find((r) => r.id === editRoomId)}
+                                roomType={editRequestedRoomType}
+                                rooms={sortedRooms}
+                                reservations={reservations}
+                                blockedDates={blockedDates}
+                                excludeReservationId={activeFolioReservation.id}
+                                onSelectAlternativeRoom={(alt) => {
+                                  setEditRoomId(alt.id);
+                                  setEditRequestedRoomType(alt.roomType);
+                                  setEditStayError(null);
+                                }}
+                                checkInLabel="Check-In Date *"
+                                checkOutLabel="Check-Out Date *"
+                              />
+                            </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Check-In Date
-                                </label>
-                                <input
-                                  type="date"
-                                  value={editCheckInDate}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setEditCheckInDate(val);
-                                    if (val && editCheckOutDate <= val) {
-                                      setEditCheckOutDate(addDaysIso(val, 1));
-                                    }
-                                    setEditStayError(null);
-                                  }}
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Check-Out Date
-                                </label>
-                                <input
-                                  type="date"
-                                  min={editCheckInDate ? addDaysIso(editCheckInDate, 1) : undefined}
-                                  value={editCheckOutDate}
-                                  onChange={(e) => {
-                                    const raw = e.target.value;
-                                    const safeOut =
-                                      editCheckInDate && raw && raw <= editCheckInDate
-                                        ? addDaysIso(editCheckInDate, 1)
-                                        : raw;
-                                    setEditCheckOutDate(safeOut);
-                                    setEditStayError(null);
-                                  }}
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                                />
-                              </div>
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                                   Room Type
@@ -5485,7 +5449,18 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   onChange={(e) => {
                                     const rt = e.target.value;
                                     setEditRequestedRoomType(rt);
-                                    const matchedRoom = sortedRooms.find((r) => r.roomType === rt);
+                                    const matchedRoom = sortedRooms.find(
+                                      (r) =>
+                                        r.roomType === rt &&
+                                        checkRoomDateRangeAvailability({
+                                          room: r,
+                                          checkInDate: editCheckInDate,
+                                          checkOutDate: editCheckOutDate,
+                                          reservations,
+                                          blockedDates,
+                                          excludeReservationId: activeFolioReservation.id,
+                                        }).available
+                                    ) || sortedRooms.find((r) => r.roomType === rt);
                                     if (matchedRoom && editRoomId) {
                                       setEditRoomId(matchedRoom.id);
                                     }
@@ -5515,11 +5490,28 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
                                 >
                                   <option value="">Unassigned — Assign later</option>
-                                  {sortedRooms.map((r) => (
-                                    <option key={r.id} value={r.id}>
-                                      {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)})
-                                    </option>
-                                  ))}
+                                  {sortedRooms.map((r) => {
+                                    const avail = checkRoomDateRangeAvailability({
+                                      room: r,
+                                      checkInDate: editCheckInDate,
+                                      checkOutDate: editCheckOutDate,
+                                      reservations,
+                                      blockedDates,
+                                      excludeReservationId: activeFolioReservation.id,
+                                    });
+                                    const tag = avail.available
+                                      ? 'Available'
+                                      : avail.status === 'out_of_order'
+                                        ? 'Out of Order'
+                                        : avail.status === 'blocked'
+                                          ? 'Blocked'
+                                          : 'Reserved';
+                                    return (
+                                      <option key={r.id} value={r.id}>
+                                        {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}) — {tag}
+                                      </option>
+                                    );
+                                  })}
                                 </select>
                               </div>
                               <div>
@@ -6252,6 +6244,32 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               type="button"
                               disabled={busyId === activeFolioReservation.id}
                               onClick={async () => {
+                                const extendedOut = addDaysIso(
+                                  activeFolioReservation.checkOutDate,
+                                  1
+                                );
+                                const targetRoom = rooms.find(
+                                  (rm) => rm.id === activeFolioReservation.roomId
+                                );
+                                const extCheck = checkRoomDateRangeAvailability({
+                                  room: targetRoom,
+                                  roomType:
+                                    targetRoom?.roomType ||
+                                    activeFolioReservation.requestedRoomType,
+                                  rooms,
+                                  checkInDate: activeFolioReservation.checkInDate,
+                                  checkOutDate: extendedOut,
+                                  reservations,
+                                  blockedDates,
+                                  excludeReservationId: activeFolioReservation.id,
+                                });
+                                if (!extCheck.available) {
+                                  setActionError(
+                                    `Cannot extend stay to ${extendedOut}: ${extCheck.message}`
+                                  );
+                                  onNotify(`Extension unavailable: ${extCheck.message}`);
+                                  return;
+                                }
                                 setBusyId(activeFolioReservation.id);
                                 try {
                                   await extendReservationStay({
@@ -6261,7 +6279,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                     actorRole,
                                   });
                                   onNotify(
-                                    `Extended ${activeFolioReservation.bookingRef} by +1 night`
+                                    `Extended ${activeFolioReservation.bookingRef} by +1 night (Check-out: ${extendedOut})`
+                                  );
+                                } catch (err) {
+                                  setActionError(
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Unable to extend stay right now.'
                                   );
                                 } finally {
                                   setBusyId(null);
@@ -6975,78 +6999,56 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       </span>
                     </div>
 
-                    {/* Row 1: Check-In, Check-Out, Room Type, Room Assignment */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Check-In Date *
-                        </label>
-                        <input
-                          required
-                          type="date"
-                          value={checkInDate}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (!val) return;
-                            setCheckInDate(val);
-                            let nextNights = nights;
-                            if (checkOutDate <= val) {
-                              const nextOut = addDaysIso(val, 1);
-                              setCheckOutDate(nextOut);
-                              nextNights = 1;
-                              setNights(1);
-                            } else {
-                              nextNights = diffNights(val, checkOutDate);
-                              setNights(nextNights);
-                            }
-                            const nextStayNgn =
-                              activeCur === 'NGN'
-                                ? Math.round(activeSourceNightlyRate * nextNights)
-                                : Math.round(activeSourceNightlyRate * nextNights * fxRate);
-                            if (!bookingExpectedPayoutManual) {
-                              setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
-                            }
-                            if (!isOta && estPayStatus === 'Paid') {
-                              setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
-                            }
-                            setBookingError(null);
-                          }}
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                        />
-                      </div>
+                    {/* Row 1: Interactive Availability Date Picker + Room Type & Room Assignment */}
+                    <AvailabilityDateRangePicker
+                      checkInDate={checkInDate}
+                      checkOutDate={checkOutDate}
+                      onChangeDates={(val, safeOut) => {
+                        setCheckInDate(val);
+                        setCheckOutDate(safeOut);
+                        const nextNights = diffNights(val, safeOut);
+                        setNights(nextNights);
+                        const nextStayNgn =
+                          activeCur === 'NGN'
+                            ? Math.round(activeSourceNightlyRate * nextNights)
+                            : Math.round(activeSourceNightlyRate * nextNights * fxRate);
+                        if (!bookingExpectedPayoutManual) {
+                          setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
+                        }
+                        if (!isOta && estPayStatus === 'Paid') {
+                          setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
+                        }
+                        setBookingError(null);
+                      }}
+                      room={selectedRoomId ? rooms.find((r) => r.id === selectedRoomId) : undefined}
+                      roomType={newRequestedRoomType}
+                      rooms={sortedRooms}
+                      reservations={reservations}
+                      blockedDates={blockedDates}
+                      onSelectAlternativeRoom={(alt) => {
+                        setSelectedRoomId(alt.id);
+                        setNewRequestedRoomType(alt.roomType);
+                        const nextTotal = alt.nightlyRateNgn * Math.max(1, nights);
+                        setBookingNightlyRateInput(
+                          activeCur === 'NGN'
+                            ? formatPriceInputWithCommas(alt.nightlyRateNgn)
+                            : String(
+                                Number((alt.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
+                              )
+                        );
+                        if (!bookingExpectedPayoutManual) {
+                          setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
+                        }
+                        if (!isOta && estPayStatus === 'Paid') {
+                          setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
+                        }
+                        setBookingError(null);
+                      }}
+                      checkInLabel="Check-In Date *"
+                      checkOutLabel="Check-Out Date *"
+                    />
 
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Check-Out Date *
-                        </label>
-                        <input
-                          required
-                          type="date"
-                          min={addDaysIso(checkInDate, 1)}
-                          value={checkOutDate}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (!raw) return;
-                            const safeOut = raw <= checkInDate ? addDaysIso(checkInDate, 1) : raw;
-                            setCheckOutDate(safeOut);
-                            const nextNights = diffNights(checkInDate, safeOut);
-                            setNights(nextNights);
-                            const nextStayNgn =
-                              activeCur === 'NGN'
-                                ? Math.round(activeSourceNightlyRate * nextNights)
-                                : Math.round(activeSourceNightlyRate * nextNights * fxRate);
-                            if (!bookingExpectedPayoutManual) {
-                              setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
-                            }
-                            if (!isOta && estPayStatus === 'Paid') {
-                              setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
-                            }
-                            setBookingError(null);
-                          }}
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                        />
-                      </div>
-
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                           Room Type *
@@ -7060,7 +7062,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               (r) => r.roomType === rt && r.occupancyStatus !== 'out_of_order'
                             );
                             const preferred =
-                              matching.find((r) => r.occupancyStatus === 'vacant') || matching[0];
+                              matching.find(
+                                (r) =>
+                                  checkRoomDateRangeAvailability({
+                                    room: r,
+                                    checkInDate,
+                                    checkOutDate,
+                                    reservations,
+                                    blockedDates,
+                                  }).available
+                              ) || matching[0];
                             if (preferred) {
                               setSelectedRoomId(preferred.id);
                               const nextTotal = preferred.nightlyRateNgn * Math.max(1, nights);
@@ -7129,15 +7140,31 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
                         >
                           <option value="">Unassigned — Assign later</option>
-                          {(roomsMatchingType.length > 0 ? roomsMatchingType : sortedRooms).map((r) => (
-                            <option
-                              key={r.id}
-                              value={r.id}
-                              disabled={r.occupancyStatus === 'out_of_order'}
-                            >
-                              {r.roomNumber} · {r.name} ({r.occupancyStatus})
-                            </option>
-                          ))}
+                          {(roomsMatchingType.length > 0 ? roomsMatchingType : sortedRooms).map((r) => {
+                            const avail = checkRoomDateRangeAvailability({
+                              room: r,
+                              checkInDate,
+                              checkOutDate,
+                              reservations,
+                              blockedDates,
+                            });
+                            const tag = avail.available
+                              ? 'Available'
+                              : avail.status === 'out_of_order'
+                                ? 'Out of Order'
+                                : avail.status === 'blocked'
+                                  ? 'Blocked'
+                                  : 'Reserved';
+                            return (
+                              <option
+                                key={r.id}
+                                value={r.id}
+                                disabled={r.occupancyStatus === 'out_of_order'}
+                              >
+                                {r.roomNumber} · {r.name} — {tag}
+                              </option>
+                            );
+                          })}
                         </select>
                       </div>
                     </div>
@@ -7781,6 +7808,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       type="submit"
                       disabled={
                         busyId === 'booking' ||
+                        !checkRoomDateRangeAvailability({
+                          room: selectedRoomId
+                            ? rooms.find((r) => r.id === selectedRoomId)
+                            : undefined,
+                          roomType: selectedRoomId
+                            ? rooms.find((r) => r.id === selectedRoomId)?.roomType
+                            : newRequestedRoomType,
+                          rooms,
+                          checkInDate,
+                          checkOutDate,
+                          reservations,
+                          blockedDates,
+                        }).available ||
                         (immediateCheckIn &&
                           (!inlinePayConfirmed ||
                             !inlineIdVerified ||

@@ -333,6 +333,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         onNotify(`Added menu item: ${menuName.trim()}`);
       }
       setMenuModalOpen(false);
+    } catch (err) {
+      onNotify(
+        `Unable to save menu item: ${err instanceof Error ? err.message : 'Please try again.'}`
+      );
     } finally {
       setSavingMenu(false);
     }
@@ -349,6 +353,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       });
       onNotify(`Removed menu item: ${editingMenuItem.name}`);
       setMenuModalOpen(false);
+    } catch (err) {
+      onNotify(
+        `Unable to remove menu item: ${err instanceof Error ? err.message : 'Please try again.'}`
+      );
     } finally {
       setSavingMenu(false);
     }
@@ -379,6 +387,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       setPurAmount(15000);
       setPurInvId('');
       setPurRestockQty(0);
+    } catch (err) {
+      onNotify(
+        `Unable to record purchase: ${err instanceof Error ? err.message : 'Please try again.'}`
+      );
     } finally {
       setSavingPurchase(false);
     }

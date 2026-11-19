@@ -4460,7 +4460,7 @@ export function buildPropertyIcalFeed(params: {
 
     lines.push(
       'BEGIN:VEVENT',
-      `UID:${res.id}@richgates-pms`,
+      `UID:${res.id}@pchpms.com`,
       `DTSTAMP:${nowStamp}`,
       `DTSTART;VALUE=DATE:${toIcalDate(res.checkInDate)}`,
       `DTEND;VALUE=DATE:${toIcalDate(res.checkOutDate)}`,
@@ -4481,7 +4481,7 @@ export function buildPropertyIcalFeed(params: {
     if (target && blk.roomNumber !== target) continue;
     lines.push(
       'BEGIN:VEVENT',
-      `UID:${blk.id}@richgates-pms`,
+      `UID:${blk.id}@pchpms.com`,
       `DTSTAMP:${nowStamp}`,
       `DTSTART;VALUE=DATE:${toIcalDate(blk.startDate)}`,
       `DTEND;VALUE=DATE:${toIcalDate(blk.endDate)}`,
