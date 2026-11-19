@@ -271,7 +271,8 @@ service cloud.firestore {
         'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'channel', 'nightlyRateNgn',
         'roomChargesNgn', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn',
         'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn',
-        'status', 'paymentMethod',
+        'status', 'paymentMethod', 'paymentStatus',
+        'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso',
         'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso',
         'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso',
         'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid',
@@ -311,7 +312,13 @@ service cloud.firestore {
       (!('expectedPayoutNgn' in data) || (data.expectedPayoutNgn is number && data.expectedPayoutNgn >= 0)) &&
       (!('hotelPaidNgn' in data) || (data.hotelPaidNgn is number && data.hotelPaidNgn >= 0)) &&
       data.status in ['confirmed', 'pending', 'checked_in', 'checked_out', 'cancelled', 'no_show'] &&
-      data.paymentMethod in ['Bank Transfer', 'Card POS', 'Cash NGN', 'Corporate Invoice', 'Online Gateway'] &&
+      data.paymentMethod in ['Bank Transfer', 'Card POS', 'Cash NGN', 'Corporate Invoice', 'Online Gateway', 'OTA Platform Payout'] &&
+      (!('paymentStatus' in data) || (data.paymentStatus is string && data.paymentStatus in ['Paid', 'Partial', 'Unpaid'])) &&
+      (!('cautionDepositEnabled' in data) || data.cautionDepositEnabled is bool) &&
+      (!('cautionDepositNgn' in data) || (data.cautionDepositNgn is number && data.cautionDepositNgn >= 0 && data.cautionDepositNgn <= 100000000)) &&
+      (!('cautionDepositCollectedNgn' in data) || (data.cautionDepositCollectedNgn is number && data.cautionDepositCollectedNgn >= 0 && data.cautionDepositCollectedNgn <= 100000000)) &&
+      (!('cautionDepositRefunded' in data) || data.cautionDepositRefunded is bool) &&
+      (!('cautionDepositRefundedAtIso' in data) || (data.cautionDepositRefundedAtIso is string && data.cautionDepositRefundedAtIso.size() <= 40)) &&
       (!('paymentConfirmed' in data) || data.paymentConfirmed is bool) &&
       (!('idVerified' in data) || data.idVerified is bool) &&
       (!('idType' in data) || (data.idType is string && data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'])) &&
@@ -579,7 +586,7 @@ service cloud.firestore {
 
     function isValidOtaChannel(data, propertyId) {
       return data.keys().hasAll(['propertyId', 'channelName', 'propertyListingId', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
-      data.keys().hasOnly(['propertyId', 'channelName', 'propertyListingId', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'paymentCollectionMode', 'icalImportUrl', 'icalExportUrl', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['propertyId', 'channelName', 'propertyListingId', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'paymentCollectionMode', 'icalImportUrl', 'icalExportUrl', 'commissionPct', 'autoSync', 'connected', 'disconnectedAtIso', 'lastSyncedIso', 'bookingsImported', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt']) &&
       data.propertyId == propertyId &&
       data.channelName in ['Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Direct Website Engine', 'Custom iCal'] &&
       data.propertyListingId is string && data.propertyListingId.size() <= 120 &&
@@ -592,6 +599,7 @@ service cloud.firestore {
       data.commissionPct is number && data.commissionPct >= 0 && data.commissionPct <= 50 &&
       data.autoSync is bool &&
       data.connected is bool &&
+      (!('disconnectedAtIso' in data) || (data.disconnectedAtIso is string && data.disconnectedAtIso.size() <= 40)) &&
       data.lastSyncedIso is string && data.lastSyncedIso.size() <= 40 &&
       data.bookingsImported is number && data.bookingsImported >= 0 &&
       isAuthorizedEmailList(data.authorizedEmails) &&
@@ -794,7 +802,7 @@ service cloud.firestore {
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn', 'paymentMethod', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn', 'paymentMethod', 'paymentStatus', 'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
       }
@@ -1025,7 +1033,7 @@ service cloud.firestore {
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isPchSuperAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['propertyListingId', 'commissionPct', 'autoSync', 'connected', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'paymentCollectionMode', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['propertyListingId', 'commissionPct', 'autoSync', 'connected', 'disconnectedAtIso', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'paymentCollectionMode', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyAdmin(propertyId);
       }

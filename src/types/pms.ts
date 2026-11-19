@@ -478,7 +478,19 @@ export interface ReservationRecord {
   expectedPayoutNgn?: number;
   hotelPaidNgn?: number;
   status: ReservationStatus;
-  paymentMethod: 'Bank Transfer' | 'Card POS' | 'Cash NGN' | 'Corporate Invoice' | 'Online Gateway';
+  paymentMethod:
+    | 'Bank Transfer'
+    | 'Card POS'
+    | 'Cash NGN'
+    | 'Corporate Invoice'
+    | 'Online Gateway'
+    | 'OTA Platform Payout';
+  paymentStatus?: PaymentStatusLabel;
+  cautionDepositEnabled?: boolean;
+  cautionDepositNgn?: number;
+  cautionDepositCollectedNgn?: number;
+  cautionDepositRefunded?: boolean;
+  cautionDepositRefundedAtIso?: string;
   paymentConfirmed?: boolean;
   idVerified?: boolean;
   idType?: GuestRecord['idType'];
@@ -559,25 +571,40 @@ export function getReservationPaymentSummary(
         | 'sourceNightlyRate'
         | 'sourceTotalAmount'
         | 'fxRateToNgn'
+        | 'paymentStatus'
+        | 'cautionDepositEnabled'
+        | 'cautionDepositNgn'
+        | 'cautionDepositCollectedNgn'
+        | 'cautionDepositRefunded'
       >
     >,
   usdExchangeRateNgn?: number
 ): {
   totalAmount: number;
+  totalAmountUsd: number;
   expectedPayoutNgn: number;
+  expectedPayoutUsd: number;
   otaPaidAmount: number;
   hotelPaidAmount: number;
+  hotelPaidUsd: number;
   amountPaid: number;
   balance: number;
+  balanceUsd: number;
   paymentStatus: PaymentStatusLabel;
   paymentCollectionMode: OtaPaymentCollectionMode;
   sourceCurrency: ChannelCurrency;
   sourceNightlyRate: number;
   sourceTotalAmount: number;
   fxRateToNgn: number;
+  internalUsdRateNgn: number;
   otaPaidSourceAmount: number;
   hotelPaidSourceAmount: number;
   sourceBalanceAmount: number;
+  cautionDepositEnabled: boolean;
+  cautionDepositNgn: number;
+  cautionDepositCollectedNgn: number;
+  cautionDepositRefunded: boolean;
+  cautionDepositPendingRefundNgn: number;
 } {
   const lateFee = Math.max(0, res.lateCheckoutFeeNgn || 0);
   const cancelFee = Math.max(0, res.cancellationFeeNgn || 0);
@@ -613,10 +640,16 @@ export function getReservationPaymentSummary(
       ? res.sourceCurrency
       : 'USD'
     : res.sourceCurrency || (isOtaChannel ? getDefaultOtaChannelCurrency(res.channel) : 'NGN');
+  const internalUsdRateNgn =
+    usdExchangeRateNgn && usdExchangeRateNgn > 0
+      ? Math.round(usdExchangeRateNgn)
+      : sourceCurrency === 'USD' && res.fxRateToNgn && res.fxRateToNgn > 1
+        ? Math.round(res.fxRateToNgn)
+        : DEFAULT_USD_RATE_NGN;
   const fxRate =
     res.fxRateToNgn && res.fxRateToNgn > 0 && !(wasLegacyNgnOnIntlOta && res.fxRateToNgn === 1)
       ? res.fxRateToNgn
-      : getFxRateToNgn(sourceCurrency, usdExchangeRateNgn);
+      : getFxRateToNgn(sourceCurrency, internalUsdRateNgn);
 
   const rawPaidNgn = Math.max(0, res.paidNgn || 0);
   let otaPaidAmount = 0;
@@ -673,6 +706,8 @@ export function getReservationPaymentSummary(
     paymentStatus = 'Paid';
   } else if (otaPaidAmount > 0 || hotelPaidAmount > 0 || amountPaid > 0) {
     paymentStatus = 'Partial';
+  } else if (res.paymentStatus === 'Paid' || res.paymentStatus === 'Partial' || res.paymentStatus === 'Unpaid') {
+    paymentStatus = res.paymentStatus;
   }
 
   const sourceNightlyRate =
@@ -710,22 +745,57 @@ export function getReservationPaymentSummary(
       ? balance
       : Number((balance / fxRate).toFixed(2));
 
+  const totalAmountUsd =
+    sourceCurrency === 'USD' && sourceTotalAmount > 0
+      ? Number(sourceTotalAmount.toFixed(2))
+      : Number((totalAmount / Math.max(1, internalUsdRateNgn)).toFixed(2));
+  const expectedPayoutUsd = Number(
+    (expectedPayoutNgn / Math.max(1, internalUsdRateNgn)).toFixed(2)
+  );
+  const hotelPaidUsd = Number(
+    (hotelPaidAmount / Math.max(1, internalUsdRateNgn)).toFixed(2)
+  );
+  const balanceUsd = Number((balance / Math.max(1, internalUsdRateNgn)).toFixed(2));
+
+  const cautionDepositNgn = Math.max(0, Math.round(res.cautionDepositNgn || 0));
+  const cautionDepositCollectedNgn = Math.max(
+    0,
+    Math.round(res.cautionDepositCollectedNgn || 0)
+  );
+  const cautionDepositEnabled = Boolean(
+    res.cautionDepositEnabled || cautionDepositNgn > 0 || cautionDepositCollectedNgn > 0
+  );
+  const cautionDepositRefunded = Boolean(res.cautionDepositRefunded);
+  const cautionDepositPendingRefundNgn = cautionDepositRefunded
+    ? 0
+    : cautionDepositCollectedNgn;
+
   return {
     totalAmount,
+    totalAmountUsd,
     expectedPayoutNgn,
+    expectedPayoutUsd,
     otaPaidAmount,
     hotelPaidAmount,
+    hotelPaidUsd,
     amountPaid,
     balance,
+    balanceUsd,
     paymentStatus,
     paymentCollectionMode,
     sourceCurrency,
     sourceNightlyRate,
     sourceTotalAmount,
     fxRateToNgn: fxRate,
+    internalUsdRateNgn,
     otaPaidSourceAmount,
     hotelPaidSourceAmount,
     sourceBalanceAmount,
+    cautionDepositEnabled,
+    cautionDepositNgn,
+    cautionDepositCollectedNgn,
+    cautionDepositRefunded,
+    cautionDepositPendingRefundNgn,
   };
 }
 
@@ -1002,6 +1072,7 @@ export interface OtaIntegrationRecord {
   commissionPct: number;
   autoSync: boolean;
   connected: boolean;
+  disconnectedAtIso?: string;
   lastSyncedIso: string;
   bookingsImported: number;
   authorizedEmails: string[];
@@ -1443,6 +1514,16 @@ export function getHostPortalContext(hostname?: string): {
     return { kind: 'preview', tenantSlug: null, apexDomain: null };
   }
   const apex = extractApexDomain(host);
+  if (
+    host === 'app.pchpms.com' ||
+    host === 'pchpms.com' ||
+    host === 'www.pchpms.com' ||
+    host === 'app.pchmps.com' ||
+    host === 'pchmps.com' ||
+    host === 'www.pchmps.com'
+  ) {
+    return { kind: 'public_marketing', tenantSlug: null, apexDomain: apex || 'pchpms.com' };
+  }
   if (
     host === `admin.${apex}` ||
     host === `pch.${apex}` ||

@@ -85,6 +85,9 @@ async function startServer() {
       host === 'app.pchpms.com' ||
       host === 'pchpms.com' ||
       host === 'www.pchpms.com' ||
+      host === 'app.pchmps.com' ||
+      host === 'pchmps.com' ||
+      host === 'www.pchmps.com' ||
       host === 'localhost' ||
       host === '127.0.0.1' ||
       host.endsWith('.pages.dev') ||
@@ -95,7 +98,20 @@ async function startServer() {
   const isInternalPortalRequest = (req: express.Request): boolean => {
     const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '');
     const host = rawHost.toLowerCase().split(':')[0];
-    if (host.startsWith('admin.') || (host.endsWith('.pchpms.com') && !isPublicMarketingHost(host))) {
+    if (
+      host === 'app.pchpms.com' ||
+      host === 'pchpms.com' ||
+      host === 'www.pchpms.com' ||
+      host === 'app.pchmps.com' ||
+      host === 'pchmps.com' ||
+      host === 'www.pchmps.com'
+    ) {
+      return false;
+    }
+    if (
+      host.startsWith('admin.') ||
+      ((host.endsWith('.pchpms.com') || host.endsWith('.pchmps.com')) && !isPublicMarketingHost(host))
+    ) {
       return true;
     }
     if (/^\/(admin|login|staff|pch-admin|auth-action)(\/|$)/i.test(req.path)) {

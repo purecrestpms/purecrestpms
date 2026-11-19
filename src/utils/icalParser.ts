@@ -215,6 +215,14 @@ function parseMoneyAndCurrencyFromSnippet(
   return {};
 }
 
+function stripNonMoneyNoise(text: string): string {
+  return text
+    .replace(/https?:\/\/[^\s]+/gi, ' ')
+    .replace(/(?:Phone(?:\s*Number)?(?:\s*\(Last\s*4\s*Digits\))?|Tel(?:ephone)?|Mobile|WhatsApp|Contact)\s*[:=-]\s*[^\n|;]+/gi, ' ')
+    .replace(/\+\d[\d\s()-]{6,}/g, ' ')
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ');
+}
+
 function extractPaymentHints(params: {
   summary: string;
   description: string;
@@ -229,11 +237,12 @@ function extractPaymentHints(params: {
   sourceNightlyRate?: number;
   sourceTotalAmount?: number;
 } {
-  const combined = `${params.summary}\n${params.description}`;
+  const rawCombined = `${params.summary}\n${params.description}`;
+  const combined = stripNonMoneyNoise(rawCombined);
   let detectedCurrency = normalizeCurrencyToken(params.xCurrency);
 
   if (!detectedCurrency) {
-    const explicitCurMatch = combined.match(/\b(?:Currency|Booking\s*Currency)\s*[:=-]\s*(USD|GBP|EUR|NGN)\b/i);
+    const explicitCurMatch = combined.match(/\b(?:Currency|Booking\s*Currency|Price\s*Currency)\s*[:=-]\s*(USD|GBP|EUR|NGN)\b/i);
     if (explicitCurMatch) {
       detectedCurrency = normalizeCurrencyToken(explicitCurMatch[1]);
     }
@@ -259,7 +268,7 @@ function extractPaymentHints(params: {
   // 2. Parse labeled paid lines from description/summary (e.g., "Paid to OTA: 200 USD", "Guest Paid (USD): $200")
   if (paidAmount === undefined) {
     const paidLabelMatch = combined.match(
-      /(?:Guest\s*Paid(?:\s*to\s*OTA)?|Paid\s*to\s*OTA|OTA\s*Paid|OTA\s*Payment(?:\s*Received)?|Amount\s*(?:Paid|Charged)|Prepaid|Payment\s*Received|Paid)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Guest\s*Paid(?:\s*to\s*OTA)?|Paid\s*to\s*OTA|OTA\s*Paid|OTA\s*Payment(?:\s*Received)?|Platform\s*Payment|Amount\s*(?:Paid|Charged|Collected)|Prepaid|Payment\s*Received|Guest\s*Payment|Paid\s*Out|Paid)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
     );
     if (paidLabelMatch) {
       const labelCur = normalizeCurrencyToken(paidLabelMatch[1]) || paidCurrency;
@@ -271,10 +280,10 @@ function extractPaymentHints(params: {
     }
   }
 
-  // 3. Parse labeled total/amount lines (e.g., "Total: 200 USD", "Total Price (USD): $200", "Accommodation: $200")
+  // 3. Parse labeled total/amount/earnings lines (e.g., "Total: 200 USD", "Earnings: $200", "Host Payout: $194")
   if (sourceTotalAmount === undefined) {
     const totalLabelMatch = combined.match(
-      /(?:Grand\s*Total|Total\s*Price|Total\s*Amount|Total\s*Cost|Total\s*Payout|Booking\s*Total|Reservation\s*Total|Guest\s*Total|Payout\s*Amount|Accommodation(?:\s*Total)?|Room\s*Total|Total|Price|Amount|Payout)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Grand\s*Total|Total\s*Price|Total\s*Amount|Total\s*Cost|Total\s*Payout|Booking\s*Total|Reservation\s*Total|Guest\s*Total|Host\s*Payout|Net\s*Payout|Payout\s*Amount|Gross\s*Earnings|Earnings|Accommodation(?:\s*Total)?|Room\s*Total|Total|Price|Amount|Payout)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
     );
     if (totalLabelMatch) {
       const labelCur = normalizeCurrencyToken(totalLabelMatch[1]) || paidCurrency;
@@ -286,10 +295,10 @@ function extractPaymentHints(params: {
     }
   }
 
-  // 4. Parse nightly rate lines (e.g., "Nightly Rate: $100", "Rate/night (USD): 100")
+  // 4. Parse nightly rate lines (e.g., "Nightly Rate: $100", "Rate/night (USD): 100", "$100/night")
   if (sourceNightlyRate === undefined) {
     const rateLabelMatch = combined.match(
-      /(?:Nightly\s*Rate|Rate\s*(?:per|\/)\s*Night|ADR|Rate)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
+      /(?:Nightly\s*Rate|Rate\s*(?:per|\/)\s*Night|Daily\s*Rate|ADR|Rate)(?:\s*\((USD|GBP|EUR|NGN)\))?\s*[:=-]\s*([^\n|;]+)/i
     );
     if (rateLabelMatch) {
       const labelCur = normalizeCurrencyToken(rateLabelMatch[1]) || paidCurrency;
@@ -298,13 +307,24 @@ function extractPaymentHints(params: {
         sourceNightlyRate = parsed.amount;
         paidCurrency = parsed.currency || labelCur;
       }
+    } else {
+      const perNightInline = combined.match(
+        /(US\$|[$£€₦])\s*([\d,]+(?:\.\d{1,2})?)\s*(?:\/\s*n(?:igh)?t|per\s*night)/i
+      );
+      if (perNightInline) {
+        const parsed = parseMoneyAndCurrencyFromSnippet(perNightInline[0], paidCurrency);
+        if (parsed.amount !== undefined) {
+          sourceNightlyRate = parsed.amount;
+          paidCurrency = parsed.currency || paidCurrency;
+        }
+      }
     }
   }
 
   // 5. Inline currency+amount pattern in text if still missing currency or amounts (e.g. "Paid $200" or "200 USD")
   if (paidAmount === undefined && sourceTotalAmount === undefined) {
     const inlineMoney = combined.match(
-      /(?:([$£€₦]|US\$)\s*([\d,]+(?:\.\d{1,2})?)(?:\s*(USD|GBP|EUR|NGN))?|\b([\d,]+(?:\.\d{1,2})?)\s*(USD|GBP|EUR|NGN)\b|\b(USD|GBP|EUR|NGN)\s*([\d,]+(?:\.\d{1,2})?)\b)/i
+      /(?:(US\$|[$£€₦])\s*([\d,]+(?:\.\d{1,2})?)(?:\s*(USD|GBP|EUR|NGN))?|\b([\d,]+(?:\.\d{1,2})?)\s*(USD|GBP|EUR|NGN)\b|\b(USD|GBP|EUR|NGN)\s*([\d,]+(?:\.\d{1,2})?)\b)/i
     );
     if (inlineMoney) {
       const snippet = inlineMoney[0];
@@ -316,6 +336,9 @@ function extractPaymentHints(params: {
     }
   }
 
+  if (sourceTotalAmount === undefined && paidAmount !== undefined) {
+    sourceTotalAmount = paidAmount;
+  }
   if (sourceTotalAmount === undefined && sourceNightlyRate !== undefined && params.nights > 0) {
     sourceTotalAmount = Number((sourceNightlyRate * params.nights).toFixed(2));
   }
@@ -323,7 +346,11 @@ function extractPaymentHints(params: {
     const base = sourceTotalAmount || paidAmount || 0;
     if (base > 0) sourceNightlyRate = Number((base / params.nights).toFixed(2));
   }
-  if (paidAmount === undefined && sourceTotalAmount !== undefined && /\bpaid\b/i.test(combined)) {
+  if (
+    paidAmount === undefined &&
+    sourceTotalAmount !== undefined &&
+    /\b(paid|prepaid|payout|earnings|collected)\b/i.test(combined)
+  ) {
     paidAmount = sourceTotalAmount;
   }
 

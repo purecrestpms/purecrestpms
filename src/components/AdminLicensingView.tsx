@@ -6,6 +6,7 @@ import {
   CloudUpload,
   Copy,
   Download,
+  FileSpreadsheet,
   Globe,
   KeyRound,
   Link2,
@@ -26,6 +27,7 @@ import {
   createOtaChannelWithIcal,
   deleteOtaChannel,
   generateCentralLicense,
+  importOtaCsvReservationsWorkflow,
   prepareRichgatesProductionDatabaseWorkflow,
   syncOtaChannelWorkflow,
   updateLicenseStatus,
@@ -33,6 +35,11 @@ import {
   updatePlanInquiryStatusWorkflow,
   updatePropertyTenantConfigWorkflow,
 } from '../services/pmsService';
+import {
+  buildSampleOtaCsvTemplate,
+  ParsedOtaCsvRow,
+  parseOtaCsvText,
+} from '../utils/otaCsvParser';
 import {
   AuditLogRecord,
   BlockedDateRecord,
@@ -44,6 +51,7 @@ import {
   formatUsd,
   getConnectedRootDomain,
   getDefaultOtaChannelCurrency,
+  getFxRateToNgn,
   getPortalUrl,
   getPropertySubdomainSlug,
   getPropertySystemId,
@@ -453,7 +461,18 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       : `/?ical=${property.id}&room=${exportSuiteFilter}`;
 
   const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
+  const [togglingChannelId, setTogglingChannelId] = useState<string | null>(null);
   const [syncingAllChannels, setSyncingAllChannels] = useState(false);
+
+  // Channel Manager CSV Import state
+  const [showCsvImportPanel, setShowCsvImportPanel] = useState(false);
+  const [csvChannelName, setCsvChannelName] =
+    useState<OtaIntegrationRecord['channelName']>('Airbnb');
+  const [csvDefaultCurrency, setCsvDefaultCurrency] = useState<ChannelCurrency>('USD');
+  const [csvFileName, setCsvFileName] = useState('');
+  const [csvParsedRows, setCsvParsedRows] = useState<ParsedOtaCsvRow[]>([]);
+  const [csvWarnings, setCsvWarnings] = useState<string[]>([]);
+  const [csvImporting, setCsvImporting] = useState(false);
 
   const normalizeChannelRoom = (room?: string) => {
     const raw = (room || '').trim();
@@ -467,7 +486,33 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     channel: OtaIntegrationRecord
   ): Promise<OtaIntegrationRecord> => {
     const draft = icalDrafts[channel.id];
-    if (!draft) return channel;
+    const isIntlOta =
+      channel.channelName === 'Airbnb' ||
+      channel.channelName === 'Booking.com' ||
+      channel.channelName === 'Expedia' ||
+      channel.channelName === 'VRBO' ||
+      channel.channelName === 'Custom iCal';
+    const effectiveStoredCurrency: ChannelCurrency =
+      isIntlOta && (!channel.defaultCurrency || channel.defaultCurrency === 'NGN')
+        ? getDefaultOtaChannelCurrency(channel.channelName)
+        : channel.defaultCurrency || getDefaultOtaChannelCurrency(channel.channelName);
+    if (!draft) {
+      if (isIntlOta && channel.defaultCurrency !== effectiveStoredCurrency) {
+        await updateOtaChannelIcal({
+          property,
+          channel,
+          icalImportUrl: (channel.icalImportUrl || '').trim(),
+          roomNumber: normalizeChannelRoom(channel.roomNumber),
+          propertyListingId: channel.propertyListingId,
+          defaultCurrency: effectiveStoredCurrency,
+          defaultNightlyRate: channel.defaultNightlyRate ?? 0,
+          paymentCollectionMode: channel.paymentCollectionMode || 'ota_prepaid',
+          actorRole: ROLE_LABELS[activeRole],
+        });
+        return { ...channel, defaultCurrency: effectiveStoredCurrency };
+      }
+      return channel;
+    }
     const currentDefaultCurrency: ChannelCurrency =
       channel.defaultCurrency || getDefaultOtaChannelCurrency(channel.channelName);
     const currentMode: OtaPaymentCollectionMode =
@@ -476,7 +521,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     const nextUrl = draft.url.trim();
     const nextRoom = normalizeChannelRoom(draft.room);
     const nextListingId = draft.listingId.trim() || channel.propertyListingId;
-    const nextCurrency: ChannelCurrency = draft.defaultCurrency || currentDefaultCurrency;
+    const nextCurrency: ChannelCurrency = draft.defaultCurrency || effectiveStoredCurrency;
     const parsedRate = Number(draft.defaultNightlyRate.replace(/,/g, ''));
     const nextRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : channel.defaultNightlyRate ?? 0;
     const nextMode: OtaPaymentCollectionMode = draft.paymentCollectionMode || currentMode;
@@ -518,10 +563,40 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     };
   };
 
+  const handleToggleChannelConnection = async (channel: OtaIntegrationRecord) => {
+    setTogglingChannelId(channel.id);
+    try {
+      const result = await syncOtaChannelWorkflow({
+        property,
+        channel,
+        toggleConnect: true,
+        actorRole: ROLE_LABELS[activeRole],
+      });
+      const isNowConnected = result.connected ?? !channel.connected;
+      onNotify(
+        isNowConnected
+          ? `${channel.channelName} reconnected and ready to sync.`
+          : `${channel.channelName} disconnected permanently. It will remain disconnected until you manually reconnect it.`
+      );
+    } catch (err) {
+      onNotify(
+        err instanceof Error
+          ? err.message
+          : `Failed updating connection status for ${channel.channelName}`
+      );
+    } finally {
+      setTogglingChannelId(null);
+    }
+  };
+
   const handleSyncSingleChannel = async (
     channel: OtaIntegrationRecord,
     icsRawText?: string
   ) => {
+    if (!channel.connected) {
+      onNotify(`${channel.channelName} is disconnected. Reconnect it manually before syncing.`);
+      return;
+    }
     setSyncingChannelId(channel.id);
     try {
       const effectiveChannel = await persistDraftIfDirty(channel);
@@ -542,6 +617,69 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       );
     } finally {
       setSyncingChannelId(null);
+    }
+  };
+
+  const handleDownloadCsvTemplate = () => {
+    const csv = buildSampleOtaCsvTemplate(csvChannelName);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${csvChannelName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-bookings-template.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    onNotify(`Downloaded ${csvChannelName} CSV import template`);
+  };
+
+  const handleCsvFileSelected = (file: File) => {
+    setCsvFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      const parsed = parseOtaCsvText(text, csvDefaultCurrency);
+      setCsvParsedRows(parsed.rows);
+      setCsvWarnings(parsed.warnings);
+      if (parsed.rows.length === 0) {
+        onNotify(parsed.warnings[0] || 'No valid booking rows found in this CSV file.');
+      } else {
+        onNotify(
+          `Parsed ${parsed.rows.length} reservation row(s) from ${file.name}${
+            parsed.skippedRows > 0 ? ` (${parsed.skippedRows} skipped)` : ''
+          }`
+        );
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleConfirmCsvImport = async () => {
+    if (csvParsedRows.length === 0) return;
+    setCsvImporting(true);
+    try {
+      const res = await importOtaCsvReservationsWorkflow({
+        property,
+        channelName: csvChannelName,
+        defaultCurrency: csvDefaultCurrency,
+        rows: csvParsedRows,
+        rooms: sortedRooms,
+        reservations,
+        otaChannels,
+        actorRole: ROLE_LABELS[activeRole],
+      });
+      onNotify(
+        `${csvChannelName} CSV imported: ${res.created} new, ${res.updated} updated, ${res.skipped} skipped`
+      );
+      setCsvParsedRows([]);
+      setCsvWarnings([]);
+      setCsvFileName('');
+      setShowCsvImportPanel(false);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : `Failed importing ${csvChannelName} CSV`);
+    } finally {
+      setCsvImporting(false);
     }
   };
 
@@ -678,6 +816,14 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
         {section === 'ota_channels' && (
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowCsvImportPanel((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Import CSV</span>
+            </button>
             <button
               type="button"
               disabled={syncingAllChannels}
@@ -873,6 +1019,190 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
             </form>
           )}
 
+          {/* Import OTA Reservations CSV Panel */}
+          {showCsvImportPanel && (
+            <div className="bg-white border border-blue-200 rounded-xl p-5 space-y-4 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-blue-700" />
+                  <div>
+                    <h2 className="font-display text-sm font-bold text-slate-900">
+                      Import OTA Reservations via CSV (Airbnb, Booking.com, Expedia, VRBO)
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Captures exact guest-paid amount in original USD/currency and converts to Naira at 1 USD = ₦{(property.usdExchangeRateNgn || 1600).toLocaleString()}.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadCsvTemplate}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-lg font-medium cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download CSV Template</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCsvImportPanel(false)}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    aria-label="Close CSV import"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">OTA Platform</label>
+                  <select
+                    value={csvChannelName}
+                    onChange={(e) => {
+                      const val = e.target.value as OtaIntegrationRecord['channelName'];
+                      setCsvChannelName(val);
+                      setCsvDefaultCurrency(getDefaultOtaChannelCurrency(val));
+                    }}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
+                  >
+                    <option value="Airbnb">Airbnb</option>
+                    <option value="Booking.com">Booking.com</option>
+                    <option value="VRBO">VRBO</option>
+                    <option value="Expedia">Expedia</option>
+                    <option value="Hotels.ng">Hotels.ng</option>
+                    <option value="Custom iCal">Custom iCal</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Default Currency (if CSV omits Currency column)
+                  </label>
+                  <select
+                    value={csvDefaultCurrency}
+                    onChange={(e) => setCsvDefaultCurrency(e.target.value as ChannelCurrency)}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white font-semibold"
+                  >
+                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                      <option key={cur} value={cur}>
+                        {cur}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Select CSV File</label>
+                  <label className="flex items-center justify-center gap-2 h-10 px-3 border border-dashed border-blue-300 bg-blue-50/60 hover:bg-blue-50 text-blue-900 rounded-lg font-semibold cursor-pointer">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span className="truncate">
+                      {csvFileName || 'Choose .csv export file'}
+                    </span>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleCsvFileSelected(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {csvWarnings.length > 0 && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] space-y-0.5">
+                  {csvWarnings.slice(0, 4).map((w, idx) => (
+                    <p key={idx}>• {w}</p>
+                  ))}
+                </div>
+              )}
+
+              {csvParsedRows.length > 0 && (
+                <div className="space-y-3">
+                  <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                    <table className="w-full text-left border-collapse text-xs min-w-[760px]">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          <th className="py-2 px-3">Ref &amp; Guest</th>
+                          <th className="py-2 px-3">Stay Dates</th>
+                          <th className="py-2 px-3">Room Hint</th>
+                          <th className="py-2 px-3 text-right">OTA Paid (Exact)</th>
+                          <th className="py-2 px-3 text-right">Converted (₦)</th>
+                          <th className="py-2 px-3 text-right">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {csvParsedRows.slice(0, 12).map((row) => {
+                          const fx = getFxRateToNgn(row.currency, property.usdExchangeRateNgn);
+                          const paidOrig = row.otaPaidSourceAmount ?? row.sourceTotalAmount ?? 0;
+                          const paidNgn =
+                            row.currency === 'NGN' ? Math.round(paidOrig) : Math.round(paidOrig * fx);
+                          return (
+                            <tr key={`${row.rowNumber}-${row.externalRef}`}>
+                              <td className="py-2 px-3">
+                                <p className="font-semibold text-slate-900">{row.guestName}</p>
+                                <p className="font-mono-tabular text-[11px] text-slate-500">
+                                  {row.externalRef}
+                                </p>
+                              </td>
+                              <td className="py-2 px-3 font-mono-tabular text-slate-700 whitespace-nowrap">
+                                {row.checkInDate} → {row.checkOutDate} ({row.nights}n)
+                              </td>
+                              <td className="py-2 px-3 text-slate-700">
+                                {row.roomHint || 'Auto-assign'}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono-tabular font-bold text-blue-800 whitespace-nowrap">
+                                {formatChannelCurrency(paidOrig, row.currency)} {row.currency}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono-tabular font-semibold text-emerald-700 whitespace-nowrap">
+                                {formatNgn(paidNgn)}
+                              </td>
+                              <td className="py-2 px-3 text-right capitalize text-slate-700">
+                                {row.status}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[11px] text-slate-600">
+                      Ready to import <span className="font-bold text-slate-900">{csvParsedRows.length}</span>{' '}
+                      reservation(s) into <span className="font-semibold">{csvChannelName}</span>.
+                      {csvParsedRows.length > 12 ? ' (Showing first 12 rows in preview)' : ''}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCsvParsedRows([]);
+                          setCsvWarnings([]);
+                          setCsvFileName('');
+                        }}
+                        className="px-3 py-2 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        disabled={csvImporting}
+                        onClick={() => void handleConfirmCsvImport()}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                      >
+                        {csvImporting
+                          ? 'Importing CSV...'
+                          : `Import ${csvParsedRows.length} Reservation(s)`}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Outbound iCal Feed Export Generator */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="space-y-1">
@@ -993,12 +1323,17 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </div>
                       <span
                         className={`text-xs font-semibold ${
-                          ch.connected ? 'text-emerald-700' : 'text-slate-500'
+                          ch.connected ? 'text-emerald-700' : 'text-rose-700'
                         }`}
                       >
                         {ch.connected ? 'Connected' : 'Disconnected'}
                       </span>
                     </div>
+                    {!ch.connected && (
+                      <div className="px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-800">
+                        Calendar disconnected permanently. Auto-sync is paused until you manually click <span className="font-semibold">Connect</span>.
+                      </div>
+                    )}
 
                     <div className="space-y-1.5 text-xs">
                       <div className="flex items-center justify-between gap-2 text-slate-500 font-mono-tabular">
@@ -1228,27 +1563,37 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          void syncOtaChannelWorkflow({
-                            property,
-                            channel: ch,
-                            toggleConnect: true,
-                            actorRole: ROLE_LABELS[activeRole],
-                          });
-                          onNotify(`${ch.channelName} ${ch.connected ? 'disconnected' : 'connected'}`);
-                        }}
-                        className="px-2.5 py-1.5 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        disabled={togglingChannelId === ch.id || syncingChannelId === ch.id}
+                        onClick={() => void handleToggleChannelConnection(ch)}
+                        className={`px-2.5 py-1.5 border rounded-lg font-semibold transition-colors disabled:opacity-50 cursor-pointer ${
+                          ch.connected
+                            ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
+                            : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                        }`}
                       >
-                        {ch.connected ? 'Disconnect' : 'Connect'}
+                        {togglingChannelId === ch.id
+                          ? 'Saving...'
+                          : ch.connected
+                            ? 'Disconnect'
+                            : 'Connect'}
                       </button>
                       <label
-                        title="Upload .ics calendar exported from Booking.com / Airbnb"
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        title={
+                          ch.connected
+                            ? 'Upload .ics calendar exported from Booking.com / Airbnb'
+                            : 'Reconnect this channel before uploading an .ics file'
+                        }
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 rounded-lg font-medium ${
+                          ch.connected
+                            ? 'text-slate-700 hover:bg-slate-50 cursor-pointer'
+                            : 'text-slate-400 bg-slate-50 cursor-not-allowed'
+                        }`}
                       >
                         <Upload className="w-3.5 h-3.5" />
                         <span>.ics</span>
                         <input
                           type="file"
+                          disabled={!ch.connected}
                           accept=".ics,text/calendar"
                           className="sr-only"
                           onChange={(e) => {
@@ -1266,13 +1611,19 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </label>
                       <button
                         type="button"
-                        onClick={() => {
-                          void deleteOtaChannel({
-                            property,
-                            channel: ch,
-                            actorRole: ROLE_LABELS[activeRole],
-                          });
-                          onNotify(`Removed ${ch.channelName}`);
+                        onClick={async () => {
+                          try {
+                            await deleteOtaChannel({
+                              property,
+                              channel: ch,
+                              actorRole: ROLE_LABELS[activeRole],
+                            });
+                            onNotify(`Removed ${ch.channelName}`);
+                          } catch (err) {
+                            onNotify(
+                              err instanceof Error ? err.message : `Failed removing ${ch.channelName}`
+                            );
+                          }
                         }}
                         title="Remove channel"
                         className="p-1.5 border border-slate-200 rounded-lg text-slate-400 hover:text-rose-700 hover:border-rose-200 cursor-pointer"
@@ -1282,14 +1633,20 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                     </div>
                     <button
                       type="button"
-                      disabled={!ch.connected || syncingChannelId === ch.id}
+                      disabled={!ch.connected || syncingChannelId === ch.id || togglingChannelId === ch.id}
                       onClick={() => void handleSyncSingleChannel(ch)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold cursor-pointer"
                     >
                       <RefreshCw
                         className={`w-3.5 h-3.5 ${syncingChannelId === ch.id ? 'animate-spin' : ''}`}
                       />
-                      <span>{syncingChannelId === ch.id ? 'Syncing...' : 'Sync Live iCal'}</span>
+                      <span>
+                        {syncingChannelId === ch.id
+                          ? 'Syncing...'
+                          : ch.connected
+                            ? 'Sync Live iCal'
+                            : 'Disconnected'}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -1392,19 +1749,41 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 </span>{' '}
                                 · {r.checkInDate} → {r.checkOutDate} ({r.nights}n)
                               </td>
-                              <td className="py-2.5 px-4 text-right font-mono-tabular font-bold text-slate-900 whitespace-nowrap">
-                                {formatChannelCurrency(pay.sourceTotalAmount, pay.sourceCurrency)}{' '}
-                                {pay.sourceCurrency}
+                              <td className="py-2.5 px-4 text-right font-mono-tabular whitespace-nowrap">
+                                <p className="font-bold text-slate-900">
+                                  {formatChannelCurrency(pay.sourceTotalAmount, pay.sourceCurrency)}{' '}
+                                  {pay.sourceCurrency}
+                                </p>
+                                <p className="text-[10px] text-slate-500">
+                                  {pay.sourceCurrency === 'USD'
+                                    ? `≈ ${formatNgn(pay.totalAmount)}`
+                                    : `≈ ${formatUsd(pay.totalAmountUsd)} USD`}
+                                </p>
                               </td>
-                              <td className="py-2.5 px-4 text-right font-mono-tabular font-bold text-blue-800 whitespace-nowrap">
-                                {formatChannelCurrency(pay.otaPaidSourceAmount, pay.sourceCurrency)}{' '}
-                                {pay.sourceCurrency}
+                              <td className="py-2.5 px-4 text-right font-mono-tabular whitespace-nowrap">
+                                <p className="font-bold text-blue-800">
+                                  {formatChannelCurrency(pay.otaPaidSourceAmount, pay.sourceCurrency)}{' '}
+                                  {pay.sourceCurrency}
+                                </p>
+                                <p className="text-[10px] text-blue-600">
+                                  ≈ {formatNgn(pay.otaPaidAmount)}
+                                </p>
                               </td>
-                              <td className="py-2.5 px-4 text-right font-mono-tabular font-semibold text-emerald-700 whitespace-nowrap">
-                                {formatNgn(pay.expectedPayoutNgn)}
+                              <td className="py-2.5 px-4 text-right font-mono-tabular whitespace-nowrap">
+                                <p className="font-semibold text-emerald-700">
+                                  {formatNgn(pay.expectedPayoutNgn)}
+                                </p>
+                                <p className="text-[10px] text-slate-500">
+                                  ≈ {formatUsd(pay.expectedPayoutUsd)} USD
+                                </p>
                               </td>
                               <td className="py-2.5 px-4 text-right font-mono-tabular text-slate-700 whitespace-nowrap">
-                                {formatNgn(pay.hotelPaidAmount)}
+                                <p>{formatNgn(pay.hotelPaidAmount)}</p>
+                                {pay.hotelPaidAmount > 0 && (
+                                  <p className="text-[10px] text-slate-500">
+                                    ≈ {formatUsd(pay.hotelPaidUsd)} USD
+                                  </p>
+                                )}
                               </td>
                             </tr>
                           );

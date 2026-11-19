@@ -35,6 +35,7 @@ import {
 import { mergeCmsWithDefaults } from '../context/CmsContext';
 import { buildRichgatesSeedPayload, generateLicenseKey, RICHGATES_PROPERTY_ID } from '../data/seedData';
 import { deterministicOtaReservationId, ParsedIcalEvent, parseIcalEvents } from '../utils/icalParser';
+import { ParsedOtaCsvRow } from '../utils/otaCsvParser';
 import {
   ASSIGNABLE_ROLE_LABELS,
   AssignablePropertyRole,
@@ -62,6 +63,7 @@ import {
   OtaIntegrationRecord,
   OtaPaymentCollectionMode,
   parseSystemPropertySeq,
+  PaymentStatusLabel,
   PayrollRunRecord,
   PlanInquiryRecord,
   PosMenuItemRecord,
@@ -227,6 +229,7 @@ export async function createReservationWorkflow(params: {
   children?: number;
   channel: ReservationRecord['channel'];
   paymentMethod: ReservationRecord['paymentMethod'];
+  paymentStatus?: PaymentStatusLabel;
   depositNgn: number;
   sourceCurrency?: ChannelCurrency;
   sourceNightlyRate?: number;
@@ -237,6 +240,11 @@ export async function createReservationWorkflow(params: {
   otaPaidSourceAmount?: number;
   expectedPayoutNgn?: number;
   hotelPaidNgn?: number;
+  cautionDepositEnabled?: boolean;
+  cautionDepositNgn?: number;
+  cautionDepositCollectedNgn?: number;
+  cautionDepositRefunded?: boolean;
+  cautionDepositRefundedAtIso?: string;
   immediateCheckIn: boolean;
   initialStatus?: 'confirmed' | 'pending';
   paymentConfirmed?: boolean;
@@ -349,6 +357,23 @@ export async function createReservationWorkflow(params: {
     updatedAt: now,
   });
 
+  const cautionEnabled = Boolean(params.cautionDepositEnabled);
+  const cautionFeeNgn = cautionEnabled ? Math.max(0, Math.round(params.cautionDepositNgn ?? 0)) : 0;
+  const cautionCollectedNgn = cautionEnabled
+    ? Math.max(0, Math.round(params.cautionDepositCollectedNgn ?? 0))
+    : 0;
+  const cautionRefunded = cautionEnabled && Boolean(params.cautionDepositRefunded);
+  const cautionRefundedAtIso = cautionRefunded
+    ? params.cautionDepositRefundedAtIso || new Date().toISOString()
+    : '';
+  const derivedPaymentStatus: PaymentStatusLabel =
+    params.paymentStatus ||
+    (totalPaidNgn <= 0
+      ? 'Unpaid'
+      : totalPaidNgn >= roomChargesNgn
+        ? 'Paid'
+        : 'Partial');
+
   batch.set(doc(db, 'properties', params.property.id, 'reservations', resId), {
     propertyId: params.property.id,
     bookingRef,
@@ -383,6 +408,12 @@ export async function createReservationWorkflow(params: {
     otaPaidSourceAmount,
     expectedPayoutNgn,
     hotelPaidNgn,
+    paymentStatus: derivedPaymentStatus,
+    cautionDepositEnabled: cautionEnabled,
+    cautionDepositNgn: cautionFeeNgn,
+    cautionDepositCollectedNgn: cautionCollectedNgn,
+    cautionDepositRefunded: cautionRefunded,
+    ...(cautionRefundedAtIso ? { cautionDepositRefundedAtIso: cautionRefundedAtIso } : {}),
     status,
     paymentMethod: params.paymentMethod,
     ...(params.guestIdType ? { idType: params.guestIdType } : {}),
@@ -875,6 +906,7 @@ export async function updateReservationDetailsWorkflow(params: {
   channel: ReservationRecord['channel'];
   status?: ReservationRecord['status'];
   paymentMethod?: ReservationRecord['paymentMethod'];
+  paymentStatus?: PaymentStatusLabel;
   nightlyRateNgn?: number;
   sourceCurrency?: ChannelCurrency;
   sourceNightlyRate?: number;
@@ -883,6 +915,10 @@ export async function updateReservationDetailsWorkflow(params: {
   otaPaidSourceAmount?: number;
   expectedPayoutNgn?: number;
   hotelPaidNgn?: number;
+  cautionDepositEnabled?: boolean;
+  cautionDepositNgn?: number;
+  cautionDepositCollectedNgn?: number;
+  cautionDepositRefunded?: boolean;
   actorRole: string;
 }) {
   const safeNights = Math.max(1, Math.round(params.nights));
@@ -988,6 +1024,43 @@ export async function updateReservationDetailsWorkflow(params: {
   const now = serverTimestamp();
   const resRef = doc(db, 'properties', params.property.id, 'reservations', params.reservation.id);
 
+  const nextCautionEnabled =
+    params.cautionDepositEnabled !== undefined
+      ? Boolean(params.cautionDepositEnabled)
+      : Boolean(params.reservation.cautionDepositEnabled);
+  const nextCautionNgn = nextCautionEnabled
+    ? Math.max(
+        0,
+        Math.round(
+          params.cautionDepositNgn !== undefined
+            ? params.cautionDepositNgn
+            : (params.reservation.cautionDepositNgn ?? 0)
+        )
+      )
+    : 0;
+  const nextCautionCollectedNgn = nextCautionEnabled
+    ? Math.max(
+        0,
+        Math.round(
+          params.cautionDepositCollectedNgn !== undefined
+            ? params.cautionDepositCollectedNgn
+            : (params.reservation.cautionDepositCollectedNgn ?? 0)
+        )
+      )
+    : 0;
+  const nextCautionRefunded =
+    nextCautionEnabled &&
+    (params.cautionDepositRefunded !== undefined
+      ? Boolean(params.cautionDepositRefunded)
+      : Boolean(params.reservation.cautionDepositRefunded));
+  const nextCautionRefundedAtIso = nextCautionRefunded
+    ? params.reservation.cautionDepositRefundedAtIso || new Date().toISOString()
+    : '';
+  const totalBillNgn = nextRoomCharges + Math.max(0, Number(params.reservation.posChargesNgn ?? 0));
+  const nextPaymentStatus: PaymentStatusLabel =
+    params.paymentStatus ||
+    (nextPaidNgn <= 0 ? 'Unpaid' : nextPaidNgn >= totalBillNgn ? 'Paid' : 'Partial');
+
   batch.update(resRef, {
     roomId: targetRoomId,
     roomNumber: targetRoomNumber,
@@ -1016,7 +1089,13 @@ export async function updateReservationDetailsWorkflow(params: {
     expectedPayoutNgn: nextExpectedPayoutNgn,
     hotelPaidNgn: nextHotelPaidNgn,
     paidNgn: nextPaidNgn,
+    paymentStatus: nextPaymentStatus,
     paymentConfirmed: nextPaidNgn > 0,
+    cautionDepositEnabled: nextCautionEnabled,
+    cautionDepositNgn: nextCautionNgn,
+    cautionDepositCollectedNgn: nextCautionCollectedNgn,
+    cautionDepositRefunded: nextCautionRefunded,
+    cautionDepositRefundedAtIso: nextCautionRefundedAtIso,
     channel: params.channel,
     status: nextStatus,
     paymentMethod: params.paymentMethod || params.reservation.paymentMethod,
@@ -2884,12 +2963,56 @@ export async function deleteMaintenanceTicketWorkflow(params: {
   }
 }
 
+export async function updateReservationCautionDepositWorkflow(params: {
+  property: PropertyRecord;
+  reservation: ReservationRecord;
+  cautionDepositEnabled: boolean;
+  cautionDepositNgn: number;
+  cautionDepositCollectedNgn: number;
+  cautionDepositRefunded: boolean;
+  actorRole: string;
+}) {
+  const resRef = doc(db, 'properties', params.property.id, 'reservations', params.reservation.id);
+  const enabled = Boolean(params.cautionDepositEnabled);
+  const feeNgn = enabled ? Math.max(0, Math.round(params.cautionDepositNgn)) : 0;
+  const collectedNgn = enabled ? Math.max(0, Math.round(params.cautionDepositCollectedNgn)) : 0;
+  const refunded = enabled && Boolean(params.cautionDepositRefunded);
+  const refundedAtIso = refunded
+    ? params.reservation.cautionDepositRefundedAtIso || new Date().toISOString()
+    : '';
+  try {
+    await updateDoc(resRef, {
+      cautionDepositEnabled: enabled,
+      cautionDepositNgn: feeNgn,
+      cautionDepositCollectedNgn: collectedNgn,
+      cautionDepositRefunded: refunded,
+      cautionDepositRefundedAtIso: refundedAtIso,
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Reservations',
+      action: refunded
+        ? `Refunded Caution Deposit (${params.reservation.bookingRef})`
+        : `Updated Caution Deposit (${params.reservation.bookingRef})`,
+      details: enabled
+        ? `Fee ₦${feeNgn.toLocaleString()} · Collected ₦${collectedNgn.toLocaleString()} · Refunded: ${refunded ? 'Yes' : 'No'}`
+        : 'Caution deposit disabled',
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, resRef.path);
+  }
+}
+
 export interface OtaSyncResult {
   created: number;
   updated: number;
   cancelled: number;
   skipped: number;
   totalEvents: number;
+  connected?: boolean;
 }
 
 function datesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
@@ -2973,12 +3096,16 @@ export async function syncOtaChannelWorkflow(params: {
   const nextConnected = params.toggleConnect ? !params.channel.connected : params.channel.connected;
   const nextAutoSync = params.toggleAutoSync ? !params.channel.autoSync : params.channel.autoSync;
 
-  // Status-only toggle (Connect/Disconnect or AutoSync toggle)
+  // Status-only toggle (Connect/Disconnect or AutoSync toggle) — persisted permanently in Firestore
   if (params.toggleConnect || params.toggleAutoSync) {
+    const disconnectPatch = params.toggleConnect
+      ? nextConnected
+        ? { connected: true, disconnectedAtIso: '' }
+        : { connected: false, autoSync: false, disconnectedAtIso: new Date().toISOString() }
+      : { connected: nextConnected, autoSync: nextAutoSync };
     try {
       await updateDoc(ref, {
-        connected: nextConnected,
-        autoSync: nextAutoSync,
+        ...disconnectPatch,
         updatedAt: serverTimestamp(),
       });
       await writeAuditLog({
@@ -2986,13 +3113,27 @@ export async function syncOtaChannelWorkflow(params: {
         actorRole: params.actorRole,
         module: 'Channel Manager',
         action: `${nextConnected ? 'Connected' : 'Disconnected'} ${params.channel.channelName}`,
-        details: `Connected: ${nextConnected} · AutoSync: ${nextAutoSync}`,
+        details: `Connected: ${nextConnected} · AutoSync: ${nextConnected ? nextAutoSync : false}`,
         authorizedEmails: params.property.authorizedEmails,
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, ref.path);
     }
-    return { created: 0, updated: 0, cancelled: 0, skipped: 0, totalEvents: 0 };
+    return {
+      created: 0,
+      updated: 0,
+      cancelled: 0,
+      skipped: 0,
+      totalEvents: 0,
+      connected: nextConnected,
+    };
+  }
+
+  // Strictly block syncing disconnected calendars until manually reconnected
+  if (!params.channel.connected) {
+    throw new Error(
+      `${params.channel.channelName} is currently disconnected. Click Connect to reconnect this calendar manually before syncing.`
+    );
   }
 
   // Real OTA .ics fetch via server/Edge proxy or uploaded .ics text
@@ -3632,9 +3773,15 @@ export async function syncOtaChannelWorkflow(params: {
       otaPaidSourceAmount: pricing.otaPaidSourceAmount,
       expectedPayoutNgn: pricing.expectedPayoutNgn,
       hotelPaidNgn: 0,
+      paymentStatus:
+        pricing.otaPaidNgn <= 0
+          ? 'Unpaid'
+          : pricing.otaPaidNgn >= pricing.roomChargesNgn
+            ? 'Paid'
+            : 'Partial',
       paymentConfirmed: pricing.otaPaidNgn > 0,
       status: 'confirmed',
-      paymentMethod: 'Online Gateway',
+      paymentMethod: pricing.otaPaidNgn > 0 ? 'OTA Platform Payout' : 'Online Gateway',
       externalUid: ev.uid.slice(0, 160),
       authorizedEmails: params.property.authorizedEmails,
       ownerUid: uid,
@@ -3730,7 +3877,332 @@ export async function syncOtaChannelWorkflow(params: {
     cancelled,
     skipped,
     totalEvents: parsedEvents.length,
+    connected: true,
   };
+}
+
+export async function importOtaCsvReservationsWorkflow(params: {
+  property: PropertyRecord;
+  channelName: OtaIntegrationRecord['channelName'];
+  defaultCurrency: ChannelCurrency;
+  rows: ParsedOtaCsvRow[];
+  rooms?: RoomRecord[];
+  reservations?: ReservationRecord[];
+  otaChannels?: OtaIntegrationRecord[];
+  actorRole: string;
+}): Promise<{ created: number; updated: number; skipped: number; totalRows: number }> {
+  const { uid } = getActorContext();
+  if (!params.rows.length) {
+    throw new Error('No valid reservation rows found to import from CSV.');
+  }
+
+  const resolvedChannelSource: ReservationRecord['channel'] =
+    params.channelName === 'Direct Website Engine' ? 'Direct Web' : params.channelName;
+
+  let roomList = params.rooms ? params.rooms.map((r) => ({ ...r })) : [];
+  if (roomList.length === 0) {
+    const roomsSnap = await getDocs(collection(db, 'properties', params.property.id, 'rooms'));
+    roomList = roomsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RoomRecord, 'id'>) }));
+  }
+  roomList = sortRoomsByNumber(roomList);
+  if (roomList.length === 0) {
+    throw new Error('No rooms exist in this property to assign imported CSV bookings.');
+  }
+
+  let existingReservations = params.reservations ? [...params.reservations] : [];
+  if (existingReservations.length === 0) {
+    const resSnap = await getDocs(collection(db, 'properties', params.property.id, 'reservations'));
+    existingReservations = resSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<ReservationRecord, 'id'>),
+    }));
+  }
+
+  const guestsSnap = await getDocs(collection(db, 'properties', params.property.id, 'guests'));
+  const existingGuests: GuestRecord[] = guestsSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<GuestRecord, 'id'>),
+  }));
+
+  const guestByEmail = new Map<string, GuestRecord>();
+  const guestByName = new Map<string, GuestRecord>();
+  for (const g of existingGuests) {
+    if (g.email?.trim()) guestByEmail.set(g.email.trim().toLowerCase(), g);
+    if (g.fullName?.trim()) guestByName.set(g.fullName.trim().toLowerCase(), g);
+  }
+
+  const byExternalUid = new Map<string, ReservationRecord>();
+  const byBookingRef = new Map<string, ReservationRecord>();
+  for (const r of existingReservations) {
+    if (r.externalUid) byExternalUid.set(`${r.channel}::${r.externalUid}`, r);
+    if (r.bookingRef) byBookingRef.set(`${r.channel}::${r.bookingRef.toUpperCase()}`, r);
+  }
+
+  const matchRoom = (roomHint?: string): RoomRecord => {
+    const hint = (roomHint || '').trim().toLowerCase();
+    if (hint) {
+      const exact = roomList.find(
+        (r) =>
+          r.roomNumber.toLowerCase() === hint ||
+          r.name.toLowerCase() === hint ||
+          hint.includes(r.roomNumber.toLowerCase()) ||
+          hint.includes(r.name.toLowerCase())
+      );
+      if (exact) return exact;
+      const byType = roomList.find(
+        (r) => r.roomType.toLowerCase().includes(hint) || hint.includes(r.roomType.toLowerCase())
+      );
+      if (byType) return byType;
+    }
+    return roomList[0];
+  };
+
+  type QueuedWrite =
+    | { kind: 'set'; ref: ReturnType<typeof doc>; data: Record<string, unknown> }
+    | { kind: 'update'; ref: ReturnType<typeof doc>; data: Record<string, unknown> };
+  const writes: QueuedWrite[] = [];
+  const now = serverTimestamp();
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const row of params.rows) {
+    const assignedRoom = matchRoom(row.roomHint);
+    const channelCurrency: ChannelCurrency = row.currency || params.defaultCurrency || 'USD';
+    const fxRate = getFxRateToNgn(channelCurrency, params.property.usdExchangeRateNgn);
+
+    const sourceTotalAmount =
+      row.sourceTotalAmount && row.sourceTotalAmount > 0
+        ? Number(row.sourceTotalAmount.toFixed(2))
+        : row.otaPaidSourceAmount && row.otaPaidSourceAmount > 0
+          ? Number(row.otaPaidSourceAmount.toFixed(2))
+          : row.sourceNightlyRate && row.sourceNightlyRate > 0
+            ? Number((row.sourceNightlyRate * row.nights).toFixed(2))
+            : channelCurrency === 'NGN'
+              ? assignedRoom.nightlyRateNgn * row.nights
+              : Number(((assignedRoom.nightlyRateNgn * row.nights) / fxRate).toFixed(2));
+
+    const sourceNightlyRate =
+      row.sourceNightlyRate && row.sourceNightlyRate > 0
+        ? Number(row.sourceNightlyRate.toFixed(2))
+        : Number((sourceTotalAmount / Math.max(1, row.nights)).toFixed(2));
+
+    const otaPaidSourceAmount =
+      row.otaPaidSourceAmount !== undefined
+        ? Number(Math.max(0, row.otaPaidSourceAmount).toFixed(2))
+        : isOtaBookingChannel(resolvedChannelSource)
+          ? sourceTotalAmount
+          : 0;
+
+    const otaPaidNgn =
+      channelCurrency === 'NGN'
+        ? Math.round(otaPaidSourceAmount)
+        : Math.round(otaPaidSourceAmount * fxRate);
+    const expectedPayoutNgn =
+      row.expectedPayoutSourceAmount && row.expectedPayoutSourceAmount > 0
+        ? channelCurrency === 'NGN'
+          ? Math.round(row.expectedPayoutSourceAmount)
+          : Math.round(row.expectedPayoutSourceAmount * fxRate)
+        : channelCurrency === 'NGN'
+          ? Math.round(sourceTotalAmount)
+          : Math.round(sourceTotalAmount * fxRate);
+
+    const roomChargesNgn = expectedPayoutNgn > 0 ? expectedPayoutNgn : assignedRoom.nightlyRateNgn * row.nights;
+    const nightlyRateNgn = Math.max(1, Math.round(roomChargesNgn / Math.max(1, row.nights)));
+    const hotelPaidNgn = Math.max(0, Math.round(row.directPaidNgn ?? 0));
+    const otaCoveredFolio = otaPaidNgn > 0 ? Math.min(roomChargesNgn, otaPaidNgn) : 0;
+    const paidNgn = otaCoveredFolio + hotelPaidNgn;
+    const paymentStatus: PaymentStatusLabel =
+      paidNgn <= 0 ? 'Unpaid' : paidNgn >= roomChargesNgn ? 'Paid' : 'Partial';
+
+    const cleanChannelSlug = resolvedChannelSource.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const externalUid = `csv-${cleanChannelSlug}-${row.externalRef}`.slice(0, 160);
+    const deterministicId = deterministicOtaReservationId(`csv-${cleanChannelSlug}`, externalUid);
+    const bookingRef = row.externalRef.slice(0, 32);
+
+    const existing =
+      byExternalUid.get(`${resolvedChannelSource}::${externalUid}`) ||
+      byBookingRef.get(`${resolvedChannelSource}::${bookingRef.toUpperCase()}`);
+
+    const safeGuestName = row.guestName.trim().slice(0, 120);
+    const emailKey = (row.guestEmail || '').trim().toLowerCase();
+
+    let guestId = existing?.guestId;
+    if (!guestId) {
+      const matchedGuest =
+        (emailKey && guestByEmail.get(emailKey)) || guestByName.get(safeGuestName.toLowerCase());
+      if (matchedGuest) {
+        guestId = matchedGuest.id;
+      } else {
+        guestId = cleanId('gst');
+        const guestDoc: Omit<GuestRecord, 'id'> & Record<string, unknown> = {
+          propertyId: params.property.id,
+          fullName: safeGuestName,
+          ...(emailKey ? { email: emailKey } : {}),
+          phone: row.guestPhone?.trim().slice(0, 32) || 'Not Provided',
+          ...(row.guestCountry ? { country: row.guestCountry.slice(0, 80) } : {}),
+          idType: 'International Passport',
+          vipTier: 'Standard',
+          totalStays: 1,
+          lifetimeSpendNgn: roomChargesNgn,
+          notes: `Imported via ${resolvedChannelSource} CSV`,
+          authorizedEmails: params.property.authorizedEmails,
+          ownerUid: uid,
+          createdAt: now,
+          updatedAt: now,
+        };
+        writes.push({
+          kind: 'set',
+          ref: doc(db, 'properties', params.property.id, 'guests', guestId),
+          data: guestDoc,
+        });
+        const cachedGuest: GuestRecord = { id: guestId, ...(guestDoc as Omit<GuestRecord, 'id'>) };
+        if (emailKey) guestByEmail.set(emailKey, cachedGuest);
+        guestByName.set(safeGuestName.toLowerCase(), cachedGuest);
+      }
+    }
+
+    if (existing) {
+      if (existing.status === 'checked_out' || existing.status === 'no_show') {
+        skipped += 1;
+        continue;
+      }
+      const keptHotelPaid = Math.max(hotelPaidNgn, Math.round(existing.hotelPaidNgn ?? 0));
+      const mergedPaidNgn = Math.min(roomChargesNgn, otaPaidNgn) + keptHotelPaid;
+      const mergedPaymentStatus: PaymentStatusLabel =
+        mergedPaidNgn <= 0 ? 'Unpaid' : mergedPaidNgn >= roomChargesNgn ? 'Paid' : 'Partial';
+      writes.push({
+        kind: 'update',
+        ref: doc(db, 'properties', params.property.id, 'reservations', existing.id),
+        data: {
+          guestName: safeGuestName,
+          ...(row.guestPhone ? { guestPhone: row.guestPhone.slice(0, 32) } : {}),
+          ...(emailKey ? { guestEmail: emailKey.slice(0, 120) } : {}),
+          ...(row.guestCountry ? { guestCountry: row.guestCountry.slice(0, 80) } : {}),
+          checkInDate: row.checkInDate,
+          checkOutDate: row.checkOutDate,
+          nights: row.nights,
+          adults: row.adults,
+          children: row.children,
+          sourceCurrency: channelCurrency,
+          sourceNightlyRate,
+          sourceTotalAmount,
+          fxRateToNgn: fxRate,
+          otaPaidSourceAmount,
+          otaPaidNgn,
+          expectedPayoutNgn,
+          roomChargesNgn,
+          nightlyRateNgn,
+          hotelPaidNgn: keptHotelPaid,
+          paidNgn: mergedPaidNgn,
+          paymentStatus: mergedPaymentStatus,
+          paymentConfirmed: mergedPaidNgn > 0,
+          paymentCollectionMode: otaPaidSourceAmount > 0 ? 'ota_prepaid' : 'hotel_collect',
+          ...(row.status === 'cancelled' ? { status: 'cancelled' } : {}),
+          updatedAt: now,
+        },
+      });
+      updated += 1;
+    } else {
+      const resData: Omit<ReservationRecord, 'id' | 'createdAt'> & {
+        createdAt: ReturnType<typeof serverTimestamp>;
+        updatedAt: ReturnType<typeof serverTimestamp>;
+      } = {
+        propertyId: params.property.id,
+        bookingRef,
+        roomId: assignedRoom.id,
+        roomNumber: assignedRoom.roomNumber,
+        requestedRoomType: assignedRoom.roomType.slice(0, 64),
+        guestId,
+        guestName: safeGuestName,
+        ...(row.guestPhone ? { guestPhone: row.guestPhone.slice(0, 32) } : {}),
+        ...(emailKey ? { guestEmail: emailKey.slice(0, 120) } : {}),
+        ...(row.guestCountry ? { guestCountry: row.guestCountry.slice(0, 80) } : {}),
+        checkInDate: row.checkInDate,
+        checkOutDate: row.checkOutDate,
+        bookedDate: todayIso,
+        nights: row.nights,
+        adults: row.adults,
+        children: row.children,
+        channel: resolvedChannelSource,
+        nightlyRateNgn,
+        roomChargesNgn,
+        posChargesNgn: 0,
+        paidNgn,
+        sourceCurrency: channelCurrency,
+        sourceNightlyRate,
+        sourceTotalAmount,
+        fxRateToNgn: fxRate,
+        paymentCollectionMode: otaPaidSourceAmount > 0 ? 'ota_prepaid' : 'hotel_collect',
+        otaPaidNgn,
+        otaPaidSourceAmount,
+        expectedPayoutNgn,
+        hotelPaidNgn,
+        paymentStatus,
+        paymentConfirmed: paidNgn > 0,
+        status: row.status,
+        paymentMethod: otaPaidNgn > 0 ? 'OTA Platform Payout' : 'Bank Transfer',
+        externalUid,
+        authorizedEmails: params.property.authorizedEmails,
+        ownerUid: uid,
+        createdAt: now,
+        updatedAt: now,
+      };
+      writes.push({
+        kind: 'set',
+        ref: doc(db, 'properties', params.property.id, 'reservations', deterministicId),
+        data: resData as Record<string, unknown>,
+      });
+      const cached: ReservationRecord = { id: deterministicId, ...(resData as Omit<ReservationRecord, 'id'>) };
+      byExternalUid.set(`${resolvedChannelSource}::${externalUid}`, cached);
+      byBookingRef.set(`${resolvedChannelSource}::${bookingRef.toUpperCase()}`, cached);
+      created += 1;
+    }
+  }
+
+  // Update matching connected OTA channel stats without ever altering `connected` state
+  const matchingChannel = (params.otaChannels || []).find(
+    (c) => c.channelName === params.channelName
+  );
+  if (matchingChannel && created + updated > 0) {
+    writes.push({
+      kind: 'update',
+      ref: doc(db, 'properties', params.property.id, 'ota_channels', matchingChannel.id),
+      data: {
+        lastSyncedIso: new Date().toISOString(),
+        bookingsImported: (matchingChannel.bookingsImported || 0) + created,
+        updatedAt: now,
+      },
+    });
+  }
+
+  try {
+    const CHUNK_SIZE = 350;
+    for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
+      const chunk = writes.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+      for (const op of chunk) {
+        if (op.kind === 'set') batch.set(op.ref, op.data);
+        else batch.update(op.ref, op.data);
+      }
+      await batch.commit();
+    }
+
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Channel Manager',
+      action: `Imported ${params.channelName} CSV (${created} new, ${updated} updated)`,
+      details: `${params.rows.length} rows processed · Default currency: ${params.defaultCurrency} · Skipped: ${skipped}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `properties/${params.property.id}/reservations`);
+  }
+
+  return { created, updated, skipped, totalRows: params.rows.length };
 }
 
 export async function createOtaChannelWithIcal(params: {

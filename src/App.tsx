@@ -498,6 +498,9 @@ export default function App() {
       host === 'app.pchpms.com' ||
       host === 'www.pchpms.com' ||
       host === 'pchpms.com' ||
+      host === 'app.pchmps.com' ||
+      host === 'www.pchmps.com' ||
+      host === 'pchmps.com' ||
       Boolean(apex && (host === apex || host === `app.${apex}` || host === `www.${apex}`));
     const isAdminSubdomain =
       host.startsWith('admin.') || host.startsWith('pch.') || host.startsWith('superadmin.');
@@ -1380,17 +1383,18 @@ export default function App() {
     );
   }
 
+  // Strictly isolated public marketing website (`app.pchpms.com` / `app.pchmps.com` / `pchpms.com`)
+  // Render immediately without waiting for internal Firebase Auth state or property data.
+  if (hostContext.kind === 'public_marketing' || portalMode === 'home') {
+    return <AppHomepageView />;
+  }
+
   if (!authReady) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-xs font-semibold text-[#061539]">
         Loading...
       </div>
     );
-  }
-
-  // Strictly isolated public marketing website (`app.pchpms.com` / `pchpms.com`)
-  if (portalMode === 'home') {
-    return <AppHomepageView />;
   }
 
   const loginTenantSlug =

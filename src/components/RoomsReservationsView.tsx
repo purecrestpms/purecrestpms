@@ -56,6 +56,7 @@ import {
   syncRichgatesOfficialCatalogIfNeeded,
   transitionReservationStatus,
   updateGuestRecord,
+  updateReservationCautionDepositWorkflow,
   updateReservationDetailsWorkflow,
   updateRoomStatus,
 } from '../services/pmsService';
@@ -96,6 +97,7 @@ import {
   SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
+import { CountrySelect } from './CountrySelect';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
 
 interface RoomsReservationsViewProps {
@@ -359,6 +361,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [bookingExpectedPayoutInput, setBookingExpectedPayoutInput] = useState<string>('65,500');
   const [bookingExpectedPayoutManual, setBookingExpectedPayoutManual] = useState(false);
   const [bookingHotelPaidInput, setBookingHotelPaidInput] = useState<string>('65,500');
+  const [bookingPaymentStatus, setBookingPaymentStatus] = useState<PaymentStatusLabel>('Paid');
+  const [bookingPaymentStatusManual, setBookingPaymentStatusManual] = useState(false);
+  const [cautionDepositEnabled, setCautionDepositEnabled] = useState(false);
+  const [cautionDepositAmountInput, setCautionDepositAmountInput] = useState<string>('20,000');
+  const [cautionDepositCollectedInput, setCautionDepositCollectedInput] = useState<string>('0');
+  const [cautionDepositRefunded, setCautionDepositRefunded] = useState(false);
   const [initialBookingStatus, setInitialBookingStatus] = useState<'confirmed' | 'pending'>('confirmed');
   const [paymentMethod, setPaymentMethod] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
@@ -473,6 +481,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [editOtaPaidSourceInput, setEditOtaPaidSourceInput] = useState<string>('0');
   const [editExpectedPayoutInput, setEditExpectedPayoutInput] = useState<string>('0');
   const [editHotelPaidInput, setEditHotelPaidInput] = useState<string>('0');
+  const [editPaymentStatus, setEditPaymentStatus] = useState<PaymentStatusLabel>('Unpaid');
+  const [editCautionEnabled, setEditCautionEnabled] = useState(false);
+  const [editCautionAmountInput, setEditCautionAmountInput] = useState<string>('0');
+  const [editCautionCollectedInput, setEditCautionCollectedInput] = useState<string>('0');
+  const [editCautionRefunded, setEditCautionRefunded] = useState(false);
   const [editStayError, setEditStayError] = useState<string | null>(null);
 
   const selectedRoomDetail = selectedRoomDetailId
@@ -565,6 +578,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       );
       setEditExpectedPayoutInput(formatPriceInputWithCommas(summary.expectedPayoutNgn));
       setEditHotelPaidInput(formatPriceInputWithCommas(summary.hotelPaidAmount));
+      setEditPaymentStatus(summary.paymentStatus);
+      setEditCautionEnabled(summary.cautionDepositEnabled);
+      setEditCautionAmountInput(
+        summary.cautionDepositNgn > 0
+          ? formatPriceInputWithCommas(summary.cautionDepositNgn)
+          : '20,000'
+      );
+      setEditCautionCollectedInput(
+        summary.cautionDepositCollectedNgn > 0
+          ? formatPriceInputWithCommas(summary.cautionDepositCollectedNgn)
+          : '0'
+      );
+      setEditCautionRefunded(summary.cautionDepositRefunded);
       setEditStayError(null);
       if (initialReservationIntent === 'edit') {
         onConsumeIntent?.();
@@ -949,6 +975,23 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       ? targetRoom.roomNumber
       : `Unassigned (${resolvedRoomType})`;
 
+    const cautionFeeNgnVal = cautionDepositEnabled
+      ? Math.max(0, Math.round(parseFormattedPriceInput(cautionDepositAmountInput) ?? 0))
+      : 0;
+    const cautionCollectedNgnVal = cautionDepositEnabled
+      ? Math.max(0, Math.round(parseFormattedPriceInput(cautionDepositCollectedInput) ?? 0))
+      : 0;
+    const estChargesNgn = expectedPayoutNgnVal;
+    const otaCreditNgn = isOtaSource ? Math.min(estChargesNgn, otaPaidNgnVal) : 0;
+    const estBalanceNgn = Math.max(0, estChargesNgn - otaCreditNgn - hotelPaidNgnVal);
+    const computedPayStatus: PaymentStatusLabel = bookingPaymentStatusManual
+      ? bookingPaymentStatus
+      : estBalanceNgn <= 0 && (estChargesNgn > 0 || otaPaidNgnVal > 0 || hotelPaidNgnVal > 0)
+        ? 'Paid'
+        : otaPaidNgnVal > 0 || hotelPaidNgnVal > 0
+          ? 'Partial'
+          : 'Unpaid';
+
     setBusyId('booking');
     try {
       await createReservationWorkflow({
@@ -973,6 +1016,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         children: Math.max(0, childrenCount),
         channel,
         paymentMethod,
+        paymentStatus: computedPayStatus,
         depositNgn: hotelPaidNgnVal,
         sourceCurrency: activeCurrency,
         sourceNightlyRate: resolvedSourceNightlyRate,
@@ -983,6 +1027,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         otaPaidNgn: otaPaidNgnVal,
         expectedPayoutNgn: expectedPayoutNgnVal,
         hotelPaidNgn: hotelPaidNgnVal,
+        cautionDepositEnabled,
+        cautionDepositNgn: cautionFeeNgnVal,
+        cautionDepositCollectedNgn: cautionCollectedNgnVal,
+        cautionDepositRefunded: cautionDepositEnabled && cautionDepositRefunded,
         immediateCheckIn,
         initialStatus: initialBookingStatus,
         paymentConfirmed: immediateCheckIn ? inlinePayConfirmed : false,
@@ -1017,6 +1065,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setBookingExpectedPayoutInput(formatPriceInputWithCommas(baseRoomRateNgn));
       setBookingExpectedPayoutManual(false);
       setBookingHotelPaidInput(formatPriceInputWithCommas(baseRoomRateNgn));
+      setBookingPaymentStatus('Paid');
+      setBookingPaymentStatusManual(false);
+      setCautionDepositEnabled(false);
+      setCautionDepositAmountInput('20,000');
+      setCautionDepositCollectedInput('0');
+      setCautionDepositRefunded(false);
       setInlineIdNumber('');
       setInlinePayConfirmed(false);
       setInlineIdVerified(false);
@@ -1249,6 +1303,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       Math.round(parseFormattedPriceInput(editHotelPaidInput) ?? res.hotelPaidNgn ?? 0)
     );
 
+    const editCautionFeeVal = editCautionEnabled
+      ? Math.max(0, Math.round(parseFormattedPriceInput(editCautionAmountInput) ?? 0))
+      : 0;
+    const editCautionCollectedVal = editCautionEnabled
+      ? Math.max(0, Math.round(parseFormattedPriceInput(editCautionCollectedInput) ?? 0))
+      : 0;
+
     setBusyId(`stay-${res.id}`);
     try {
       await updateReservationDetailsWorkflow({
@@ -1276,6 +1337,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         channel: editChannel,
         status: editStatus,
         paymentMethod: editPaymentMethodRes,
+        paymentStatus: editPaymentStatus,
         sourceCurrency: activeEditCurrency,
         sourceNightlyRate: resolvedEditSourceNightly,
         sourceTotalAmount: resolvedEditSourceTotal,
@@ -1283,6 +1345,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         otaPaidSourceAmount: parsedEditOtaSourcePaid,
         expectedPayoutNgn: parsedEditExpectedPayout,
         hotelPaidNgn: parsedEditHotelPaid,
+        cautionDepositEnabled: editCautionEnabled,
+        cautionDepositNgn: editCautionFeeVal,
+        cautionDepositCollectedNgn: editCautionCollectedVal,
+        cautionDepositRefunded: editCautionEnabled && editCautionRefunded,
         actorRole,
       });
       onNotify(
@@ -2152,11 +2218,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">Country</label>
-              <input
-                type="text"
+              <CountrySelect
                 value={walkInCountry}
-                onChange={(e) => setWalkInCountry(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+                onChange={setWalkInCountry}
+                placeholder="Select country..."
               />
             </div>
 
@@ -3007,26 +3072,31 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </div>
                         {isOtaBookingChannel(res.channel) ? (
                           <>
-                            <p className="font-mono-tabular text-[11px] text-indigo-700 font-semibold">
-                              Rate: {formatChannelCurrency(paySummary.sourceNightlyRate, sourceCurrency)}/nt ({sourceCurrency})
-                            </p>
                             <p className="font-mono-tabular text-[11px] text-blue-800 font-semibold">
                               Paid to OTA:{' '}
-                              {paySummary.otaPaidSourceAmount > 0
-                                ? `${formatChannelCurrency(paySummary.otaPaidSourceAmount, sourceCurrency)} ${sourceCurrency}`
-                                : `${formatChannelCurrency(0, sourceCurrency)} ${sourceCurrency}`}
+                              {formatChannelCurrency(paySummary.otaPaidSourceAmount, sourceCurrency)}{' '}
+                              {sourceCurrency}
+                              <span className="text-[10px] font-normal text-blue-700 ml-1">
+                                (≈ {formatNgn(paySummary.otaPaidAmount)})
+                              </span>
                             </p>
                             <p className="font-mono-tabular text-[11px] text-slate-900 font-semibold">
-                              Expected Payout (₦): {formatNgn(paySummary.expectedPayoutNgn)}
+                              Expected Payout: {formatNgn(paySummary.expectedPayoutNgn)}
+                              <span className="text-[10px] font-normal text-slate-500 ml-1">
+                                (≈ {formatUsd(paySummary.expectedPayoutUsd)} USD)
+                              </span>
                             </p>
                             <p className="font-mono-tabular text-[11px] text-emerald-700">
-                              Direct to Property: {formatNgn(hotelPaidAmount)}
+                              Direct to {property.name.split(' ')[0]}: {formatNgn(hotelPaidAmount)}
                             </p>
                           </>
                         ) : (
                           <>
                             <p className="font-mono-tabular font-bold text-slate-900 text-xs">
-                              Total: {formatNgn(totalAmount)}
+                              Total: {formatNgn(totalAmount)}{' '}
+                              <span className="text-[10px] font-medium text-slate-500">
+                                (≈ {formatUsd(paySummary.totalAmountUsd)} USD)
+                              </span>
                             </p>
                             <p className="font-mono-tabular text-[11px] text-emerald-700 font-semibold">
                               Direct to Property: {formatNgn(hotelPaidAmount)}
@@ -3038,8 +3108,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             balance > 0 ? 'text-rose-700' : 'text-slate-600'
                           }`}
                         >
-                          Property Balance Due: {formatNgn(balance)}
+                          Hotel Balance Due: {formatNgn(balance)}
+                          {balance > 0 && (
+                            <span className="text-[10px] font-normal text-rose-600 ml-1">
+                              (≈ {formatUsd(paySummary.balanceUsd)} USD)
+                            </span>
+                          )}
                         </p>
+                        {paySummary.cautionDepositEnabled && paySummary.cautionDepositCollectedNgn > 0 && (
+                          <p className="font-mono-tabular text-[10px] font-semibold text-amber-800">
+                            Caution: {formatNgn(paySummary.cautionDepositCollectedNgn)}{' '}
+                            {paySummary.cautionDepositRefunded ? '· Refunded' : '· Held'}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3455,16 +3536,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   {filteredReservations.map((res) => {
                     const {
                       totalAmount,
+                      totalAmountUsd,
                       otaPaidAmount,
                       hotelPaidAmount,
                       expectedPayoutNgn,
                       amountPaid,
                       balance,
+                      balanceUsd,
                       paymentStatus,
                       sourceCurrency,
-                      sourceNightlyRate,
                       sourceTotalAmount,
                       otaPaidSourceAmount,
+                      cautionDepositEnabled: rowCautionEnabled,
+                      cautionDepositCollectedNgn: rowCautionCollected,
+                      cautionDepositRefunded: rowCautionRefunded,
                     } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
                     const isOtaRow = isOtaBookingChannel(res.channel);
                     const bookedDate = getReservationBookedDate(res);
@@ -3605,31 +3690,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 {sourceCurrency}
                               </span>
                               <span className="block text-[10px] font-medium text-slate-600">
-                                {sourceNightlyRate > 0
-                                  ? `${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt · `
-                                  : ''}
-                                Exp. Payout: {formatNgn(expectedPayoutNgn)}
+                                ≈ {formatNgn(expectedPayoutNgn)}
                               </span>
                             </>
                           ) : (
                             <>
                               <span className="block">{formatNgn(totalAmount)}</span>
-                              {isOtaRow ? (
-                                <span className="block text-[10px] font-medium text-blue-700">
-                                  Exp. Payout: {formatNgn(expectedPayoutNgn)}
-                                </span>
-                              ) : (
-                                sourceCurrency !== 'NGN' &&
-                                sourceTotalAmount > 0 && (
-                                  <span className="block text-[10px] font-medium text-blue-700">
-                                    {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
-                                    {sourceCurrency}
-                                    {sourceNightlyRate > 0
-                                      ? ` · ${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt`
-                                      : ''}
-                                  </span>
-                                )
-                              )}
+                              <span className="block text-[10px] font-medium text-blue-700">
+                                ≈ {formatUsd(totalAmountUsd)} USD
+                              </span>
                             </>
                           )}
                         </td>
@@ -3638,19 +3707,18 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           {isOtaRow ? (
                             <>
                               <span className="block font-semibold text-blue-700">
-                                Paid to OTA:{' '}
-                                {formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)}{' '}
+                                OTA: {formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)}{' '}
                                 {sourceCurrency}
                               </span>
-                              <span className="block text-[10px] text-emerald-700">
-                                Direct Property: {formatNgn(hotelPaidAmount)}
+                              <span className="block text-[10px] text-slate-600">
+                                ≈ {formatNgn(otaPaidAmount)} · Direct: {formatNgn(hotelPaidAmount)}
                               </span>
                             </>
                           ) : (
                             <>
                               <span className="block font-semibold">{formatNgn(amountPaid)}</span>
                               <span className="block text-[10px] text-slate-500">
-                                Direct Property: {formatNgn(hotelPaidAmount)}
+                                Direct: {formatNgn(hotelPaidAmount)}
                               </span>
                             </>
                           )}
@@ -3663,7 +3731,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         >
                           <span className="block">{formatNgn(balance)}</span>
                           <span className="block text-[10px] font-normal text-slate-500">
-                            {balance > 0 ? 'Property bal due' : '₦0 bal due'}
+                            {balance > 0 ? `≈ ${formatUsd(balanceUsd)} USD` : '₦0 bal due'}
                           </span>
                         </td>
 
@@ -3671,6 +3739,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           <span className={`font-semibold ${paymentStatusColor}`}>
                             {paymentStatus}
                           </span>
+                          {rowCautionEnabled && rowCautionCollected > 0 && (
+                            <span className="block text-[10px] font-mono-tabular text-amber-800 mt-0.5">
+                              Caution: {formatNgn(rowCautionCollected)}{' '}
+                              {rowCautionRefunded ? '(Refunded)' : '(Held)'}
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3 px-3.5 whitespace-nowrap">
@@ -4573,8 +4647,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     <div className="border border-blue-200 bg-blue-50/50 rounded-xl p-3.5">
                       <p className="text-[11px] font-semibold text-blue-900">
                         {folioIsOta
-                          ? `Guest Paid to OTA (${folioPaySummary.sourceCurrency})`
-                          : 'OTA Payment Recorded'}
+                          ? `Platform Payment (${activeFolioReservation.channel} · ${folioPaySummary.sourceCurrency})`
+                          : 'Platform Payment (OTA)'}
                       </p>
                       <p className="font-mono-tabular text-base font-bold text-blue-800 mt-1">
                         {folioIsOta
@@ -4584,11 +4658,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             )} ${folioPaySummary.sourceCurrency}`
                           : '₦0'}
                       </p>
-                      {folioIsOta && (
-                        <p className="text-[11px] text-blue-700 mt-0.5">
-                          Exact amount captured in original currency
-                        </p>
-                      )}
+                      <p className="text-[11px] text-blue-700 mt-0.5 font-mono-tabular">
+                        {folioIsOta
+                          ? `≈ ${formatNgn(folioPaySummary.otaPaidAmount)} (@ ₦${folioPaySummary.fxRateToNgn.toLocaleString()})`
+                          : 'Direct booking (no OTA payout)'}
+                      </p>
                     </div>
 
                     <div className="border border-slate-200 bg-slate-50 rounded-xl p-3.5">
@@ -4603,25 +4677,25 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         )}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5 font-mono-tabular">
-                        {activeFolioReservation.nights} night(s)
+                        ≈ {formatUsd(folioIsOta ? folioPaySummary.expectedPayoutUsd : folioPaySummary.totalAmountUsd)} USD · {activeFolioReservation.nights} night(s)
                       </p>
                     </div>
 
                     <div className="border border-emerald-200 bg-emerald-50/50 rounded-xl p-3.5">
                       <p className="text-[11px] font-semibold text-emerald-900">
-                        Direct Payment to Property (₦)
+                        Direct Payment to {property.name.split(' ')[0]} (₦)
                       </p>
                       <p className="font-mono-tabular text-base font-bold text-emerald-800 mt-1">
                         {formatNgn(folioPaySummary.hotelPaidAmount)}
                       </p>
-                      <p className="text-[11px] text-emerald-700 mt-0.5">
-                        Cash / POS / Bank Transfer at property
+                      <p className="text-[11px] text-emerald-700 mt-0.5 font-mono-tabular">
+                        ≈ {formatUsd(folioPaySummary.hotelPaidUsd)} USD · {activeFolioReservation.paymentMethod}
                       </p>
                     </div>
 
                     <div className="border border-slate-200 bg-white rounded-xl p-3.5">
                       <p className="text-[11px] font-semibold text-slate-700">
-                        Remaining Property Balance Due
+                        Outstanding Hotel Balance
                       </p>
                       <p
                         className={`font-mono-tabular text-base font-bold mt-1 ${
@@ -4630,11 +4704,64 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       >
                         {formatNgn(folioPaySummary.balance)}
                       </p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        Status: <strong>{folioPaySummary.paymentStatus}</strong>
+                      <p className="text-[11px] text-slate-500 mt-0.5 font-mono-tabular">
+                        ≈ {formatUsd(folioPaySummary.balanceUsd)} USD · <strong>{folioPaySummary.paymentStatus}</strong>
                       </p>
                     </div>
                   </div>
+
+                  {/* Separate Optional Refundable Caution / Deposit Tracker */}
+                  {folioPaySummary.cautionDepositEnabled && (
+                    <div className="border border-amber-200 bg-amber-50/60 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-amber-950">
+                          Refundable Caution / Deposit Fee (Held Separately from Room Folio)
+                        </p>
+                        <p className="font-mono-tabular text-amber-900">
+                          Fee: <strong>{formatNgn(folioPaySummary.cautionDepositNgn)}</strong> · Collected:{' '}
+                          <strong>{formatNgn(folioPaySummary.cautionDepositCollectedNgn)}</strong>
+                          {folioPaySummary.cautionDepositRefunded
+                            ? ' · Status: Refunded to Guest'
+                            : folioPaySummary.cautionDepositCollectedNgn > 0
+                              ? ' · Status: Pending Refund'
+                              : ' · Status: Not Collected'}
+                        </p>
+                      </div>
+                      <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-950 font-semibold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          disabled={busyId === `caution-${activeFolioReservation.id}`}
+                          checked={folioPaySummary.cautionDepositRefunded}
+                          onChange={async (e) => {
+                            const nextRefunded = e.target.checked;
+                            setBusyId(`caution-${activeFolioReservation.id}`);
+                            try {
+                              await updateReservationCautionDepositWorkflow({
+                                property,
+                                reservation: activeFolioReservation,
+                                cautionDepositEnabled: true,
+                                cautionDepositNgn: folioPaySummary.cautionDepositNgn,
+                                cautionDepositCollectedNgn: folioPaySummary.cautionDepositCollectedNgn,
+                                cautionDepositRefunded: nextRefunded,
+                                actorRole,
+                              });
+                              onNotify(
+                                nextRefunded
+                                  ? `Confirmed caution deposit refunded for ${activeFolioReservation.bookingRef}`
+                                  : `Marked caution deposit as not yet refunded for ${activeFolioReservation.bookingRef}`
+                              );
+                            } catch (err) {
+                              setActionError(parseReadableError(err));
+                            } finally {
+                              setBusyId(null);
+                            }
+                          }}
+                          className="rounded border-amber-400 text-emerald-600"
+                        />
+                        <span>Confirm Refunded to Guest</span>
+                      </label>
+                    </div>
+                  )}
 
                   {/* Stay Summary & Full Reservation Editor */}
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
@@ -4706,6 +4833,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       const editStayTotalSrc = Number(
                         (parsedEditRateSrc * editNightsCalc).toFixed(2)
                       );
+                      const editStayTotalNgn =
+                        activeEditCur === 'NGN'
+                          ? Math.round(editStayTotalSrc)
+                          : Math.round(editStayTotalSrc * parsedEditFxNum);
+                      const editStayTotalUsd =
+                        activeEditCur === 'USD'
+                          ? editStayTotalSrc
+                          : convertNgnToUsd(editStayTotalNgn, property.usdExchangeRateNgn);
 
                       return (
                         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-4">
@@ -4715,125 +4850,76 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             </p>
                           )}
 
-                          {/* Section 1: Guest Contact & Address */}
-                          <div className="rounded-xl border border-sky-200 bg-sky-50/40 p-4 space-y-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <h4 className="font-display text-xs font-bold text-sky-950 uppercase tracking-wider">
-                                1. Guest Contact &amp; Address
-                              </h4>
-                              <span className="text-[11px] font-medium text-sky-700">
-                                Synced to Guest Profile
-                              </span>
-                            </div>
+                          {/* Section 1: Stay Details (Top) */}
+                          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+                            <h4 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
+                              1. Stay Details
+                            </h4>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Guest First Name *
+                                  Check-In Date
                                 </label>
                                 <input
-                                  type="text"
-                                  value={editGuestFirstNameRes}
-                                  onChange={(e) => setEditGuestFirstNameRes(e.target.value)}
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Guest Last Name *
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editGuestLastNameRes}
-                                  onChange={(e) => setEditGuestLastNameRes(e.target.value)}
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Phone Number
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editGuestPhoneRes}
-                                  onChange={(e) => setEditGuestPhoneRes(e.target.value)}
-                                  placeholder="+234 800 000 0000"
+                                  type="date"
+                                  value={editCheckInDate}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setEditCheckInDate(val);
+                                    if (val && editCheckOutDate <= val) {
+                                      setEditCheckOutDate(addDaysIso(val, 1));
+                                    }
+                                    setEditStayError(null);
+                                  }}
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
                                 />
                               </div>
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Guest Email
+                                  Check-Out Date
                                 </label>
                                 <input
-                                  type="email"
-                                  value={editGuestEmailRes}
-                                  onChange={(e) => setEditGuestEmailRes(e.target.value)}
-                                  placeholder="guest@example.com"
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                                />
-                              </div>
-                              <div className="sm:col-span-2 lg:col-span-2">
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Street Address
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editGuestAddressRes}
-                                  onChange={(e) => setEditGuestAddressRes(e.target.value)}
-                                  placeholder="House / Street / Estate"
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                  type="date"
+                                  min={editCheckInDate ? addDaysIso(editCheckInDate, 1) : undefined}
+                                  value={editCheckOutDate}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    const safeOut =
+                                      editCheckInDate && raw && raw <= editCheckInDate
+                                        ? addDaysIso(editCheckInDate, 1)
+                                        : raw;
+                                    setEditCheckOutDate(safeOut);
+                                    setEditStayError(null);
+                                  }}
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
                                 />
                               </div>
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  City
+                                  Room Type
                                 </label>
-                                <input
-                                  type="text"
-                                  value={editGuestCityRes}
-                                  onChange={(e) => setEditGuestCityRes(e.target.value)}
-                                  placeholder="e.g. Enugu"
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                                />
+                                <select
+                                  value={editRequestedRoomType}
+                                  onChange={(e) => {
+                                    const rt = e.target.value;
+                                    setEditRequestedRoomType(rt);
+                                    const matchedRoom = sortedRooms.find((r) => r.roomType === rt);
+                                    if (matchedRoom && editRoomId) {
+                                      setEditRoomId(matchedRoom.id);
+                                    }
+                                  }}
+                                  className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                                >
+                                  {uniqueRoomTypes.map((rt) => (
+                                    <option key={rt} value={rt}>
+                                      {rt}
+                                    </option>
+                                  ))}
+                                </select>
                               </div>
-                              <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                    State
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={editGuestStateRes}
-                                    onChange={(e) => setEditGuestStateRes(e.target.value)}
-                                    placeholder="State"
-                                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                    Country
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={editGuestCountryRes}
-                                    onChange={(e) => setEditGuestCountryRes(e.target.value)}
-                                    placeholder="Country"
-                                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs"
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Section 2: Room, Dates & Booking Source */}
-                          <div className="rounded-xl border border-violet-200 bg-violet-50/35 p-4 space-y-3">
-                            <h4 className="font-display text-xs font-bold text-violet-950 uppercase tracking-wider">
-                              2. Room Assignment, Stay Dates &amp; Source
-                            </h4>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Room
+                                  Room Assignment
                                 </label>
                                 <select
                                   value={editRoomId}
@@ -4854,24 +4940,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   ))}
                                 </select>
                               </div>
-                              {editRoomId === '' && (
-                                <div>
-                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                    Requested Room Type
-                                  </label>
-                                  <select
-                                    value={editRequestedRoomType}
-                                    onChange={(e) => setEditRequestedRoomType(e.target.value)}
-                                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                                  >
-                                    {uniqueRoomTypes.map((rt) => (
-                                      <option key={rt} value={rt}>
-                                        {rt}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              )}
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                                   Booking Source
@@ -4937,44 +5005,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               </div>
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Check-In Date
-                                </label>
-                                <input
-                                  type="date"
-                                  value={editCheckInDate}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setEditCheckInDate(val);
-                                    if (val && editCheckOutDate <= val) {
-                                      setEditCheckOutDate(addDaysIso(val, 1));
-                                    }
-                                    setEditStayError(null);
-                                  }}
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Check-Out Date
-                                </label>
-                                <input
-                                  type="date"
-                                  min={editCheckInDate ? addDaysIso(editCheckInDate, 1) : undefined}
-                                  value={editCheckOutDate}
-                                  onChange={(e) => {
-                                    const raw = e.target.value;
-                                    const safeOut =
-                                      editCheckInDate && raw && raw <= editCheckInDate
-                                        ? addDaysIso(editCheckInDate, 1)
-                                        : raw;
-                                    setEditCheckOutDate(safeOut);
-                                    setEditStayError(null);
-                                  }}
-                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                                   Adults / Children
                                 </label>
                                 <div className="grid grid-cols-2 gap-2">
@@ -5003,16 +5033,115 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             </div>
                           </div>
 
-                          {/* Section 3: Reorganized Charges & Settlement */}
-                          <div className="rounded-xl border border-emerald-200 bg-emerald-50/35 p-4 space-y-3">
+                          {/* Section 2: Guest Information */}
+                          <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 space-y-3">
+                            <h4 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
+                              2. Guest Information
+                            </h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  First Name *
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editGuestFirstNameRes}
+                                  onChange={(e) => setEditGuestFirstNameRes(e.target.value)}
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Last Name *
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editGuestLastNameRes}
+                                  onChange={(e) => setEditGuestLastNameRes(e.target.value)}
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Phone Number
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editGuestPhoneRes}
+                                  onChange={(e) => setEditGuestPhoneRes(e.target.value)}
+                                  placeholder="+234 800 000 0000"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Guest Email
+                                </label>
+                                <input
+                                  type="email"
+                                  value={editGuestEmailRes}
+                                  onChange={(e) => setEditGuestEmailRes(e.target.value)}
+                                  placeholder="guest@example.com"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Street Address
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editGuestAddressRes}
+                                  onChange={(e) => setEditGuestAddressRes(e.target.value)}
+                                  placeholder="House / Street / Estate"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  City
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editGuestCityRes}
+                                  onChange={(e) => setEditGuestCityRes(e.target.value)}
+                                  placeholder="e.g. Enugu"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  State
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editGuestStateRes}
+                                  onChange={(e) => setEditGuestStateRes(e.target.value)}
+                                  placeholder="State"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Country
+                                </label>
+                                <CountrySelect
+                                  value={editGuestCountryRes}
+                                  onChange={setEditGuestCountryRes}
+                                  placeholder="Search country..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Section 3: Payments & Settlement */}
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 space-y-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <h4 className="font-display text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                                3. Charges &amp; Settlement Breakdown
+                                3. Payments &amp; Settlement
                               </h4>
                               <span className="text-[11px] font-mono-tabular font-semibold text-emerald-800">
-                                {editIsOta
-                                  ? `OTA Pricing (${activeEditCur}) · Property Settlement (₦)`
-                                  : 'Direct Property Billing (₦)'}
+                                1 USD = ₦{(property.usdExchangeRateNgn || 1600).toLocaleString()}
                               </span>
                             </div>
 
@@ -5039,14 +5168,55 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Stay Total ({editNightsCalc}n · {activeEditCur})
+                                  Stay Total ({editNightsCalc}n)
                                 </label>
-                                <div className="w-full h-10 border border-slate-200 bg-slate-50 rounded-lg px-3 flex items-center justify-between text-xs font-mono-tabular font-bold text-slate-900">
+                                <div className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 flex items-center justify-between text-xs font-mono-tabular font-bold text-slate-900">
                                   <span>{formatChannelCurrency(editStayTotalSrc, activeEditCur)}</span>
-                                  <span className="text-[10px] font-semibold text-slate-500">
-                                    {activeEditCur}
+                                  <span className="text-[10px] font-medium text-blue-700">
+                                    {activeEditCur === 'USD'
+                                      ? `≈ ${formatNgn(editStayTotalNgn)}`
+                                      : `≈ ${formatUsd(editStayTotalUsd)} USD`}
                                   </span>
                                 </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Payment Method
+                                </label>
+                                <select
+                                  value={editPaymentMethodRes}
+                                  onChange={(e) =>
+                                    setEditPaymentMethodRes(
+                                      e.target.value as ReservationRecord['paymentMethod']
+                                    )
+                                  }
+                                  className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                                >
+                                  <option value="Bank Transfer">Bank Transfer</option>
+                                  <option value="Card POS">Card POS</option>
+                                  <option value="Cash NGN">Cash NGN</option>
+                                  <option value="Online Gateway">Online Gateway</option>
+                                  <option value="Corporate Invoice">Corporate Invoice</option>
+                                  <option value="OTA Platform Payout">OTA Platform Payout</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Payment Status
+                                </label>
+                                <select
+                                  value={editPaymentStatus}
+                                  onChange={(e) =>
+                                    setEditPaymentStatus(e.target.value as PaymentStatusLabel)
+                                  }
+                                  className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
+                                >
+                                  <option value="Paid">Paid</option>
+                                  <option value="Partial">Partial</option>
+                                  <option value="Unpaid">Unpaid</option>
+                                </select>
                               </div>
 
                               {editIsOta && (
@@ -5093,7 +5263,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                                   <div>
                                     <label className="block text-[11px] font-semibold text-blue-900 mb-1">
-                                      Guest Paid to OTA ({activeEditCur})
+                                      Platform Payment ({activeEditCur})
                                     </label>
                                     <input
                                       type="text"
@@ -5135,9 +5305,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                               <div>
                                 <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
-                                  {editIsOta
-                                    ? 'Additional Direct Payment (₦)'
-                                    : 'Direct Payment to Property (₦)'}
+                                  Direct Payment to {property.name.split(' ')[0]} (₦)
                                 </label>
                                 <input
                                   type="text"
@@ -5154,42 +5322,78 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900"
                                 />
                               </div>
-
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Payment Method
-                                </label>
-                                <select
-                                  value={editPaymentMethodRes}
-                                  onChange={(e) =>
-                                    setEditPaymentMethodRes(
-                                      e.target.value as ReservationRecord['paymentMethod']
-                                    )
-                                  }
-                                  className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                                >
-                                  <option value="Bank Transfer">Bank Transfer</option>
-                                  <option value="Card POS">Card POS</option>
-                                  <option value="Cash NGN">Cash NGN</option>
-                                  <option value="Corporate Invoice">Corporate Invoice</option>
-                                  <option value="Online Gateway">Online Gateway</option>
-                                </select>
-                              </div>
                             </div>
+                          </div>
+
+                          {/* Section 4: Optional Refundable Caution / Deposit Fee */}
+                          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
+                            <label className="inline-flex items-center gap-2 text-xs font-bold text-amber-950 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editCautionEnabled}
+                                onChange={(e) => setEditCautionEnabled(e.target.checked)}
+                                className="rounded border-amber-400 text-emerald-600"
+                              />
+                              <span>Optional Refundable Caution / Deposit Fee (Tracked Separately)</span>
+                            </label>
+                            {editCautionEnabled && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                    Caution / Deposit Fee (₦)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editCautionAmountInput}
+                                    onChange={(e) =>
+                                      handleCommaPriceChange(
+                                        e,
+                                        editCautionAmountInput,
+                                        setEditCautionAmountInput
+                                      )
+                                    }
+                                    placeholder="20,000"
+                                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                    Amount Collected (₦)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editCautionCollectedInput}
+                                    onChange={(e) =>
+                                      handleCommaPriceChange(
+                                        e,
+                                        editCautionCollectedInput,
+                                        setEditCautionCollectedInput
+                                      )
+                                    }
+                                    placeholder="0"
+                                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                                  />
+                                </div>
+                                <label className="h-10 inline-flex items-center gap-2 px-3 rounded-lg bg-white border border-amber-300 text-xs font-semibold text-amber-950 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editCautionRefunded}
+                                    onChange={(e) => setEditCautionRefunded(e.target.checked)}
+                                    className="rounded border-amber-400 text-emerald-600"
+                                  />
+                                  <span>Refunded to Guest</span>
+                                </label>
+                              </div>
+                            )}
                           </div>
 
                           <div className="flex flex-wrap items-center justify-between gap-3 text-xs pt-2 border-t border-slate-100">
                             <span className="text-slate-600 font-mono-tabular">
                               Updated Stay: <strong>{editNightsCalc} night(s)</strong> · Total{' '}
                               <strong>{formatChannelCurrency(editStayTotalSrc, activeEditCur)}</strong>{' '}
-                              {activeEditCur}
-                              {editIsOta
-                                ? ` · Exp. Payout ${formatNgn(
-                                    Math.round(
-                                      parseFormattedPriceInput(editExpectedPayoutInput) ?? 0
-                                    )
-                                  )}`
-                                : ''}
+                              {activeEditCur} (≈ {formatUsd(editStayTotalUsd)} USD / {formatNgn(editStayTotalNgn)})
                             </span>
                             <button
                               type="button"
@@ -6077,6 +6281,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       parseFormattedPriceInput(bookingFxRateInput) ??
                         getFxRateToNgn(activeCur, property.usdExchangeRateNgn)
                     );
+              const internalUsdRate = Math.max(1, Number(property.usdExchangeRateNgn) || 1600);
               const parsedNightlyInput = parseFormattedPriceInput(bookingNightlyRateInput);
               const activeSourceNightlyRate =
                 activeCur === 'NGN'
@@ -6094,6 +6299,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 activeCur === 'NGN'
                   ? Math.round(activeSourceStayTotal)
                   : Math.round(activeSourceStayTotal * fxRate);
+              const activeStayUsdEquivalent =
+                activeCur === 'USD'
+                  ? activeSourceStayTotal
+                  : convertNgnToUsd(activeStayNgnEquivalent, internalUsdRate);
 
               const otaPaidSrc = isOta
                 ? Math.max(0, parseFormattedPriceInput(bookingOtaPaidSourceInput) ?? 0)
@@ -6125,19 +6334,28 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 0,
                 estTotalCharges - otaCreditTowardCharges - directPaidEst
               );
-              const estPayStatus =
+              const estBalanceUsd = convertNgnToUsd(estBalanceDue, internalUsdRate);
+              const autoPayStatus: PaymentStatusLabel =
                 estBalanceDue <= 0 &&
                 (estTotalCharges > 0 || otaPaidNgnEst > 0 || directPaidEst > 0)
                   ? 'Paid'
                   : otaPaidNgnEst > 0 || directPaidEst > 0
                     ? 'Partial'
                     : 'Unpaid';
+              const estPayStatus: PaymentStatusLabel = bookingPaymentStatusManual
+                ? bookingPaymentStatus
+                : autoPayStatus;
+              const roomsMatchingType = sortedRooms.filter(
+                (r) => !newRequestedRoomType || r.roomType === newRequestedRoomType
+              );
+              const propertyShortName = property.name.split(' ')[0] || 'Property';
 
               return (
                 <form
                   onSubmit={handleCreateBooking}
-                  className="bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-6 space-y-5 shadow-xs"
+                  className="bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-6 space-y-6 shadow-xs"
                 >
+                  {/* Clean Header — No subtitle beneath title */}
                   <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
                     <div className="flex items-center gap-3">
                       <button
@@ -6148,19 +6366,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         <ArrowLeft className="w-3.5 h-3.5" />
                         <span>Back</span>
                       </button>
-                      <div>
-                        <h2 className="font-display text-lg font-bold text-slate-900">
-                          Create Reservation or Immediate Check-In
-                        </h2>
-                        <p className="text-xs text-slate-500">
-                          Complete guest contact, stay dates, USD/NGN channel rates, and settlement details ·{' '}
-                          <span className="font-mono-tabular font-semibold text-slate-700">
-                            {systemPropertyId}
-                          </span>
-                        </p>
-                      </div>
+                      <h2 className="font-display text-lg font-bold text-[#061539]">
+                        New Reservation
+                      </h2>
                     </div>
-                    <span className="text-xs font-mono-tabular text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+                    <span className="text-xs font-mono-tabular text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
                       Booked: {todayIso}
                     </span>
                   </div>
@@ -6171,20 +6381,333 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     </div>
                   )}
 
-                  {/* 1. Guest Contact & Address */}
-                  <div className="rounded-xl border border-sky-200 bg-sky-50/40 p-4 space-y-3 text-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="font-display text-xs font-bold text-sky-950 uppercase tracking-wider">
-                        1. Guest Contact &amp; Address
+                  {/* SECTION 1: STAYS (Check-in, Check-out & Room Type at Top) */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
+                        1. Stay Details
                       </h3>
-                      <span className="text-[11px] font-medium text-sky-700">
-                        Automatically creates / updates Guest Directory KYC
+                      <span className="font-mono-tabular text-[11px] font-semibold text-slate-600">
+                        {safeNights} Night{safeNights !== 1 ? 's' : ''} · {adults} Adult{adults !== 1 ? 's' : ''}
+                        {childrenCount > 0 ? `, ${childrenCount} Child${childrenCount !== 1 ? 'ren' : ''}` : ''}
                       </span>
                     </div>
+
+                    {/* Row 1: Check-In, Check-Out, Room Type, Room Assignment */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Guest First Name *
+                          Check-In Date *
+                        </label>
+                        <input
+                          required
+                          type="date"
+                          value={checkInDate}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (!val) return;
+                            setCheckInDate(val);
+                            let nextNights = nights;
+                            if (checkOutDate <= val) {
+                              const nextOut = addDaysIso(val, 1);
+                              setCheckOutDate(nextOut);
+                              nextNights = 1;
+                              setNights(1);
+                            } else {
+                              nextNights = diffNights(val, checkOutDate);
+                              setNights(nextNights);
+                            }
+                            const nextStayNgn =
+                              activeCur === 'NGN'
+                                ? Math.round(activeSourceNightlyRate * nextNights)
+                                : Math.round(activeSourceNightlyRate * nextNights * fxRate);
+                            if (!bookingExpectedPayoutManual) {
+                              setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
+                            }
+                            if (!isOta && estPayStatus === 'Paid') {
+                              setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
+                            }
+                            setBookingError(null);
+                          }}
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Check-Out Date *
+                        </label>
+                        <input
+                          required
+                          type="date"
+                          min={addDaysIso(checkInDate, 1)}
+                          value={checkOutDate}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (!raw) return;
+                            const safeOut = raw <= checkInDate ? addDaysIso(checkInDate, 1) : raw;
+                            setCheckOutDate(safeOut);
+                            const nextNights = diffNights(checkInDate, safeOut);
+                            setNights(nextNights);
+                            const nextStayNgn =
+                              activeCur === 'NGN'
+                                ? Math.round(activeSourceNightlyRate * nextNights)
+                                : Math.round(activeSourceNightlyRate * nextNights * fxRate);
+                            if (!bookingExpectedPayoutManual) {
+                              setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
+                            }
+                            if (!isOta && estPayStatus === 'Paid') {
+                              setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
+                            }
+                            setBookingError(null);
+                          }}
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Room Type *
+                        </label>
+                        <select
+                          value={newRequestedRoomType}
+                          onChange={(e) => {
+                            const rt = e.target.value;
+                            setNewRequestedRoomType(rt);
+                            const matching = sortedRooms.filter(
+                              (r) => r.roomType === rt && r.occupancyStatus !== 'out_of_order'
+                            );
+                            const preferred =
+                              matching.find((r) => r.occupancyStatus === 'vacant') || matching[0];
+                            if (preferred) {
+                              setSelectedRoomId(preferred.id);
+                              const nextTotal = preferred.nightlyRateNgn * Math.max(1, nights);
+                              setBookingNightlyRateInput(
+                                activeCur === 'NGN'
+                                  ? formatPriceInputWithCommas(preferred.nightlyRateNgn)
+                                  : String(
+                                      Number((preferred.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
+                                    )
+                              );
+                              if (!bookingExpectedPayoutManual) {
+                                setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
+                              }
+                              if (!isOta && estPayStatus === 'Paid') {
+                                setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
+                              }
+                            } else {
+                              setSelectedRoomId('');
+                            }
+                            setBookingError(null);
+                          }}
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium"
+                        >
+                          {uniqueRoomTypes.map((rt) => {
+                            const sample = sortedRooms.find((r) => r.roomType === rt);
+                            return (
+                              <option key={rt} value={rt}>
+                                {rt} {sample ? `· ${formatNgn(sample.nightlyRateNgn)}/nt` : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Room Assignment
+                        </label>
+                        <select
+                          value={selectedRoomId}
+                          onChange={(e) => {
+                            const nextId = e.target.value;
+                            const rm = rooms.find((r) => r.id === nextId);
+                            setSelectedRoomId(nextId);
+                            setBookingError(null);
+                            if (rm) {
+                              setNewRequestedRoomType(rm.roomType);
+                              const nextTotal = rm.nightlyRateNgn * Math.max(1, nights);
+                              setBookingNightlyRateInput(
+                                activeCur === 'NGN'
+                                  ? formatPriceInputWithCommas(rm.nightlyRateNgn)
+                                  : String(
+                                      Number((rm.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
+                                    )
+                              );
+                              if (!bookingExpectedPayoutManual) {
+                                setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
+                              }
+                              if (!isOta && estPayStatus === 'Paid') {
+                                setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
+                              }
+                            } else {
+                              setImmediateCheckIn(false);
+                            }
+                          }}
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                        >
+                          <option value="">Unassigned — Assign later</option>
+                          {(roomsMatchingType.length > 0 ? roomsMatchingType : sortedRooms).map((r) => (
+                            <option
+                              key={r.id}
+                              value={r.id}
+                              disabled={r.occupancyStatus === 'out_of_order'}
+                            >
+                              {r.roomNumber} · {r.name} ({r.occupancyStatus})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Row 2: Booking Source, Nights, Adults/Children, Reservation Status */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Booking Source
+                        </label>
+                        <select
+                          value={channel}
+                          onChange={(e) => {
+                            const nextCh = e.target.value as ReservationRecord['channel'];
+                            setChannel(nextCh);
+                            setBookingPaymentStatusManual(false);
+                            const nextIsOta = isOtaBookingChannel(nextCh);
+                            const defaultRoomTotal = baseRateNgn * Math.max(1, nights);
+                            if (!nextIsOta) {
+                              setBookingCurrency('NGN');
+                              setBookingFxRateInput('1');
+                              setBookingNightlyRateInput(formatPriceInputWithCommas(baseRateNgn));
+                              setBookingOtaPaidSourceInput('');
+                              setBookingExpectedPayoutManual(false);
+                              setBookingExpectedPayoutInput(
+                                formatPriceInputWithCommas(defaultRoomTotal)
+                              );
+                              setBookingHotelPaidInput(formatPriceInputWithCommas(defaultRoomTotal));
+                              setPaymentMethod('Bank Transfer');
+                            } else {
+                              const nextCur = getDefaultOtaChannelCurrency(nextCh);
+                              const nextFx =
+                                nextCur === 'NGN'
+                                  ? 1
+                                  : getFxRateToNgn(nextCur, property.usdExchangeRateNgn);
+                              setBookingCurrency(nextCur);
+                              setBookingFxRateInput(
+                                nextCur === 'NGN' ? '1' : formatPriceInputWithCommas(nextFx)
+                              );
+                              const srcNightly =
+                                nextCur === 'NGN'
+                                  ? baseRateNgn
+                                  : Number((baseRateNgn / Math.max(1, nextFx)).toFixed(2));
+                              setBookingNightlyRateInput(
+                                nextCur === 'NGN'
+                                  ? formatPriceInputWithCommas(baseRateNgn)
+                                  : String(srcNightly)
+                              );
+                              setBookingOtaPaidSourceInput(
+                                String(Number((srcNightly * Math.max(1, nights)).toFixed(2)))
+                              );
+                              setBookingHotelPaidInput('0');
+                              setPaymentMethod('OTA Platform Payout');
+                              if (!bookingExpectedPayoutManual) {
+                                setBookingExpectedPayoutInput(
+                                  formatPriceInputWithCommas(defaultRoomTotal)
+                                );
+                              }
+                            }
+                          }}
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium"
+                        >
+                          {PRIMARY_BOOKING_SOURCES.map((src) => (
+                            <option key={src.value} value={src.value}>
+                              {src.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Nights
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={nights}
+                          onChange={(e) => {
+                            const nextN = Math.max(1, Number(e.target.value));
+                            setNights(nextN);
+                            setCheckOutDate(addDaysIso(checkInDate, nextN));
+                            const nextStayNgn =
+                              activeCur === 'NGN'
+                                ? Math.round(activeSourceNightlyRate * nextN)
+                                : Math.round(activeSourceNightlyRate * nextN * fxRate);
+                            if (!bookingExpectedPayoutManual) {
+                              setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
+                            }
+                            if (!isOta && estPayStatus === 'Paid') {
+                              setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
+                            }
+                          }}
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Adults / Children
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            title="Adults"
+                            value={adults}
+                            onChange={(e) => setAdults(Math.max(1, Number(e.target.value)))}
+                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular"
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            title="Children"
+                            value={childrenCount}
+                            onChange={(e) =>
+                              setChildrenCount(Math.max(0, Number(e.target.value)))
+                            }
+                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Reservation Status
+                        </label>
+                        <select
+                          value={immediateCheckIn ? 'checked_in' : initialBookingStatus}
+                          disabled={immediateCheckIn}
+                          onChange={(e) =>
+                            setInitialBookingStatus(e.target.value as 'confirmed' | 'pending')
+                          }
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs disabled:bg-slate-100"
+                        >
+                          <option value="confirmed">Confirmed</option>
+                          <option value="pending">Pending</option>
+                          {immediateCheckIn && <option value="checked_in">Checked-in</option>}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION 2: GUEST INFORMATION (Essential Fields + Searchable Country Dropdown) */}
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3.5 text-xs">
+                    <h3 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
+                      2. Guest Information
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          First Name *
                         </label>
                         <input
                           required
@@ -6198,7 +6721,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Guest Last Name *
+                          Last Name *
                         </label>
                         <input
                           required
@@ -6237,7 +6760,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         />
                       </div>
 
-                      <div className="sm:col-span-2 lg:col-span-2">
+                      <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                           Street Address
                         </label>
@@ -6263,331 +6786,40 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         />
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            State
-                          </label>
-                          <input
-                            type="text"
-                            value={guestState}
-                            onChange={(e) => setGuestState(e.target.value)}
-                            placeholder="State"
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Country
-                          </label>
-                          <input
-                            type="text"
-                            value={guestCountry}
-                            onChange={(e) => setGuestCountry(e.target.value)}
-                            placeholder="Country"
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 2. Room, Stay Dates & Booking Source */}
-                  <div className="rounded-xl border border-violet-200 bg-violet-50/35 p-4 space-y-3 text-xs">
-                    <h3 className="font-display text-xs font-bold text-violet-950 uppercase tracking-wider">
-                      2. Room Assignment, Stay Dates &amp; Booking Source
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Room
-                        </label>
-                        <select
-                          value={selectedRoomId}
-                          onChange={(e) => {
-                            const nextId = e.target.value;
-                            const rm = rooms.find((r) => r.id === nextId);
-                            setSelectedRoomId(nextId);
-                            setBookingError(null);
-                            if (rm) {
-                              setNewRequestedRoomType(rm.roomType);
-                              const nextTotal = rm.nightlyRateNgn * Math.max(1, nights);
-                              setBookingNightlyRateInput(
-                                activeCur === 'NGN'
-                                  ? formatPriceInputWithCommas(rm.nightlyRateNgn)
-                                  : String(
-                                      Number((rm.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
-                                    )
-                              );
-                              if (!bookingExpectedPayoutManual) {
-                                setBookingExpectedPayoutInput(
-                                  formatPriceInputWithCommas(nextTotal)
-                                );
-                              }
-                              if (!isOtaBookingChannel(channel)) {
-                                setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
-                              }
-                            } else {
-                              setImmediateCheckIn(false);
-                            }
-                          }}
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                        >
-                          <option value="">Unassigned — Assign later</option>
-                          {sortedRooms.map((r) => (
-                            <option
-                              key={r.id}
-                              value={r.id}
-                              disabled={r.occupancyStatus === 'out_of_order'}
-                            >
-                              {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}) [
-                              {r.occupancyStatus}]
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {selectedRoomId === '' && (
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Requested Room Type
-                          </label>
-                          <select
-                            value={newRequestedRoomType}
-                            onChange={(e) => {
-                              const rt = e.target.value;
-                              setNewRequestedRoomType(rt);
-                              const match = rooms.find((r) => r.roomType === rt);
-                              if (match) {
-                                const nextTotal = match.nightlyRateNgn * Math.max(1, nights);
-                                setBookingNightlyRateInput(
-                                  activeCur === 'NGN'
-                                    ? formatPriceInputWithCommas(match.nightlyRateNgn)
-                                    : String(
-                                        Number(
-                                          (match.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2)
-                                        )
-                                      )
-                                );
-                                if (!bookingExpectedPayoutManual) {
-                                  setBookingExpectedPayoutInput(
-                                    formatPriceInputWithCommas(nextTotal)
-                                  );
-                                }
-                                if (!isOtaBookingChannel(channel)) {
-                                  setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
-                                }
-                              }
-                            }}
-                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                          >
-                            {uniqueRoomTypes.map((rt) => (
-                              <option key={rt} value={rt}>
-                                {rt}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Booking Source
-                        </label>
-                        <select
-                          value={channel}
-                          onChange={(e) => {
-                            const nextCh = e.target.value as ReservationRecord['channel'];
-                            setChannel(nextCh);
-                            const nextIsOta = isOtaBookingChannel(nextCh);
-                            const defaultRoomTotal = baseRateNgn * Math.max(1, nights);
-                            if (!nextIsOta) {
-                              setBookingCurrency('NGN');
-                              setBookingFxRateInput('1');
-                              setBookingNightlyRateInput(formatPriceInputWithCommas(baseRateNgn));
-                              setBookingOtaPaidSourceInput('');
-                              setBookingExpectedPayoutManual(false);
-                              setBookingExpectedPayoutInput(
-                                formatPriceInputWithCommas(defaultRoomTotal)
-                              );
-                              setBookingHotelPaidInput(
-                                formatPriceInputWithCommas(defaultRoomTotal)
-                              );
-                            } else {
-                              const nextCur = getDefaultOtaChannelCurrency(nextCh);
-                              const nextFx =
-                                nextCur === 'NGN'
-                                  ? 1
-                                  : getFxRateToNgn(nextCur, property.usdExchangeRateNgn);
-                              setBookingCurrency(nextCur);
-                              setBookingFxRateInput(
-                                nextCur === 'NGN' ? '1' : formatPriceInputWithCommas(nextFx)
-                              );
-                              setBookingNightlyRateInput(
-                                nextCur === 'NGN'
-                                  ? formatPriceInputWithCommas(baseRateNgn)
-                                  : String(Number((baseRateNgn / Math.max(1, nextFx)).toFixed(2)))
-                              );
-                              setBookingHotelPaidInput('0');
-                              if (!bookingExpectedPayoutManual) {
-                                setBookingExpectedPayoutInput(
-                                  formatPriceInputWithCommas(defaultRoomTotal)
-                                );
-                              }
-                            }
-                          }}
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium"
-                        >
-                          {PRIMARY_BOOKING_SOURCES.map((src) => (
-                            <option key={src.value} value={src.value}>
-                              {src.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Initial Status
-                        </label>
-                        <select
-                          value={immediateCheckIn ? 'checked_in' : initialBookingStatus}
-                          disabled={immediateCheckIn}
-                          onChange={(e) =>
-                            setInitialBookingStatus(e.target.value as 'confirmed' | 'pending')
-                          }
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs disabled:bg-slate-100"
-                        >
-                          <option value="confirmed">Confirmed</option>
-                          <option value="pending">Pending</option>
-                          {immediateCheckIn && <option value="checked_in">Checked-in</option>}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Check-In Date
+                          State
                         </label>
                         <input
-                          type="date"
-                          value={checkInDate}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (!val) return;
-                            setCheckInDate(val);
-                            let nextNights = nights;
-                            if (checkOutDate <= val) {
-                              const nextOut = addDaysIso(val, 1);
-                              setCheckOutDate(nextOut);
-                              nextNights = 1;
-                              setNights(1);
-                            } else {
-                              nextNights = diffNights(val, checkOutDate);
-                              setNights(nextNights);
-                            }
-                            if (!bookingExpectedPayoutManual) {
-                              const nextStayNgn =
-                                activeCur === 'NGN'
-                                  ? Math.round(activeSourceNightlyRate * nextNights)
-                                  : Math.round(activeSourceNightlyRate * nextNights * fxRate);
-                              setBookingExpectedPayoutInput(
-                                formatPriceInputWithCommas(nextStayNgn)
-                              );
-                            }
-                            setBookingError(null);
-                          }}
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                          type="text"
+                          value={guestState}
+                          onChange={(e) => setGuestState(e.target.value)}
+                          placeholder="State"
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Check-Out Date
+                          Country
                         </label>
-                        <input
-                          type="date"
-                          min={addDaysIso(checkInDate, 1)}
-                          value={checkOutDate}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (!raw) return;
-                            const safeOut = raw <= checkInDate ? addDaysIso(checkInDate, 1) : raw;
-                            setCheckOutDate(safeOut);
-                            const nextNights = diffNights(checkInDate, safeOut);
-                            setNights(nextNights);
-                            if (!bookingExpectedPayoutManual) {
-                              const nextStayNgn =
-                                activeCur === 'NGN'
-                                  ? Math.round(activeSourceNightlyRate * nextNights)
-                                  : Math.round(activeSourceNightlyRate * nextNights * fxRate);
-                              setBookingExpectedPayoutInput(
-                                formatPriceInputWithCommas(nextStayNgn)
-                              );
-                            }
-                            setBookingError(null);
-                          }}
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                        <CountrySelect
+                          value={guestCountry}
+                          onChange={setGuestCountry}
+                          placeholder="Search country..."
                         />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Nights / Adults / Children
-                        </label>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          <input
-                            type="number"
-                            min={1}
-                            title="Nights"
-                            value={nights}
-                            onChange={(e) => {
-                              const nextN = Math.max(1, Number(e.target.value));
-                              setNights(nextN);
-                              if (!bookingExpectedPayoutManual) {
-                                const nextStayNgn =
-                                  activeCur === 'NGN'
-                                    ? Math.round(activeSourceNightlyRate * nextN)
-                                    : Math.round(activeSourceNightlyRate * nextN * fxRate);
-                                setBookingExpectedPayoutInput(
-                                  formatPriceInputWithCommas(nextStayNgn)
-                                );
-                              }
-                            }}
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2 text-xs font-mono-tabular"
-                          />
-                          <input
-                            type="number"
-                            min={1}
-                            title="Adults"
-                            value={adults}
-                            onChange={(e) => setAdults(Math.max(1, Number(e.target.value)))}
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2 text-xs font-mono-tabular"
-                          />
-                          <input
-                            type="number"
-                            min={0}
-                            title="Children"
-                            value={childrenCount}
-                            onChange={(e) =>
-                              setChildrenCount(Math.max(0, Number(e.target.value)))
-                            }
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2 text-xs font-mono-tabular"
-                          />
-                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* 3. Reorganized Charges & Settlement */}
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/35 p-4 space-y-4 text-xs">
+                  {/* SECTION 3: PAYMENTS (Separated Platform vs Direct vs Outstanding Hotel Balance) */}
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 space-y-4 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <h3 className="font-display text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                        3. Charges, Currency &amp; Payment Settlement
+                        3. Payments &amp; Settlement
                       </h3>
                       <span className="text-[11px] font-mono-tabular font-semibold text-emerald-800">
-                        {isOta
-                          ? `OTA Channel Currency (${activeCur}) · Property Settlement in Naira (₦)`
-                          : 'Direct Property Rate & Settlement (₦)'}
+                        Internal FX: 1 USD = ₦{internalUsdRate.toLocaleString()}
                       </span>
                     </div>
 
@@ -6607,7 +6839,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               (nextVal) => {
                                 setBookingNightlyRateInput(nextVal);
                                 const parsedRate = parseFormattedPriceInput(nextVal) ?? 0;
-                                if (parsedRate > 0) {
+                                if (parsedRate >= 0) {
                                   const nextTotalSrc = parsedRate * safeNights;
                                   const nextTotalNgn =
                                     activeCur === 'NGN'
@@ -6618,7 +6850,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                       formatPriceInputWithCommas(nextTotalNgn)
                                     );
                                   }
-                                  if (!isOta) {
+                                  if (!isOta && estPayStatus === 'Paid') {
                                     setBookingHotelPaidInput(
                                       formatPriceInputWithCommas(nextTotalNgn)
                                     );
@@ -6627,30 +6859,77 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               }
                             );
                           }}
-                          placeholder={activeCur === 'NGN' ? '55,000' : '120.00'}
+                          placeholder={activeCur === 'NGN' ? '65,500' : '120.00'}
                           className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Stay Total ({safeNights} night{safeNights !== 1 ? 's' : ''} · {activeCur})
+                          Stay Total ({safeNights}n · USD &amp; ₦)
                         </label>
-                        <div className="w-full h-10 border border-slate-200 bg-slate-50 rounded-lg px-3 flex items-center justify-between text-xs font-mono-tabular font-bold text-slate-900">
+                        <div className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 flex items-center justify-between text-xs font-mono-tabular font-bold text-slate-900">
                           <span>
                             {formatChannelCurrency(activeSourceStayTotal, activeCur)}
                           </span>
-                          <span className="text-[10px] font-semibold text-slate-500">
-                            {activeCur}
+                          <span className="text-[10px] font-semibold text-blue-700">
+                            {activeCur === 'USD'
+                              ? `≈ ${formatNgn(activeStayNgnEquivalent)}`
+                              : `≈ ${formatUsd(activeStayUsdEquivalent)} USD`}
                           </span>
                         </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Payment Method
+                        </label>
+                        <select
+                          value={paymentMethod}
+                          onChange={(e) =>
+                            setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
+                          }
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                        >
+                          <option value="Bank Transfer">Bank Transfer</option>
+                          <option value="Card POS">Card POS</option>
+                          <option value="Cash NGN">Cash NGN</option>
+                          <option value="Online Gateway">Online Gateway</option>
+                          <option value="Corporate Invoice">Corporate Invoice</option>
+                          <option value="OTA Platform Payout">OTA Platform Payout</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Payment Status
+                        </label>
+                        <select
+                          value={estPayStatus}
+                          onChange={(e) => {
+                            const nextStatus = e.target.value as PaymentStatusLabel;
+                            setBookingPaymentStatus(nextStatus);
+                            setBookingPaymentStatusManual(true);
+                            if (nextStatus === 'Unpaid') {
+                              setBookingHotelPaidInput('0');
+                              if (isOta) setBookingOtaPaidSourceInput('0');
+                            } else if (nextStatus === 'Paid' && !isOta) {
+                              setBookingHotelPaidInput(formatPriceInputWithCommas(estTotalCharges));
+                            }
+                          }}
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
+                        >
+                          <option value="Paid">Paid</option>
+                          <option value="Partial">Partial</option>
+                          <option value="Unpaid">Unpaid</option>
+                        </select>
                       </div>
 
                       {isOta && (
                         <>
                           <div>
                             <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                              Original Currency &amp; FX (₦)
+                              Platform Currency &amp; FX (₦)
                             </label>
                             <div className="grid grid-cols-2 gap-1.5">
                               <select
@@ -6710,7 +6989,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                           <div>
                             <label className="block text-[11px] font-semibold text-blue-900 mb-1">
-                              Guest Paid to OTA ({activeCur})
+                              Platform Payment — {channel} ({activeCur})
                             </label>
                             <input
                               type="text"
@@ -6718,6 +6997,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               placeholder="0.00"
                               value={bookingOtaPaidSourceInput}
                               onChange={(e) => {
+                                setBookingPaymentStatusManual(false);
                                 handleCommaPriceChange(
                                   e,
                                   bookingOtaPaidSourceInput,
@@ -6763,98 +7043,145 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                       <div>
                         <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
-                          {isOta
-                            ? 'Additional Direct Payment (₦)'
-                            : 'Direct Payment to Property (₦)'}
+                          Direct Payment Received by {propertyShortName} (₦)
                         </label>
                         <input
                           type="text"
                           inputMode="decimal"
                           value={bookingHotelPaidInput}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            setBookingPaymentStatusManual(false);
                             handleCommaPriceChange(
                               e,
                               bookingHotelPaidInput,
                               setBookingHotelPaidInput
-                            )
-                          }
+                            );
+                          }}
                           placeholder="0"
                           className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900"
                         />
                       </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Payment Method
-                        </label>
-                        <select
-                          value={paymentMethod}
-                          onChange={(e) =>
-                            setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
-                          }
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                        >
-                          <option value="Bank Transfer">Bank Transfer</option>
-                          <option value="Card POS">Card POS</option>
-                          <option value="Cash NGN">Cash NGN</option>
-                          <option value="Corporate Invoice">Corporate Invoice</option>
-                          <option value="Online Gateway">Online Gateway</option>
-                        </select>
-                      </div>
                     </div>
 
-                    {/* Live Charges & Settlement Summary Strip */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 border-t border-emerald-200/70">
-                      <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          {isOta ? `Paid to OTA (${activeCur})` : 'Room Stay Total (₦)'}
+                    {/* Separated Live Payment Summary Strip */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2.5 border-t border-emerald-200/70">
+                      <div className="bg-white border border-blue-200 rounded-lg px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-800">
+                          Platform Payment ({isOta ? channel : 'OTA'})
                         </p>
-                        <p
-                          className={`font-mono-tabular text-sm font-bold mt-0.5 ${
-                            isOta ? 'text-blue-700' : 'text-slate-900'
-                          }`}
-                        >
+                        <p className="font-mono-tabular text-sm font-bold text-blue-800 mt-0.5">
                           {isOta
                             ? `${formatChannelCurrency(otaPaidSrc, activeCur)} ${activeCur}`
-                            : formatNgn(estTotalCharges)}
+                            : '₦0'}
+                        </p>
+                        <p className="font-mono-tabular text-[10px] text-slate-500">
+                          {isOta ? `≈ ${formatNgn(otaPaidNgnEst)}` : 'Direct booking'}
                         </p>
                       </div>
                       <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          {isOta ? 'Expected Payout (₦)' : 'Nightly Rate (₦)'}
+                          {isOta ? 'Expected Property Payout' : 'Stay Room Total'}
                         </p>
                         <p className="font-mono-tabular text-sm font-bold text-slate-900 mt-0.5">
-                          {isOta ? formatNgn(expectedPayoutEst) : formatNgn(activeSourceNightlyRate)}
+                          {formatNgn(expectedPayoutEst)}
+                        </p>
+                        <p className="font-mono-tabular text-[10px] text-slate-500">
+                          ≈ {formatUsd(convertNgnToUsd(expectedPayoutEst, internalUsdRate))} USD
                         </p>
                       </div>
-                      <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          Direct Paid at Property
+                      <div className="bg-white border border-emerald-200 rounded-lg px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800">
+                          Direct to {propertyShortName}
                         </p>
                         <p className="font-mono-tabular text-sm font-bold text-emerald-700 mt-0.5">
                           {formatNgn(directPaidEst)}
                         </p>
+                        <p className="font-mono-tabular text-[10px] text-slate-500">
+                          {paymentMethod}
+                        </p>
                       </div>
                       <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          Balance Due · Status
+                          Outstanding Hotel Balance
                         </p>
-                        <p className="font-mono-tabular text-sm font-bold text-slate-900 mt-0.5">
+                        <p
+                          className={`font-mono-tabular text-sm font-bold mt-0.5 ${
+                            estBalanceDue > 0 ? 'text-rose-700' : 'text-emerald-700'
+                          }`}
+                        >
                           {formatNgn(estBalanceDue)}{' '}
-                          <span
-                            className={`text-xs ${
-                              estPayStatus === 'Paid'
-                                ? 'text-emerald-700'
-                                : estPayStatus === 'Partial'
-                                  ? 'text-amber-700'
-                                  : 'text-rose-700'
-                            }`}
-                          >
-                            ({estPayStatus})
-                          </span>
+                          <span className="text-[11px] font-semibold">({estPayStatus})</span>
+                        </p>
+                        <p className="font-mono-tabular text-[10px] text-slate-500">
+                          ≈ {formatUsd(estBalanceUsd)} USD
                         </p>
                       </div>
                     </div>
+                  </div>
+
+                  {/* SECTION 4: OPTIONAL REFUNDABLE CAUTION / DEPOSIT FEE */}
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3 text-xs">
+                    <label className="inline-flex items-center gap-2 font-bold text-amber-950 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cautionDepositEnabled}
+                        onChange={(e) => setCautionDepositEnabled(e.target.checked)}
+                        className="rounded border-amber-400 text-emerald-600"
+                      />
+                      <span>4. Optional Refundable Caution / Deposit Fee</span>
+                    </label>
+
+                    {cautionDepositEnabled && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                            Caution / Deposit Fee Amount (₦)
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={cautionDepositAmountInput}
+                            onChange={(e) =>
+                              handleCommaPriceChange(
+                                e,
+                                cautionDepositAmountInput,
+                                setCautionDepositAmountInput
+                              )
+                            }
+                            placeholder="20,000"
+                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                            Amount Collected (₦)
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={cautionDepositCollectedInput}
+                            onChange={(e) =>
+                              handleCommaPriceChange(
+                                e,
+                                cautionDepositCollectedInput,
+                                setCautionDepositCollectedInput
+                              )
+                            }
+                            placeholder="0"
+                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                          />
+                        </div>
+                        <label className="h-10 inline-flex items-center gap-2 px-3 rounded-lg bg-white border border-amber-300 text-xs font-semibold text-amber-950 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={cautionDepositRefunded}
+                            onChange={(e) => setCautionDepositRefunded(e.target.checked)}
+                            className="rounded border-amber-400 text-emerald-600"
+                          />
+                          <span>Confirm Refunded to Guest</span>
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
@@ -6885,7 +7212,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         ? 'Saving...'
                         : immediateCheckIn
                           ? 'Verify & Check In Guest'
-                          : 'Create Confirmed Reservation'}
+                          : 'Save Reservation'}
                     </button>
                   </div>
 
