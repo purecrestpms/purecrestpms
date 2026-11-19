@@ -607,7 +607,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
-                  <label className="block font-medium text-slate-600 mb-1">Suite / Facility</label>
+                  <label className="block font-medium text-slate-600 mb-1">Room / Facility</label>
                   <select
                     value={maintRoomId}
                     onChange={(e) => setMaintRoomId(e.target.value)}

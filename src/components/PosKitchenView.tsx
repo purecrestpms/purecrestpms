@@ -868,7 +868,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   </div>
                 ) : (
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Suite Guest</label>
+                    <label className="block font-medium text-slate-700 mb-1">Room Guest</label>
                     <input
                       type="text"
                       readOnly

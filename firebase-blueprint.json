@@ -146,6 +146,7 @@
         "currentGuestName": { "type": "string", "maxLength": 120 },
         "currentReservationId": { "type": "string", "maxLength": 128 },
         "imageUrl": { "type": "string", "maxLength": 350000 },
+        "galleryImages": { "type": "array" },
         "amenities": { "type": "array" },
         "authorizedEmails": { "type": "array" },
         "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },

@@ -279,7 +279,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     a.download = `${property.code.toLowerCase()}-production-backup-rooms-only.json`;
     a.click();
     URL.revokeObjectURL(url);
-    onNotify(`Downloaded clean production backup (${cleanRooms.length} suites, 0 demo guests)`);
+    onNotify(`Downloaded clean production backup (${cleanRooms.length} rooms, 0 demo guests)`);
   };
 
   const handleConfirmPurgeDemoGuests = async () => {
@@ -2898,7 +2898,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
                 </p>
               </div>
               <span className="font-mono-tabular text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-lg shrink-0">
-                {sortedRooms.length} Suites Intact · Clean State
+                {sortedRooms.length} Rooms Intact · Clean State
               </span>
             </div>
 

@@ -100,12 +100,12 @@ export const RICHGATES_GALLERY_ASSETS: Array<{
   },
   {
     id: 'rg-suite-living',
-    label: 'One Bedroom Suite Living Area',
+    label: 'One Bedroom Living Area',
     url: '/assets/aistudio/B8CC7C05-AC7B-438D-B422-4033B0713BA1_f0334307.png',
   },
   {
     id: 'rg-deluxe-bedroom',
-    label: 'Deluxe Studio Bedroom Suite',
+    label: 'Deluxe Studio Bedroom',
     url: '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png',
   },
   {
@@ -130,6 +130,7 @@ export interface OfficialRoomSpec {
   nightlyRateNgn: number;
   maxGuests: number;
   imageUrl: string;
+  galleryImages?: string[];
   amenities: string[];
 }
 
@@ -356,9 +357,62 @@ export interface RoomRecord {
   currentGuestName?: string;
   currentReservationId?: string;
   imageUrl?: string;
+  galleryImages?: string[];
   amenities?: string[];
   authorizedEmails: string[];
   ownerUid: string;
+}
+
+export function getRoomGalleryImages(
+  room: Pick<RoomRecord, 'imageUrl' | 'galleryImages' | 'section' | 'roomNumber'>
+): Array<{ url: string; label: string }> {
+  const defaultCover =
+    room.imageUrl?.trim() ||
+    RICHGATES_GALLERY_ASSETS[2]?.url ||
+    '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png';
+  const assetLabelMap = new Map(RICHGATES_GALLERY_ASSETS.map((a) => [a.url, a.label]));
+
+  const customList = (room.galleryImages || [])
+    .map((u) => (typeof u === 'string' ? u.trim() : ''))
+    .filter(Boolean);
+
+  if (customList.length > 0) {
+    const ordered = Array.from(new Set([defaultCover, ...customList])).slice(0, 6);
+    return ordered.map((url, idx) => ({
+      url,
+      label: assetLabelMap.get(url) || `${room.roomNumber} Photo ${idx + 1}`,
+    }));
+  }
+
+  // Provide a curated multi-slide gallery per room using existing property imagery
+  const sectionDefaults =
+    room.section === 'Serviced Apartment'
+      ? [
+          RICHGATES_GALLERY_ASSETS[0],
+          RICHGATES_GALLERY_ASSETS[1],
+          RICHGATES_GALLERY_ASSETS[2],
+          RICHGATES_GALLERY_ASSETS[4],
+        ]
+      : [
+          RICHGATES_GALLERY_ASSETS[2],
+          RICHGATES_GALLERY_ASSETS[3],
+          RICHGATES_GALLERY_ASSETS[1],
+          RICHGATES_GALLERY_ASSETS[4],
+        ];
+
+  const seen = new Set<string>();
+  const slides: Array<{ url: string; label: string }> = [];
+  const pushSlide = (url: string, label: string) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    slides.push({ url, label });
+  };
+
+  pushSlide(defaultCover, assetLabelMap.get(defaultCover) || `${room.roomNumber} Main View`);
+  for (const item of sectionDefaults) {
+    if (item) pushSlide(item.url, item.label);
+  }
+  return slides.slice(0, 4);
 }
 
 export interface BlockedDateRecord {
@@ -1746,10 +1800,10 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       'Thank you for choosing Richgates Apartments, Enugu. Official NGN receipt issued at Front Desk.',
   },
   login: {
-    richgatesHeroKicker: 'Serviced Apartments & Hotel Suites',
+    richgatesHeroKicker: 'Serviced Apartments & Hotel Rooms',
     richgatesHeroTitle: 'Richgates Apartments, Enugu',
     richgatesHeroDesc:
-      'Manage suite reservations, arrivals, in-house folios, nightly Naira rates, availability calendar blocks, and iCal booking channels.',
+      'Manage room reservations, arrivals, in-house folios, nightly Naira rates, availability calendar blocks, and iCal booking channels.',
     staffHeroKicker: 'Department Staff Workspace',
     staffHeroTitle: 'Richgates Apartments Staff Operations',
     staffHeroDesc:
@@ -1773,9 +1827,9 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
     roomOverviewTitle: 'Room Overview',
     scheduleTitle: "Today's Schedule",
     servicedSectionTitle: 'Serviced Apartment Section',
-    servicedSectionSubtitle: 'Self-contained studios and suites equipped with fitted kitchenettes',
+    servicedSectionSubtitle: 'Self-contained studios and rooms equipped with fitted kitchenettes',
     hotelSectionTitle: 'Hotel Rooms Section',
-    hotelSectionSubtitle: 'Individual executive studios and one-bedroom hospitality suites',
+    hotelSectionSubtitle: 'Individual executive studios and one-bedroom hospitality rooms',
     quickWalkInLabel: 'Walk-in Check-in',
     quickReservationsLabel: 'Reservations',
     quickArrivalsLabel: 'Arrivals',
@@ -1795,14 +1849,14 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       navLabel: 'Reservations',
       title: 'Reservations',
       subtitle:
-        'Manage bookings, assign suites, verify payment & payment status, track check-in/out dates, and execute front desk actions',
+        'Manage bookings, assign rooms, verify payment & payment status, track check-in/out dates, and execute front desk actions',
       ctaLabel: 'New Reservation',
     },
     calendar: {
-      navLabel: 'Calendar & Blocks',
+      navLabel: 'Calendar',
       title: 'Availability Calendar, Search & Date Blocking',
       subtitle:
-        'Search stays or available suites by date range, place owner/maintenance date blocks, or click any open date cell to book.',
+        'Search stays or available rooms by date range, place owner/maintenance date blocks, or click any open date cell to book.',
       ctaLabel: 'Block Room Dates',
     },
     arrivals: {
@@ -1814,7 +1868,7 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
     in_house: {
       navLabel: 'In-House',
       title: 'In-House Guests',
-      subtitle: 'Currently checked-in guests, live suite folios, room changes, extensions, and departures due',
+      subtitle: 'Currently checked-in guests, live room folios, room changes, extensions, and departures due',
       ctaLabel: 'New Reservation',
     },
     walk_in: {
@@ -1836,10 +1890,10 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       ctaLabel: 'Download PDF',
     },
     rooms: {
-      navLabel: 'Rooms & Rates',
-      title: 'Rooms, Rates & Suite Photos',
+      navLabel: 'Rooms',
+      title: 'Rooms, Rates & Photo Gallery',
       subtitle:
-        'Update nightly Naira rates, room types, sections, and upload suite photography',
+        'Browse room galleries, view amenities, update nightly Naira rates, and manage room availability',
       ctaLabel: 'Sync Official Rates',
     },
     guests: {
@@ -1851,7 +1905,7 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
     housekeeping: {
       navLabel: 'Housekeeping',
       title: 'Housekeeping Dispatch & Room Readiness',
-      subtitle: 'Live turnover schedule, attendant assignments, and suite inspection workflow',
+      subtitle: 'Live turnover schedule, attendant assignments, and room inspection workflow',
       ctaLabel: 'Assign Housekeeping Task',
     },
     pos_kitchen: {
@@ -1862,13 +1916,13 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       ctaLabel: 'Send Order to Kitchen',
     },
     accounting: {
-      navLabel: 'Accounting Ledger',
-      title: 'Accounting Ledger (Nigerian Naira ₦)',
+      navLabel: 'Payments',
+      title: 'Payments & Accounting Ledger (Nigerian Naira ₦)',
       subtitle: 'Real-time double-linked journal across Room Settlements, Restaurant POS, Procurement & Payroll',
       ctaLabel: 'Post Journal Entry',
     },
     reports: {
-      navLabel: 'Management Reports',
+      navLabel: 'Reports',
       title: 'Admin Management Reports & Analytics',
       subtitle: 'Real-time executive analytics covering P&L, occupancy, ADR, RevPAR, booking sources, POS sales, departments, inventory, and staff performance',
       ctaLabel: 'Export PDF',
@@ -1886,7 +1940,7 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       ctaLabel: 'New Purchase Order',
     },
     staff: {
-      navLabel: 'Staff, Users & Performance',
+      navLabel: 'Staff & Performance',
       title: 'Staff, User Accounts & Performance',
       subtitle: 'Create user accounts, assign roles & privileges, manage staff records, and review performance metrics',
       ctaLabel: 'Onboard Staff Member',
@@ -1931,7 +1985,7 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       navLabel: 'Channel Manager & iCal',
       title: 'Channel Manager & iCal Links',
       subtitle:
-        'Connect channels with inbound iCal (.ics) links, export suite calendars, and sync OTA bookings in real time',
+        'Connect channels with inbound iCal (.ics) links, export room calendars, import CSVs, and sync OTA bookings in real time',
       ctaLabel: 'Add Channel / iCal Link',
     },
     properties_admin: {
@@ -1956,7 +2010,7 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       navLabel: 'Messages & Alerts',
       title: 'Inter-Departmental Messaging & Staff Broadcasts',
       subtitle:
-        'Send direct department handovers, urgent operational alerts, and bulk messages to staff across all Richgates teams.',
+        'Send direct department handovers, urgent operational alerts, and bulk messages to staff across all property teams.',
       ctaLabel: 'New Message',
     },
     training_help: {
@@ -1973,9 +2027,9 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       ctaLabel: 'Copy Link',
     },
     profile: {
-      navLabel: 'Admin & Property Profile',
-      title: 'Admin & Property Profile',
-      subtitle: 'Manage your signed-in operator details and official Richgates Apartments contact profile',
+      navLabel: 'Settings',
+      title: 'Settings & Property Profile',
+      subtitle: 'Manage your signed-in operator details and official property contact profile',
       ctaLabel: 'Update Property Info',
     },
     cms: {

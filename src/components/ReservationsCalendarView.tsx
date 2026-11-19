@@ -317,7 +317,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         !quickRoomReady
       ) {
         setConflictError(
-          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming suite readiness.'
+          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming room readiness.'
         );
         return;
       }
@@ -487,7 +487,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
               className="rounded border-slate-300 text-emerald-600"
             />
             <span>
-              Show only suites available from{' '}
+              Show only rooms available from{' '}
               <strong className="font-mono-tabular">{availCheckIn}</strong> to{' '}
               <strong className="font-mono-tabular">{availCheckOut}</strong>
             </span>
@@ -520,7 +520,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
           <div className="flex items-center gap-2">
             <CalendarIcon className="w-4 h-4 text-slate-600" />
             <h2 className="font-display text-sm font-bold text-slate-900">
-              14-Day Suite Availability Grid
+              14-Day Room Availability Grid
             </h2>
           </div>
 
@@ -562,7 +562,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
                 <th className="py-2.5 px-4 w-56 sticky left-0 bg-slate-50 z-10 border-r border-slate-200">
-                  Suite / Rate
+                  Room / Rate
                 </th>
                 {calendarDays.map((day) => {
                   const hdr = formatDayHeader(day);
@@ -776,7 +776,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
               className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Book Suite</span>
+              <span>Book Room</span>
             </button>
           </div>
           <div className="divide-y divide-slate-100">
@@ -916,7 +916,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             {modalMode === 'block' ? (
               <form onSubmit={handleSaveBlockDates} className="space-y-4 text-xs">
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Suite / Room</label>
+                  <label className="block font-medium text-slate-700 mb-1">Room</label>
                   <select
                     value={targetRoomId}
                     onChange={(e) => {
@@ -1022,7 +1022,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             ) : (
               <form onSubmit={handleCreateQuickBooking} className="space-y-4 text-xs">
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Suite / Room</label>
+                  <label className="block font-medium text-slate-700 mb-1">Room</label>
                   <select
                     value={targetRoomId}
                     onChange={(e) => {
@@ -1242,7 +1242,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         checked={quickRoomReady}
                         onChange={(e) => setQuickRoomReady(e.target.checked)}
                       />
-                      <span>3. Suite inspected ready for guest</span>
+                      <span>3. Room inspected ready for guest</span>
                     </label>
                     <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
                       <span className="font-semibold text-slate-800">4. Key Issued? *</span>

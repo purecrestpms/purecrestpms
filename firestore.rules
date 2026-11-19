@@ -207,7 +207,7 @@ service cloud.firestore {
       data.keys().hasOnly([
         'propertyId', 'roomNumber', 'name', 'roomType', 'section', 'floor', 'nightlyRateNgn',
         'maxGuests', 'occupancyStatus', 'housekeepingStatus', 'currentGuestName',
-        'currentReservationId', 'imageUrl', 'amenities', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+        'currentReservationId', 'imageUrl', 'galleryImages', 'amenities', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
       data.roomNumber is string && data.roomNumber.size() >= 1 && data.roomNumber.size() <= 16 &&
@@ -222,6 +222,7 @@ service cloud.firestore {
       (!('currentGuestName' in data) || (data.currentGuestName is string && data.currentGuestName.size() <= 120)) &&
       (!('currentReservationId' in data) || (data.currentReservationId is string && data.currentReservationId.size() <= 128)) &&
       (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 350000)) &&
+      (!('galleryImages' in data) || (data.galleryImages is list && data.galleryImages.size() <= 6 && (data.galleryImages.size() == 0 || data.galleryImages[0] is string))) &&
       (!('amenities' in data) || (data.amenities is list && data.amenities.size() <= 15 && (data.amenities.size() == 0 || data.amenities[0] is string))) &&
       isAuthorizedEmailList(data.authorizedEmails) &&
       data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&

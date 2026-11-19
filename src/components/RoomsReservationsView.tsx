@@ -75,6 +75,7 @@ import {
   getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
+  getRoomGalleryImages,
   getRoomSection,
   GuestRecord,
   isOtaBookingChannel,
@@ -99,6 +100,7 @@ import {
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
+import { getAmenityIcon, RoomGallerySlider } from './RoomGallerySlider';
 
 interface RoomsReservationsViewProps {
   section: Extract<
@@ -114,6 +116,11 @@ interface RoomsReservationsViewProps {
   housekeepingTasksCount?: number;
   selectedReservationId?: string | null;
   initialReservationIntent?: 'view' | 'edit';
+  initialRoomDetailId?: string | null;
+  onConsumeRoomDetailId?: () => void;
+  prefillBookingRoomId?: string | null;
+  onConsumePrefillBookingRoomId?: () => void;
+  onStartNewReservationForRoom?: (roomId: string) => void;
   onConsumeIntent?: () => void;
   onSelectReservation?: (id: string | null) => void;
   onNavigateSection?: (section: NavSectionId) => void;
@@ -139,7 +146,12 @@ function parseReadableError(err: unknown): string {
   return raw;
 }
 
-async function compressImageToDataUrl(file: File): Promise<string> {
+async function compressImageToDataUrl(
+  file: File,
+  options?: { maxWidth?: number; maxBytes?: number }
+): Promise<string> {
+  const maxWidth = options?.maxWidth ?? 880;
+  const maxBytes = options?.maxBytes ?? 320000;
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read selected image file.'));
@@ -147,7 +159,6 @@ async function compressImageToDataUrl(file: File): Promise<string> {
       const img = new Image();
       img.onerror = () => reject(new Error('Unsupported or corrupted image file.'));
       img.onload = () => {
-        const maxWidth = 880;
         const scale = img.width > maxWidth ? maxWidth / img.width : 1;
         const targetW = Math.max(1, Math.round(img.width * scale));
         const targetH = Math.max(1, Math.round(img.height * scale));
@@ -163,11 +174,11 @@ async function compressImageToDataUrl(file: File): Promise<string> {
 
         let quality = 0.78;
         let result = canvas.toDataURL('image/jpeg', quality);
-        while (result.length > 320000 && quality > 0.35) {
-          quality -= 0.12;
+        while (result.length > maxBytes && quality > 0.32) {
+          quality -= 0.1;
           result = canvas.toDataURL('image/jpeg', quality);
         }
-        if (result.length > 340000) {
+        if (result.length > maxBytes + 25000) {
           reject(new Error('Image too large after compression. Please pick a smaller image.'));
           return;
         }
@@ -258,6 +269,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   guests,
   selectedReservationId,
   initialReservationIntent = 'view',
+  initialRoomDetailId,
+  onConsumeRoomDetailId,
+  prefillBookingRoomId,
+  onConsumePrefillBookingRoomId,
+  onStartNewReservationForRoom,
   onConsumeIntent,
   onSelectReservation,
   onNavigateSection,
@@ -275,6 +291,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const atRoomCapacity = rooms.length >= effectiveMaxRooms;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const addRoomFileInputRef = useRef<HTMLInputElement | null>(null);
+  const gallerySlideFileInputRef = useRef<HTMLInputElement | null>(null);
+  const addRoomGallerySlideFileInputRef = useRef<HTMLInputElement | null>(null);
   const roomDefaultInitRef = useRef(false);
   const todayIso = new Date().toISOString().slice(0, 10);
   const tomorrowIso = addDaysIso(todayIso, 1);
@@ -319,8 +337,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     useState<RoomRecord['housekeepingStatus']>('clean');
   const [draftAmenitiesText, setDraftAmenitiesText] = useState('');
   const [draftImageUrl, setDraftImageUrl] = useState('');
+  const [draftGalleryImages, setDraftGalleryImages] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [editRoomError, setEditRoomError] = useState<string | null>(null);
+
+  // Rooms search & amenity browser state
+  const [roomSearchQuery, setRoomSearchQuery] = useState('');
+  const [roomSectionFilter, setRoomSectionFilter] = useState<'ALL' | RoomSection>('ALL');
+  const [roomStatusFilter, setRoomStatusFilter] = useState<'ALL' | RoomRecord['occupancyStatus']>('ALL');
+  const [roomAmenityFilter, setRoomAmenityFilter] = useState<string>('ALL');
+  const [expandedAmenityRoomIds, setExpandedAmenityRoomIds] = useState<Record<string, boolean>>({});
 
   // Add New Room Page state
   const [showAddRoomModal, setShowAddRoomModal] = useState(false);
@@ -333,6 +359,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [newRoomMaxGuests, setNewRoomMaxGuests] = useState<number>(2);
   const [newRoomAmenitiesText, setNewRoomAmenitiesText] = useState('King Bed, Wi-Fi, Smart TV, 24/7 Power');
   const [newRoomImageUrl, setNewRoomImageUrl] = useState(DEFAULT_SUITE_IMAGE);
+  const [newRoomGalleryImages, setNewRoomGalleryImages] = useState<string[]>([]);
   const [addRoomError, setAddRoomError] = useState<string | null>(null);
 
   // New Reservation Page state (auto-pick today & next day)
@@ -508,6 +535,33 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setShowGuestForm(false);
     setSelectedGuestId(null);
   }, [section]);
+
+  useEffect(() => {
+    if (section === 'rooms' && initialRoomDetailId) {
+      const target = rooms.find((r) => r.id === initialRoomDetailId);
+      if (target) {
+        setSelectedRoomDetailId(target.id);
+        onConsumeRoomDetailId?.();
+      }
+    }
+  }, [section, initialRoomDetailId, rooms]);
+
+  useEffect(() => {
+    if (section === 'reservations' && prefillBookingRoomId && rooms.length > 0) {
+      const target = rooms.find((r) => r.id === prefillBookingRoomId);
+      if (target) {
+        setSelectedRoomId(target.id);
+        setNewRequestedRoomType(target.roomType);
+        const formatted = formatPriceInputWithCommas(target.nightlyRateNgn);
+        setBookingNightlyRateInput(formatted);
+        setBookingExpectedPayoutManual(false);
+        setBookingExpectedPayoutInput(formatted);
+        setBookingHotelPaidInput(formatted);
+        setShowBookingForm(true);
+        onConsumePrefillBookingRoomId?.();
+      }
+    }
+  }, [section, prefillBookingRoomId, rooms]);
 
   useEffect(() => {
     if (activeFolioReservation) {
@@ -687,7 +741,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setDraftOccupancy(room.occupancyStatus);
     setDraftHousekeeping(room.housekeepingStatus);
     setDraftAmenitiesText((room.amenities || []).join(', '));
-    setDraftImageUrl(room.imageUrl || DEFAULT_SUITE_IMAGE);
+    const cover = room.imageUrl || DEFAULT_SUITE_IMAGE;
+    setDraftImageUrl(cover);
+    const initialSlides = getRoomGalleryImages(room).map((s) => s.url);
+    setDraftGalleryImages(initialSlides.length > 0 ? initialSlides : [cover]);
     setUploadError(null);
     setEditRoomError(null);
   };
@@ -697,13 +754,69 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (!file) return;
     setUploadError(null);
     try {
-      const compressed = await compressImageToDataUrl(file);
+      const compressed = await compressImageToDataUrl(file, { maxWidth: 720, maxBytes: 120000 });
       setDraftImageUrl(compressed);
+      setDraftGalleryImages((prev) => Array.from(new Set([compressed, ...prev])).slice(0, 6));
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to process image.');
     } finally {
       e.target.value = '';
     }
+  };
+
+  const handleGallerySlideFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError(null);
+    if (draftGalleryImages.length >= 6) {
+      setUploadError('Maximum of 6 gallery slides per room reached. Remove a slide first.');
+      e.target.value = '';
+      return;
+    }
+    try {
+      const compressed = await compressImageToDataUrl(file, { maxWidth: 680, maxBytes: 110000 });
+      setDraftGalleryImages((prev) => Array.from(new Set([...prev, compressed])).slice(0, 6));
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Unable to process gallery slide.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const toggleDraftGalleryAsset = (assetUrl: string) => {
+    setUploadError(null);
+    setDraftGalleryImages((prev) => {
+      if (prev.includes(assetUrl)) {
+        const next = prev.filter((u) => u !== assetUrl);
+        if (draftImageUrl === assetUrl && next.length > 0) {
+          setDraftImageUrl(next[0]);
+        }
+        return next;
+      }
+      if (prev.length >= 6) {
+        setUploadError('Maximum of 6 gallery slides per room reached. Remove a slide first.');
+        return prev;
+      }
+      if (!draftImageUrl) {
+        setDraftImageUrl(assetUrl);
+      }
+      return [...prev, assetUrl];
+    });
+  };
+
+  const removeDraftGallerySlide = (slideUrl: string) => {
+    setDraftGalleryImages((prev) => {
+      const next = prev.filter((u) => u !== slideUrl);
+      if (draftImageUrl === slideUrl) {
+        setDraftImageUrl(next[0] || DEFAULT_SUITE_IMAGE);
+      }
+      return next;
+    });
+  };
+
+  const promoteDraftSlideToCover = (slideUrl: string) => {
+    setDraftImageUrl(slideUrl);
+    setDraftGalleryImages((prev) => [slideUrl, ...prev.filter((u) => u !== slideUrl)].slice(0, 6));
   };
 
   const handleSaveRoomEditor = async (e: React.FormEvent) => {
@@ -726,6 +839,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             .filter(Boolean)
         )
       ).slice(0, 15);
+      const coverUrl = draftImageUrl.trim() || draftGalleryImages[0] || DEFAULT_SUITE_IMAGE;
+      const cleanGallery = Array.from(
+        new Set([coverUrl, ...draftGalleryImages.map((u) => u.trim()).filter(Boolean)])
+      ).slice(0, 6);
       await updateRoomStatus({
         property,
         room: editingRoom,
@@ -739,7 +856,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           occupancyStatus: draftOccupancy,
           housekeepingStatus: draftHousekeeping,
           amenities: parsedAmenities,
-          imageUrl: draftImageUrl.trim() || DEFAULT_SUITE_IMAGE,
+          imageUrl: coverUrl,
+          galleryImages: cleanGallery,
         },
         actorRole,
       });
@@ -762,7 +880,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setNewRoomRateInput('65,500');
     setNewRoomMaxGuests(2);
     setNewRoomAmenitiesText('King Bed, Wi-Fi, Smart TV, 24/7 Power');
-    setNewRoomImageUrl(RICHGATES_GALLERY_ASSETS[nextNum % RICHGATES_GALLERY_ASSETS.length]?.url || DEFAULT_SUITE_IMAGE);
+    const defaultCover =
+      RICHGATES_GALLERY_ASSETS[nextNum % RICHGATES_GALLERY_ASSETS.length]?.url || DEFAULT_SUITE_IMAGE;
+    const starterSlides = Array.from(
+      new Set([
+        defaultCover,
+        ...RICHGATES_GALLERY_ASSETS.slice(0, 4).map((a) => a.url),
+      ])
+    ).slice(0, 4);
+    setNewRoomImageUrl(defaultCover);
+    setNewRoomGalleryImages(starterSlides);
     setAddRoomError(null);
     setEditingRoom(null);
     setSelectedRoomDetailId(null);
@@ -774,13 +901,51 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (!file) return;
     setAddRoomError(null);
     try {
-      const compressed = await compressImageToDataUrl(file);
+      const compressed = await compressImageToDataUrl(file, { maxWidth: 720, maxBytes: 120000 });
       setNewRoomImageUrl(compressed);
+      setNewRoomGalleryImages((prev) => Array.from(new Set([compressed, ...prev])).slice(0, 6));
     } catch (err) {
       setAddRoomError(err instanceof Error ? err.message : 'Unable to process room photo.');
     } finally {
       e.target.value = '';
     }
+  };
+
+  const handleAddRoomGallerySlideSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAddRoomError(null);
+    if (newRoomGalleryImages.length >= 6) {
+      setAddRoomError('Maximum of 6 gallery slides per room reached. Remove a slide first.');
+      e.target.value = '';
+      return;
+    }
+    try {
+      const compressed = await compressImageToDataUrl(file, { maxWidth: 680, maxBytes: 110000 });
+      setNewRoomGalleryImages((prev) => Array.from(new Set([...prev, compressed])).slice(0, 6));
+    } catch (err) {
+      setAddRoomError(err instanceof Error ? err.message : 'Unable to process gallery slide.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const toggleNewRoomGalleryAsset = (assetUrl: string) => {
+    setAddRoomError(null);
+    setNewRoomGalleryImages((prev) => {
+      if (prev.includes(assetUrl)) {
+        const next = prev.filter((u) => u !== assetUrl);
+        if (newRoomImageUrl === assetUrl && next.length > 0) {
+          setNewRoomImageUrl(next[0]);
+        }
+        return next;
+      }
+      if (prev.length >= 6) {
+        setAddRoomError('Maximum of 6 gallery slides per room reached. Remove a slide first.');
+        return prev;
+      }
+      return [...prev, assetUrl];
+    });
   };
 
   const handleCreateNewRoom = async (e: React.FormEvent) => {
@@ -811,6 +976,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
     setBusyId('add-room');
     try {
+      const coverUrl = newRoomImageUrl || newRoomGalleryImages[0] || DEFAULT_SUITE_IMAGE;
+      const cleanGallery = Array.from(
+        new Set([coverUrl, ...newRoomGalleryImages.map((u) => u.trim()).filter(Boolean)])
+      ).slice(0, 6);
       await createRoomWorkflow({
         property,
         currentRoomCount: rooms.length,
@@ -822,7 +991,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         floor: newRoomFloor,
         nightlyRateNgn: Number(parsedNewRate),
         maxGuests: newRoomMaxGuests,
-        imageUrl: newRoomImageUrl || DEFAULT_SUITE_IMAGE,
+        imageUrl: coverUrl,
+        galleryImages: cleanGallery,
         amenities: newRoomAmenitiesText
           .split(',')
           .map((s) => s.trim())
@@ -1135,7 +1305,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       !walkInRoomReady
     ) {
       setWalkInError(
-        'Check-in requires completing all steps: Confirm Payment, Verify Guest ID, Key Issued = Yes, and Suite Ready.'
+        'Check-in requires completing all steps: Confirm Payment, Verify Guest ID, Key Issued = Yes, and Room Ready.'
       );
       return;
     }
@@ -1222,7 +1392,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     const oldRoom = res.roomId ? rooms.find((r) => r.id === res.roomId) : undefined;
 
     if (editStatus === 'checked_in' && !targetRoom) {
-      setEditStayError('Assign a suite/room before setting status to Checked-in.');
+      setEditStayError('Assign a room before setting status to Checked-in.');
       return;
     }
 
@@ -1482,7 +1652,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         currentRoomCount: rooms.length,
         actorRole,
       });
-      onNotify(`Deleted suite ${room.roomNumber} from inventory`);
+      onNotify(`Deleted room ${room.roomNumber} from inventory`);
       setConfirmDeleteRoomId(null);
     } catch (err) {
       setActionError(parseReadableError(err));
@@ -1551,7 +1721,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setChangeRoomError(null);
     const targetRoom = rooms.find((r) => r.id === changeRoomNewId);
     if (!targetRoom) {
-      setChangeRoomError('Please select a vacant suite to move the guest into.');
+      setChangeRoomError('Please select a vacant room to move the guest into.');
       return;
     }
     const resOverlap = reservations.find(
@@ -1825,7 +1995,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     {
       key: 'Hotel Rooms',
       title: 'Hotel Rooms',
-      desc: 'Deluxe Studios, Standard Studios & Suites',
+      desc: 'Deluxe Studios, Standard Studios & Executive Rooms',
     },
   ];
 
@@ -2399,7 +2569,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   className="mt-0.5 rounded border-slate-300 text-emerald-600"
                 />
                 <span>
-                  <strong className="block text-slate-900">3. Suite Inspected Ready</strong>
+                  <strong className="block text-slate-900">3. Room Inspected Ready</strong>
                   <span className="text-[11px] text-slate-500">
                     Assigned room clean &amp; ready for occupancy
                   </span>
@@ -2461,241 +2631,499 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       )}
 
       {/* SECTION: ROOMS */}
-      {section === 'rooms' && (
-        <div className="space-y-6">
-          <CurrencyConverterWidget
-            property={property}
-            rooms={rooms}
-            canEditRate={canManageRooms}
-            actorRole={actorRole}
-            onNotify={onNotify}
-          />
-          {roomSections.map((sec) => {
-            const secRooms = sortedRooms.filter((r) => getRoomSection(r) === sec.key);
-            if (secRooms.length === 0) return null;
+      {section === 'rooms' && (() => {
+        const allAmenitiesList = Array.from(
+          new Set(
+            sortedRooms.flatMap((r) => (r.amenities || []).map((a) => a.trim()).filter(Boolean))
+          )
+        ).sort((a, b) => a.localeCompare(b));
 
-            return (
-              <div key={sec.key} className="space-y-3">
-                <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
-                  <div>
-                    <h2 className="font-display text-base font-bold text-slate-900">
-                      {sec.title}
-                    </h2>
-                    <p className="text-xs text-slate-500">{sec.desc}</p>
+        const normalizedRoomQuery = roomSearchQuery.trim().toLowerCase();
+        const filteredRoomsList = sortedRooms.filter((r) => {
+          if (roomSectionFilter !== 'ALL' && getRoomSection(r) !== roomSectionFilter) return false;
+          if (roomStatusFilter !== 'ALL' && r.occupancyStatus !== roomStatusFilter) return false;
+          if (
+            roomAmenityFilter !== 'ALL' &&
+            !(r.amenities || []).some((a) => a.toLowerCase() === roomAmenityFilter.toLowerCase())
+          ) {
+            return false;
+          }
+          if (!normalizedRoomQuery) return true;
+          return (
+            r.roomNumber.toLowerCase().includes(normalizedRoomQuery) ||
+            r.name.toLowerCase().includes(normalizedRoomQuery) ||
+            r.roomType.toLowerCase().includes(normalizedRoomQuery) ||
+            (r.amenities || []).some((a) => a.toLowerCase().includes(normalizedRoomQuery))
+          );
+        });
+
+        const hasActiveRoomFilter =
+          roomSearchQuery.trim() !== '' ||
+          roomSectionFilter !== 'ALL' ||
+          roomStatusFilter !== 'ALL' ||
+          roomAmenityFilter !== 'ALL';
+
+        return (
+          <div className="space-y-6">
+            <CurrencyConverterWidget
+              property={property}
+              rooms={rooms}
+              canEditRate={canManageRooms}
+              actorRole={actorRole}
+              onNotify={onNotify}
+            />
+
+            {/* Rooms & Amenities Easy Search / Filter Bar */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs items-end">
+                <div className="md:col-span-5">
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Search Rooms or Amenities
+                  </label>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={roomSearchQuery}
+                      onChange={(e) => setRoomSearchQuery(e.target.value)}
+                      placeholder="Search RM-1, Kitchenette, Balcony, King Bed..."
+                      className="w-full h-9 pl-8 pr-3 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-[#061539]"
+                    />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                  {secRooms.map((room) => (
-                    <div
-                      key={room.id}
-                      className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col justify-between"
+                <div className="md:col-span-3">
+                  <label className="block font-medium text-slate-600 mb-1">Property Section</label>
+                  <select
+                    value={roomSectionFilter}
+                    onChange={(e) => setRoomSectionFilter(e.target.value as 'ALL' | RoomSection)}
+                    className="w-full h-9 border border-slate-200 rounded-lg px-3 bg-white"
+                  >
+                    <option value="ALL">All Sections ({sortedRooms.length})</option>
+                    <option value="Serviced Apartment">Serviced Apartment Section</option>
+                    <option value="Hotel Rooms">Hotel Rooms</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block font-medium text-slate-600 mb-1">Availability</label>
+                  <select
+                    value={roomStatusFilter}
+                    onChange={(e) =>
+                      setRoomStatusFilter(e.target.value as 'ALL' | RoomRecord['occupancyStatus'])
+                    }
+                    className="w-full h-9 border border-slate-200 rounded-lg px-3 bg-white"
+                  >
+                    <option value="ALL">All Statuses</option>
+                    <option value="vacant">Vacant</option>
+                    <option value="occupied">Occupied</option>
+                    <option value="out_of_order">Out of Order</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2 flex items-center justify-between md:justify-end gap-2 h-9">
+                  <span className="font-mono-tabular text-xs font-semibold text-slate-700">
+                    {filteredRoomsList.length} / {sortedRooms.length} Rooms
+                  </span>
+                  {hasActiveRoomFilter && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRoomSearchQuery('');
+                        setRoomSectionFilter('ALL');
+                        setRoomStatusFilter('ALL');
+                        setRoomAmenityFilter('ALL');
+                      }}
+                      className="text-xs font-semibold text-[#28488a] hover:underline cursor-pointer"
                     >
-                      <div
-                        onClick={() => setSelectedRoomDetailId(room.id)}
-                        className="h-40 bg-slate-100 relative overflow-hidden cursor-pointer group"
-                      >
-                        <img
-                          src={room.imageUrl || DEFAULT_SUITE_IMAGE}
-                          alt={room.name}
-                          referrerPolicy="no-referrer"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
-                          }}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/15 to-transparent" />
-                        {canManageRooms && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openRoomEditor(room);
-                            }}
-                            className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/75 hover:bg-slate-950 text-white text-[11px] font-medium backdrop-blur-sm cursor-pointer"
-                          >
-                            <SlidersHorizontal className="w-3 h-3" />
-                            <span>Edit</span>
-                          </button>
-                        )}
-                        <div className="absolute bottom-2.5 left-3 right-3 flex items-end justify-between text-white">
-                          <div className="min-w-0 pr-2">
-                            <p className="font-mono-tabular text-xs font-bold">{room.roomNumber}</p>
-                            <p className="font-display text-sm font-semibold truncate">
-                              {room.roomType}
-                            </p>
-                          </div>
-                          <span className="text-[11px] font-medium text-emerald-300 capitalize shrink-0">
-                            {room.occupancyStatus.replace('_', ' ')}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-xs text-slate-600">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedRoomDetailId(room.id)}
-                              className="truncate pr-2 font-medium text-slate-700 hover:text-emerald-700 hover:underline text-left cursor-pointer"
-                            >
-                              {room.name}
-                            </button>
-                            <span className="font-mono-tabular shrink-0">
-                              Max {room.maxGuests}
-                            </span>
-                          </div>
-
-                          {canManageRooms && editingRateRoomId === room.id ? (
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                value={rateDraftInput}
-                                onChange={(e) =>
-                                  handleCommaPriceChange(e, rateDraftInput, setRateDraftInput)
-                                }
-                                className="w-32 border border-slate-300 rounded px-2 py-1 text-xs font-mono-tabular font-semibold"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleSaveRate(room)}
-                                disabled={busyId === room.id}
-                                className="px-2.5 py-1 text-xs bg-emerald-600 text-white rounded font-medium cursor-pointer"
-                              >
-                                Save
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditingRateRoomId(null)}
-                                className="text-xs text-slate-500 hover:text-slate-800"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <span className="font-mono-tabular text-base font-bold text-slate-900 block">
-                                  {formatNgn(room.nightlyRateNgn)}
-                                  <span className="text-xs font-normal text-slate-500">
-                                    {' '}
-                                    / night
-                                  </span>
-                                </span>
-                                <span className="font-mono-tabular text-[11px] font-medium text-emerald-700 block">
-                                  ≈ {formatUsd(convertNgnToUsd(room.nightlyRateNgn, property.usdExchangeRateNgn), 2)} USD / night
-                                </span>
-                              </div>
-                              {canManageRooms && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingRateRoomId(room.id);
-                                    setRateDraftInput(formatPriceInputWithCommas(room.nightlyRateNgn));
-                                  }}
-                                  className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:underline cursor-pointer"
-                                >
-                                  <Pencil className="w-3 h-3" />
-                                  <span>Rate</span>
-                                </button>
-                              )}
-                            </div>
-                          )}
-
-                          <p className="text-xs text-slate-600 truncate">
-                            {room.currentGuestName
-                              ? `Guest: ${room.currentGuestName}`
-                              : 'Ready for check-in'}
-                          </p>
-                          <p className="text-[11px] text-slate-500 truncate">
-                            {(room.amenities || []).slice(0, 3).join(' · ')}
-                          </p>
-                        </div>
-
-                        <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 text-xs">
-                          <span className="text-slate-600 capitalize">
-                            HK:{' '}
-                            <strong className="text-slate-900">{room.housekeepingStatus}</strong>
-                          </span>
-                          <div className="flex flex-wrap items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedRoomDetailId(room.id)}
-                              className="px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 font-medium text-slate-700 cursor-pointer"
-                            >
-                              Details
-                            </button>
-                            {canManageRooms && (
-                              <button
-                                type="button"
-                                onClick={() => openRoomEditor(room)}
-                                className="px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 font-medium text-slate-700 cursor-pointer"
-                              >
-                                Edit
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              disabled={busyId === room.id}
-                              onClick={async () => {
-                                const nextHk =
-                                  room.housekeepingStatus === 'dirty' ? 'clean' : 'dirty';
-                                await updateRoomStatus({
-                                  property,
-                                  room,
-                                  updates: {
-                                    housekeepingStatus: nextHk,
-                                  },
-                                  actorRole,
-                                });
-                                onNotify(`${room.roomNumber} marked ${nextHk}`);
-                              }}
-                              className="px-2.5 py-1 rounded-md border border-slate-200 hover:bg-slate-50 font-medium text-slate-700 cursor-pointer"
-                            >
-                              {room.housekeepingStatus === 'dirty' ? 'Mark Clean' : 'Mark Dirty'}
-                            </button>
-                            {canManageRooms && confirmDeleteRoomId !== room.id && (
-                              <button
-                                type="button"
-                                disabled={busyId === room.id}
-                                onClick={() => setConfirmDeleteRoomId(room.id)}
-                                title={`Delete ${room.roomNumber}`}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium cursor-pointer"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            )}
-                            {canManageRooms && confirmDeleteRoomId === room.id && (
-                              <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteRoomId(null)}
-                                  className="px-1.5 py-0.5 text-[10px] text-slate-600 cursor-pointer"
-                                >
-                                  No
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={busyId === room.id}
-                                  onClick={() => void handleDeleteRoom(room)}
-                                  className="px-2 py-0.5 text-[10px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
-                                >
-                                  {busyId === room.id ? '...' : 'Delete'}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                      Reset
+                    </button>
+                  )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+
+              {allAmenitiesList.length > 0 && (
+                <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="font-semibold text-slate-500 mr-1">Filter by Amenity:</span>
+                  <button
+                    type="button"
+                    onClick={() => setRoomAmenityFilter('ALL')}
+                    className={`px-2.5 py-1 rounded-md border font-medium transition-colors cursor-pointer ${
+                      roomAmenityFilter === 'ALL'
+                        ? 'bg-[#061539] text-white border-[#061539]'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    All Amenities
+                  </button>
+                  {allAmenitiesList.slice(0, 10).map((amenity) => {
+                    const AmenityIcon = getAmenityIcon(amenity);
+                    const isSelected = roomAmenityFilter.toLowerCase() === amenity.toLowerCase();
+                    return (
+                      <button
+                        key={amenity}
+                        type="button"
+                        onClick={() => setRoomAmenityFilter(isSelected ? 'ALL' : amenity)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md border font-medium transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#061539] text-white border-[#061539]'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-blue-50 hover:border-blue-200'
+                        }`}
+                      >
+                        <AmenityIcon className="w-3 h-3 shrink-0" />
+                        <span>{amenity}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {filteredRoomsList.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-10 text-center space-y-2">
+                <p className="font-display text-sm font-bold text-slate-900">
+                  No rooms match your active filters
+                </p>
+                <p className="text-xs text-slate-500">
+                  Clear your search or amenity filter to view all rooms and photo galleries.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoomSearchQuery('');
+                    setRoomSectionFilter('ALL');
+                    setRoomStatusFilter('ALL');
+                    setRoomAmenityFilter('ALL');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#061539] text-white text-xs font-semibold cursor-pointer mt-2"
+                >
+                  Show All Rooms
+                </button>
+              </div>
+            ) : (
+              roomSections.map((sec) => {
+                const secRooms = filteredRoomsList.filter((r) => getRoomSection(r) === sec.key);
+                if (secRooms.length === 0) return null;
+
+                return (
+                  <div key={sec.key} className="space-y-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
+                      <div>
+                        <h2 className="font-display text-base font-bold text-slate-900">
+                          {sec.title}
+                        </h2>
+                        <p className="text-xs text-slate-500">{sec.desc}</p>
+                      </div>
+                      <span className="text-xs font-mono-tabular text-slate-500">
+                        {secRooms.length} {secRooms.length === 1 ? 'room' : 'rooms'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                      {secRooms.map((room) => {
+                        const roomSlides = getRoomGalleryImages(room);
+                        const roomAmenities = room.amenities || [];
+                        const isExpanded = Boolean(expandedAmenityRoomIds[room.id]);
+                        const visibleAmenities = isExpanded
+                          ? roomAmenities
+                          : roomAmenities.slice(0, 4);
+                        const hiddenAmenityCount = Math.max(0, roomAmenities.length - 4);
+                        const occBadgeColor =
+                          room.occupancyStatus === 'vacant'
+                            ? 'bg-emerald-500/90 text-white'
+                            : room.occupancyStatus === 'occupied'
+                              ? 'bg-amber-500/90 text-white'
+                              : 'bg-rose-600/90 text-white';
+
+                        return (
+                          <div
+                            key={room.id}
+                            className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow"
+                          >
+                            {/* Interactive Multi-Slide Room Photo Gallery */}
+                            <RoomGallerySlider
+                              slides={roomSlides}
+                              roomNumber={room.roomNumber}
+                              roomName={room.name}
+                              heightClass="h-48"
+                              onImageClick={() => setSelectedRoomDetailId(room.id)}
+                              overlayTopRight={
+                                canManageRooms ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openRoomEditor(room);
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/75 hover:bg-slate-950 text-white text-[11px] font-medium backdrop-blur-sm cursor-pointer"
+                                  >
+                                    <SlidersHorizontal className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
+                                ) : null
+                              }
+                              overlayBottom={
+                                <div className="flex items-end justify-between gap-2 text-white">
+                                  <div className="min-w-0 pr-2">
+                                    <p className="font-mono-tabular text-xs font-bold tracking-wide">
+                                      {room.roomNumber} · Floor {room.floor}
+                                    </p>
+                                    <p className="font-display text-sm font-semibold truncate">
+                                      {room.roomType}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide shrink-0 ${occBadgeColor}`}
+                                  >
+                                    {room.occupancyStatus.replace('_', ' ')}
+                                  </span>
+                                </div>
+                              }
+                            />
+
+                            <div className="p-4 space-y-3.5 flex-1 flex flex-col justify-between">
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between gap-2 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedRoomDetailId(room.id)}
+                                    className="truncate font-display text-sm font-bold text-slate-900 hover:text-[#28488a] hover:underline text-left cursor-pointer"
+                                  >
+                                    {room.name}
+                                  </button>
+                                  <span className="font-mono-tabular text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded shrink-0">
+                                    Max {room.maxGuests} {room.maxGuests === 1 ? 'Guest' : 'Guests'}
+                                  </span>
+                                </div>
+
+                                {canManageRooms && editingRateRoomId === room.id ? (
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={rateDraftInput}
+                                      onChange={(e) =>
+                                        handleCommaPriceChange(e, rateDraftInput, setRateDraftInput)
+                                      }
+                                      className="w-32 border border-slate-300 rounded px-2 py-1 text-xs font-mono-tabular font-semibold"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveRate(room)}
+                                      disabled={busyId === room.id}
+                                      className="px-2.5 py-1 text-xs bg-emerald-600 text-white rounded font-medium cursor-pointer"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingRateRoomId(null)}
+                                      className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-start justify-between gap-2 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+                                    <div>
+                                      <span className="font-mono-tabular text-base font-bold text-slate-900 block">
+                                        {formatNgn(room.nightlyRateNgn)}
+                                        <span className="text-xs font-normal text-slate-500">
+                                          {' '}
+                                          / night
+                                        </span>
+                                      </span>
+                                      <span className="font-mono-tabular text-[11px] font-medium text-emerald-700 block">
+                                        ≈{' '}
+                                        {formatUsd(
+                                          convertNgnToUsd(
+                                            room.nightlyRateNgn,
+                                            property.usdExchangeRateNgn
+                                          ),
+                                          2
+                                        )}{' '}
+                                        USD / night
+                                      </span>
+                                    </div>
+                                    {canManageRooms && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingRateRoomId(room.id);
+                                          setRateDraftInput(
+                                            formatPriceInputWithCommas(room.nightlyRateNgn)
+                                          );
+                                        }}
+                                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#28488a] hover:underline cursor-pointer"
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                        <span>Rate</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+
+                                <div className="flex items-center justify-between gap-2 text-xs">
+                                  <span className="text-slate-600 truncate">
+                                    {room.currentGuestName
+                                      ? `Guest: ${room.currentGuestName}`
+                                      : 'Vacant · Ready for check-in'}
+                                  </span>
+                                  <span className="text-[11px] text-slate-600 capitalize shrink-0">
+                                    HK:{' '}
+                                    <strong
+                                      className={
+                                        room.housekeepingStatus === 'dirty'
+                                          ? 'text-rose-700'
+                                          : 'text-emerald-700'
+                                      }
+                                    >
+                                      {room.housekeepingStatus}
+                                    </strong>
+                                  </span>
+                                </div>
+
+                                {/* Easy-to-scan Room Amenities Grid */}
+                                <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                                  <div className="flex items-center justify-between text-[11px]">
+                                    <span className="font-semibold text-slate-700">
+                                      Room Amenities ({roomAmenities.length})
+                                    </span>
+                                    {hiddenAmenityCount > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setExpandedAmenityRoomIds((prev) => ({
+                                            ...prev,
+                                            [room.id]: !prev[room.id],
+                                          }))
+                                        }
+                                        className="font-semibold text-[#28488a] hover:underline cursor-pointer"
+                                      >
+                                        {isExpanded ? 'Show less' : `+${hiddenAmenityCount} more`}
+                                      </button>
+                                    )}
+                                  </div>
+                                  {visibleAmenities.length > 0 ? (
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      {visibleAmenities.map((amenity) => {
+                                        const AmenityIcon = getAmenityIcon(amenity);
+                                        return (
+                                          <div
+                                            key={amenity}
+                                            className="flex items-center gap-1.5 text-[11px] text-slate-700 bg-slate-50 border border-slate-100 rounded-md px-2 py-1 min-w-0"
+                                          >
+                                            <AmenityIcon className="w-3 h-3 text-[#28488a] shrink-0" />
+                                            <span className="truncate">{amenity}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[11px] text-slate-400">
+                                      No amenities listed yet.
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Clean Room Actions Footer */}
+                              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1.5 text-xs">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedRoomDetailId(room.id)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#061539] hover:bg-[#0c235c] text-white font-semibold cursor-pointer"
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                    <span>View Room</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (onStartNewReservationForRoom) {
+                                        onStartNewReservationForRoom(room.id);
+                                      } else {
+                                        setSelectedRoomId(room.id);
+                                        setNewRequestedRoomType(room.roomType);
+                                        setShowBookingForm(true);
+                                        onNavigateSection?.('reservations');
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold cursor-pointer"
+                                  >
+                                    <CalendarPlus className="w-3 h-3" />
+                                    <span>Book</span>
+                                  </button>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={busyId === room.id}
+                                    onClick={async () => {
+                                      const nextHk =
+                                        room.housekeepingStatus === 'dirty' ? 'clean' : 'dirty';
+                                      await updateRoomStatus({
+                                        property,
+                                        room,
+                                        updates: {
+                                          housekeepingStatus: nextHk,
+                                        },
+                                        actorRole,
+                                      });
+                                      onNotify(`${room.roomNumber} marked ${nextHk}`);
+                                    }}
+                                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 font-medium text-slate-700 cursor-pointer"
+                                  >
+                                    {room.housekeepingStatus === 'dirty'
+                                      ? 'Mark Clean'
+                                      : 'Mark Dirty'}
+                                  </button>
+                                  {canManageRooms && confirmDeleteRoomId !== room.id && (
+                                    <button
+                                      type="button"
+                                      disabled={busyId === room.id}
+                                      onClick={() => setConfirmDeleteRoomId(room.id)}
+                                      title={`Delete ${room.roomNumber}`}
+                                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                  {canManageRooms && confirmDeleteRoomId === room.id && (
+                                    <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteRoomId(null)}
+                                        className="px-1.5 py-0.5 text-[10px] text-slate-600 cursor-pointer"
+                                      >
+                                        No
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={busyId === room.id}
+                                        onClick={() => void handleDeleteRoom(room)}
+                                        className="px-2 py-0.5 text-[10px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
+                                      >
+                                        {busyId === room.id ? '...' : 'Delete'}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        );
+      })()}
 
       {/* SECTION: DEDICATED ARRIVALS & CHECK-IN BOARD (TODAY vs FUTURE vs OVERDUE) */}
       {section === 'arrivals' && (
@@ -4210,13 +4638,27 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
               <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold text-slate-800">Room Photography</span>
                   <div>
+                    <span className="font-semibold text-slate-800 block">
+                      Room Photo Gallery Slides ({draftGalleryImages.length} / 6)
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Add up to 6 photos for the room gallery slider. Click any slide to set it as the cover image.
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
                     <input
                       ref={fileInputRef}
                       type="file"
                       accept="image/*"
                       onChange={handleImageFileSelect}
+                      className="hidden"
+                    />
+                    <input
+                      ref={gallerySlideFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleGallerySlideFileSelect}
                       className="hidden"
                     />
                     <button
@@ -4225,7 +4667,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
                     >
                       <ImagePlus className="w-3.5 h-3.5" />
-                      <span>Upload Photo from Device</span>
+                      <span>Upload Cover Photo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => gallerySlideFileInputRef.current?.click()}
+                      disabled={draftGalleryImages.length >= 6}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#061539] rounded-lg font-semibold disabled:opacity-50 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Gallery Slide</span>
                     </button>
                   </div>
                 </div>
@@ -4236,47 +4687,104 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
-                  <div className="sm:col-span-5 h-36 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                    <img
-                      src={draftImageUrl || DEFAULT_SUITE_IMAGE}
-                      alt="Room Preview"
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
-                      }}
-                    />
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start">
+                  <div className="sm:col-span-5 space-y-2">
+                    <div className="h-40 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative">
+                      <img
+                        src={draftImageUrl || DEFAULT_SUITE_IMAGE}
+                        alt="Room Cover Preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
+                        }}
+                      />
+                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-950/75 text-white text-[10px] font-semibold">
+                        Cover Slide
+                      </span>
+                    </div>
+                    {draftGalleryImages.length > 0 && (
+                      <div className="grid grid-cols-3 gap-2">
+                        {draftGalleryImages.map((slideUrl, idx) => {
+                          const isCover = slideUrl === draftImageUrl;
+                          return (
+                            <div
+                              key={`${slideUrl.slice(0, 32)}-${idx}`}
+                              className={`relative h-14 rounded-lg overflow-hidden border-2 ${
+                                isCover ? 'border-emerald-600' : 'border-slate-200'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => promoteDraftSlideToCover(slideUrl)}
+                                title="Set as cover slide"
+                                className="w-full h-full cursor-pointer"
+                              >
+                                <img
+                                  src={slideUrl}
+                                  alt={`Slide ${idx + 1}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeDraftGallerySlide(slideUrl)}
+                                title="Remove slide"
+                                className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-rose-600 text-white flex items-center justify-center cursor-pointer"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <div className="sm:col-span-7 space-y-2">
+                  <div className="sm:col-span-7 space-y-2.5">
                     <p className="text-[11px] font-medium text-slate-600">
-                      Or pick from Property Gallery:
+                      Click property photos below to toggle them in this room&apos;s gallery slider:
                     </p>
                     <div className="grid grid-cols-5 gap-2">
-                      {RICHGATES_GALLERY_ASSETS.map((asset) => (
-                        <button
-                          key={asset.id}
-                          type="button"
-                          onClick={() => setDraftImageUrl(asset.url)}
-                          title={asset.label}
-                          className={`h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
-                            draftImageUrl === asset.url
-                              ? 'border-emerald-600 ring-2 ring-emerald-200'
-                              : 'border-slate-200 hover:border-slate-400'
-                          }`}
-                        >
-                          <img
-                            src={asset.url}
-                            alt={asset.label}
-                            className="w-full h-full object-cover"
-                          />
-                        </button>
-                      ))}
+                      {RICHGATES_GALLERY_ASSETS.map((asset) => {
+                        const isInGallery = draftGalleryImages.includes(asset.url);
+                        return (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            onClick={() => toggleDraftGalleryAsset(asset.url)}
+                            title={`${isInGallery ? 'Remove from' : 'Add to'} gallery: ${asset.label}`}
+                            className={`relative h-14 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                              isInGallery
+                                ? 'border-emerald-600 ring-2 ring-emerald-200'
+                                : 'border-slate-200 hover:border-slate-400'
+                            }`}
+                          >
+                            <img
+                              src={asset.url}
+                              alt={asset.label}
+                              className="w-full h-full object-cover"
+                            />
+                            {isInGallery && (
+                              <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-emerald-600 text-white text-[9px] font-bold">
+                                ✓
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                     <input
                       type="text"
                       value={draftImageUrl.startsWith('data:') ? '[Uploaded Device Photo]' : draftImageUrl}
-                      onChange={(e) => setDraftImageUrl(e.target.value)}
-                      placeholder="Or paste custom image URL (/assets/... or https://...)"
+                      onChange={(e) => {
+                        const nextUrl = e.target.value;
+                        setDraftImageUrl(nextUrl);
+                        if (nextUrl.trim() && !nextUrl.startsWith('[Uploaded')) {
+                          setDraftGalleryImages((prev) =>
+                            Array.from(new Set([nextUrl.trim(), ...prev])).slice(0, 6)
+                          );
+                        }
+                      }}
+                      placeholder="Or paste custom cover image URL (/assets/... or https://...)"
                       className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
                     />
                   </div>
@@ -4441,13 +4949,27 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
               <div className="border-t border-slate-200 pt-4 space-y-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold text-slate-800">Room Photography</span>
                   <div>
+                    <span className="font-semibold text-slate-800 block">
+                      Room Photo Gallery Slides ({newRoomGalleryImages.length} / 6)
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Choose or upload up to 6 photos for this room&apos;s interactive slider.
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
                     <input
                       ref={addRoomFileInputRef}
                       type="file"
                       accept="image/*"
                       onChange={handleAddRoomImageSelect}
+                      className="hidden"
+                    />
+                    <input
+                      ref={addRoomGallerySlideFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAddRoomGallerySlideSelect}
                       className="hidden"
                     />
                     <button
@@ -4456,43 +4978,103 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
                     >
                       <ImagePlus className="w-3.5 h-3.5" />
-                      <span>Upload Photo</span>
+                      <span>Upload Cover</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addRoomGallerySlideFileInputRef.current?.click()}
+                      disabled={newRoomGalleryImages.length >= 6}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#061539] rounded-lg font-semibold disabled:opacity-50 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Slide</span>
                     </button>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
-                  <div className="sm:col-span-5 h-32 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                    <img
-                      src={newRoomImageUrl || DEFAULT_SUITE_IMAGE}
-                      alt="New Room Preview"
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
-                      }}
-                    />
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start">
+                  <div className="sm:col-span-5 space-y-2">
+                    <div className="h-36 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative">
+                      <img
+                        src={newRoomImageUrl || DEFAULT_SUITE_IMAGE}
+                        alt="New Room Preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
+                        }}
+                      />
+                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-950/75 text-white text-[10px] font-semibold">
+                        Cover Slide
+                      </span>
+                    </div>
+                    {newRoomGalleryImages.length > 0 && (
+                      <div className="grid grid-cols-3 gap-2">
+                        {newRoomGalleryImages.map((slideUrl, idx) => (
+                          <div
+                            key={`${slideUrl.slice(0, 32)}-${idx}`}
+                            className={`relative h-12 rounded-lg overflow-hidden border-2 ${
+                              slideUrl === newRoomImageUrl ? 'border-emerald-600' : 'border-slate-200'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setNewRoomImageUrl(slideUrl)}
+                              className="w-full h-full cursor-pointer"
+                            >
+                              <img
+                                src={slideUrl}
+                                alt={`New Room Slide ${idx + 1}`}
+                                className="w-full h-full object-cover"
+                              />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setNewRoomGalleryImages((prev) =>
+                                  prev.filter((u) => u !== slideUrl)
+                                )
+                              }
+                              className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-rose-600 text-white flex items-center justify-center cursor-pointer"
+                            >
+                              <X className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="sm:col-span-7 space-y-2">
+                    <p className="text-[11px] font-medium text-slate-600">
+                      Click property photos to toggle slides for this room:
+                    </p>
                     <div className="grid grid-cols-5 gap-2">
-                      {RICHGATES_GALLERY_ASSETS.map((asset) => (
-                        <button
-                          key={asset.id}
-                          type="button"
-                          onClick={() => setNewRoomImageUrl(asset.url)}
-                          title={asset.label}
-                          className={`h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
-                            newRoomImageUrl === asset.url
-                              ? 'border-emerald-600 ring-2 ring-emerald-200'
-                              : 'border-slate-200 hover:border-slate-400'
-                          }`}
-                        >
-                          <img
-                            src={asset.url}
-                            alt={asset.label}
-                            className="w-full h-full object-cover"
-                          />
-                        </button>
-                      ))}
+                      {RICHGATES_GALLERY_ASSETS.map((asset) => {
+                        const isSelected = newRoomGalleryImages.includes(asset.url);
+                        return (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            onClick={() => toggleNewRoomGalleryAsset(asset.url)}
+                            title={asset.label}
+                            className={`relative h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                              isSelected
+                                ? 'border-emerald-600 ring-2 ring-emerald-200'
+                                : 'border-slate-200 hover:border-slate-400'
+                            }`}
+                          >
+                            <img
+                              src={asset.url}
+                              alt={asset.label}
+                              className="w-full h-full object-cover"
+                            />
+                            {isSelected && (
+                              <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-emerald-600 text-white text-[9px] font-bold">
+                                ✓
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                     <input
                       type="text"
@@ -4502,7 +5084,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           : newRoomImageUrl
                       }
                       onChange={(e) => setNewRoomImageUrl(e.target.value)}
-                      placeholder="Or paste custom photo URL..."
+                      placeholder="Or paste custom cover photo URL..."
                       className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
                     />
                   </div>
@@ -7356,16 +7938,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                     <div className="lg:col-span-5 space-y-3">
-                      <div className="h-64 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                        <img
-                          src={selectedRoomDetail.imageUrl || DEFAULT_SUITE_IMAGE}
-                          alt={selectedRoomDetail.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
-                          }}
-                        />
-                      </div>
+                      <RoomGallerySlider
+                        slides={getRoomGalleryImages(selectedRoomDetail)}
+                        roomNumber={selectedRoomDetail.roomNumber}
+                        roomName={selectedRoomDetail.name}
+                        heightClass="h-64"
+                        showThumbnails
+                      />
                       <div className="grid grid-cols-2 gap-3 text-xs">
                         <div className="border border-slate-200 rounded-xl p-3">
                           <p className="text-slate-500">Nightly Rate (NGN)</p>
@@ -7434,13 +8013,43 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </div>
                       </div>
 
-                      <div className="border border-slate-200 rounded-xl p-4 space-y-2">
-                        <p className="font-semibold text-slate-900">Room Amenities</p>
-                        <p className="text-slate-600 leading-relaxed">
-                          {(selectedRoomDetail.amenities || []).length > 0
-                            ? (selectedRoomDetail.amenities || []).join(' · ')
-                            : 'No amenities listed yet.'}
-                        </p>
+                      <div className="border border-slate-200 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <p className="font-semibold text-slate-900">
+                            Room Amenities ({(selectedRoomDetail.amenities || []).length})
+                          </p>
+                          {canManageRooms && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const target = selectedRoomDetail;
+                                setSelectedRoomDetailId(null);
+                                openRoomEditor(target);
+                              }}
+                              className="text-[11px] font-semibold text-[#28488a] hover:underline cursor-pointer"
+                            >
+                              Edit Photos &amp; Amenities
+                            </button>
+                          )}
+                        </div>
+                        {(selectedRoomDetail.amenities || []).length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {(selectedRoomDetail.amenities || []).map((amenity) => {
+                              const AmenityIcon = getAmenityIcon(amenity);
+                              return (
+                                <div
+                                  key={amenity}
+                                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200/80 text-slate-800 font-medium"
+                                >
+                                  <AmenityIcon className="w-3.5 h-3.5 text-[#28488a] shrink-0" />
+                                  <span>{amenity}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-slate-500">No amenities listed yet.</p>
+                        )}
                       </div>
 
                       <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -7452,15 +8061,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedRoomId(selectedRoomDetail.id);
-                              setNewRequestedRoomType(selectedRoomDetail.roomType);
-                              setBookingExpectedPayoutManual(false);
-                              setBookingExpectedPayoutInput(
-                                formatPriceInputWithCommas(selectedRoomDetail.nightlyRateNgn)
-                              );
+                              const targetRoomId = selectedRoomDetail.id;
                               setSelectedRoomDetailId(null);
-                              setShowBookingForm(true);
-                              onNavigateSection?.('reservations');
+                              if (onStartNewReservationForRoom) {
+                                onStartNewReservationForRoom(targetRoomId);
+                              } else {
+                                setSelectedRoomId(selectedRoomDetail.id);
+                                setNewRequestedRoomType(selectedRoomDetail.roomType);
+                                setBookingExpectedPayoutManual(false);
+                                setBookingExpectedPayoutInput(
+                                  formatPriceInputWithCommas(selectedRoomDetail.nightlyRateNgn)
+                                );
+                                setShowBookingForm(true);
+                                onNavigateSection?.('reservations');
+                              }
                             }}
                             className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
                           >
@@ -7720,7 +8334,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">
-                Move Guest to Vacant Suite *
+                Move Guest to Vacant Room *
               </label>
               <select
                 required
@@ -7734,7 +8348,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 {sortedRooms.filter(
                   (r) => r.id !== changeRoomTarget.roomId && r.occupancyStatus === 'vacant'
                 ).length === 0 ? (
-                  <option value="">No vacant suites available right now</option>
+                  <option value="">No vacant rooms available right now</option>
                 ) : (
                   sortedRooms
                     .filter(
@@ -7759,7 +8373,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               />
               <span>
                 <strong className="block text-slate-900">
-                  Update nightly rate to new suite&apos;s rate
+                  Update nightly rate to new room&apos;s rate
                 </strong>
                 <span className="text-[11px] text-slate-500">
                   Uncheck to keep the original rate of {formatNgn(changeRoomTarget.nightlyRateNgn)}
@@ -7817,7 +8431,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     Cancel or Mark No-Show
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    {cancelTarget.bookingRef} · {cancelTarget.guestName} (Suite{' '}
+                    {cancelTarget.bookingRef} · {cancelTarget.guestName} (Room{' '}
                     {getReservationRoomDisplay(cancelTarget, rooms).roomNumberLabel})
                   </p>
                 </div>

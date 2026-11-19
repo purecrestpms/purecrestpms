@@ -282,7 +282,7 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
 
         {sortedRooms.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-slate-500 mr-1">Suite Rates:</span>
+            <span className="text-slate-500 mr-1">Room Rates:</span>
             {sortedRooms.slice(0, 6).map((rm) => (
               <button
                 key={rm.id}

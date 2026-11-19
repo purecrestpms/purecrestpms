@@ -464,7 +464,7 @@ export const CmsAdminView: React.FC<CmsAdminViewProps> = ({
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
               <h2 className="font-display text-base font-bold text-slate-900">
-                Dashboard Headings, Suite Sections &amp; Quick Buttons
+                Dashboard Headings, Room Sections &amp; Quick Buttons
               </h2>
               <p className="text-slate-500 mt-0.5">
                 Controls the labels shown directly on the main Property Operations Dashboard

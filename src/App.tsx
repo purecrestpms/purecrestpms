@@ -171,6 +171,7 @@ const VALID_SECTIONS: NavSectionId[] = [
   'in_house',
   'walk_in',
   'front_desk',
+  'invoices',
   'guests',
   'housekeeping',
   'messages',
@@ -356,6 +357,8 @@ export default function App() {
   const [activeSection, setActiveSection] = useState<NavSectionId>(detectInitialSection);
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
   const [reservationIntent, setReservationIntent] = useState<'view' | 'edit'>('view');
+  const [selectedRoomIdToInspect, setSelectedRoomIdToInspect] = useState<string | null>(null);
+  const [prefillBookingRoomId, setPrefillBookingRoomId] = useState<string | null>(null);
   const [activePropertyId, setActivePropertyId] = useState<string>(RICHGATES_PROPERTY_ID);
   const [toast, setToast] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -534,6 +537,10 @@ export default function App() {
   };
 
   const handleSelectSection = (section: NavSectionId) => {
+    setSelectedReservationId(null);
+    setReservationIntent('view');
+    setSelectedRoomIdToInspect(null);
+    setPrefillBookingRoomId(null);
     setActiveSection(section);
     syncUrlParams(portalMode, section);
   };
@@ -543,9 +550,28 @@ export default function App() {
     targetSection: 'reservations' | 'front_desk' = 'front_desk',
     intent: 'view' | 'edit' = 'view'
   ) => {
+    setSelectedRoomIdToInspect(null);
+    setPrefillBookingRoomId(null);
+    setActiveSection(targetSection);
+    syncUrlParams(portalMode, targetSection);
     setSelectedReservationId(reservationId);
     setReservationIntent(intent);
-    handleSelectSection(targetSection);
+  };
+
+  const handleInspectRoom = (roomId: string) => {
+    setSelectedReservationId(null);
+    setPrefillBookingRoomId(null);
+    setSelectedRoomIdToInspect(roomId);
+    setActiveSection('rooms');
+    syncUrlParams(portalMode, 'rooms');
+  };
+
+  const handleStartNewReservationForRoom = (roomId: string) => {
+    setSelectedReservationId(null);
+    setSelectedRoomIdToInspect(null);
+    setPrefillBookingRoomId(roomId);
+    setActiveSection('reservations');
+    syncUrlParams(portalMode, 'reservations');
   };
 
   const runBootstrapSeed = async (customPropertyId?: string) => {
@@ -556,7 +582,7 @@ export default function App() {
       const createdPropId = await seedRichgatesIfNeeded(customPropertyId);
       if (createdPropId) {
         setActivePropertyId(createdPropId);
-        notify('Provisioned Richgates Apartments, Enugu (8 Suites) & Property License');
+        notify('Provisioned Richgates Apartments, Enugu (8 Rooms) & Property License');
       }
     } catch (err) {
       if (isFirestoreOfflineError(err)) {
@@ -1908,6 +1934,7 @@ export default function App() {
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}
                   onNavigate={handleSelectSection}
                   onOpenReservationFolio={handleOpenReservationFolio}
+                  onInspectRoom={handleInspectRoom}
                   onSignOut={handleSignOut}
                 />
               )}
@@ -1945,6 +1972,11 @@ export default function App() {
                   guests={guests}
                   selectedReservationId={selectedReservationId}
                   initialReservationIntent={reservationIntent}
+                  initialRoomDetailId={selectedRoomIdToInspect}
+                  onConsumeRoomDetailId={() => setSelectedRoomIdToInspect(null)}
+                  prefillBookingRoomId={prefillBookingRoomId}
+                  onConsumePrefillBookingRoomId={() => setPrefillBookingRoomId(null)}
+                  onStartNewReservationForRoom={handleStartNewReservationForRoom}
                   onConsumeIntent={() => setReservationIntent('view')}
                   onSelectReservation={setSelectedReservationId}
                   onNavigateSection={handleSelectSection}
@@ -2332,13 +2364,13 @@ export default function App() {
                 {checkedInPopup.guestName} has been checked in
               </h3>
               <p className="text-xs text-slate-600">
-                Suite assigned, payment verified, and room key issued.
+                Room assigned, payment verified, and room key issued.
               </p>
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-3 gap-2 text-xs text-left">
               <div>
-                <p className="text-slate-500 text-[11px]">Suite</p>
+                <p className="text-slate-500 text-[11px]">Room</p>
                 <p className="font-mono-tabular font-bold text-slate-900 flex items-center gap-1 mt-0.5">
                   <DoorOpen className="w-3.5 h-3.5 text-emerald-700" />
                   <span>{checkedInPopup.roomNumber}</span>

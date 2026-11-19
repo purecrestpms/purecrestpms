@@ -708,7 +708,7 @@ export async function completeCheckInWorkflow(params: {
   const targetRoomId = targetRoom?.id || params.reservation.roomId;
   const targetRoomNumber = targetRoom?.roomNumber || params.reservation.roomNumber;
   if (!targetRoomId) {
-    throw new Error('Please assign an available room or suite before completing check-in.');
+    throw new Error('Please assign an available room before completing check-in.');
   }
 
   const { uid } = getActorContext();
@@ -1363,6 +1363,7 @@ export async function updateRoomStatus(params: {
       | 'housekeepingStatus'
       | 'nightlyRateNgn'
       | 'imageUrl'
+      | 'galleryImages'
       | 'amenities'
     >
   >;
@@ -1370,12 +1371,25 @@ export async function updateRoomStatus(params: {
 }) {
   const ref = doc(db, 'properties', params.property.id, 'rooms', params.room.id);
   try {
-    await updateDoc(ref, {
+    const payload: Record<string, unknown> = {
       ...params.updates,
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (Array.isArray(params.updates.galleryImages)) {
+      payload.galleryImages = params.updates.galleryImages
+        .map((u) => (typeof u === 'string' ? u.trim() : ''))
+        .filter(Boolean)
+        .slice(0, 6);
+    }
+    await updateDoc(ref, payload);
     const logSummary = Object.entries(params.updates)
-      .map(([k, v]) => (k === 'imageUrl' ? 'imageUrl: [updated]' : `${k}: ${String(v)}`))
+      .map(([k, v]) =>
+        k === 'imageUrl'
+          ? 'imageUrl: [updated]'
+          : k === 'galleryImages'
+            ? `galleryImages: [${Array.isArray(v) ? v.length : 0} slides]`
+            : `${k}: ${String(v)}`
+      )
       .join(', ');
     await writeAuditLog({
       propertyId: params.property.id,
@@ -1402,6 +1416,7 @@ export async function createRoomWorkflow(params: {
   nightlyRateNgn: number;
   maxGuests: number;
   imageUrl: string;
+  galleryImages?: string[];
   amenities: string[];
   actorRole: string;
 }) {
@@ -1425,6 +1440,10 @@ export async function createRoomWorkflow(params: {
     .map((a) => a.trim())
     .filter(Boolean)
     .slice(0, 15);
+  const cleanGallery = (params.galleryImages || [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+    .slice(0, 6);
   const nextCount = Math.min(500, params.currentRoomCount + 1);
 
   const batch = writeBatch(db);
@@ -1444,6 +1463,7 @@ export async function createRoomWorkflow(params: {
     currentGuestName: '',
     currentReservationId: '',
     imageUrl: params.imageUrl.trim(),
+    ...(cleanGallery.length > 0 ? { galleryImages: cleanGallery } : {}),
     amenities: cleanAmenities.length > 0 ? cleanAmenities : ['King Bed', 'Wi-Fi', '24/7 Power'],
     authorizedEmails: params.property.authorizedEmails,
     ownerUid: uid,
@@ -1479,7 +1499,7 @@ export async function deleteRoomWorkflow(params: {
 }) {
   if (params.room.occupancyStatus === 'occupied') {
     throw new Error(
-      `Suite ${params.room.roomNumber} currently has an occupied guest. Check out or move the guest before deleting this room.`
+      `Room ${params.room.roomNumber} currently has an occupied guest. Check out or move the guest before deleting this room.`
     );
   }
   const roomRef = doc(db, 'properties', params.property.id, 'rooms', params.room.id);

@@ -97,6 +97,7 @@ interface DashboardViewProps {
     targetSection?: 'reservations' | 'front_desk',
     intent?: 'view' | 'edit'
   ) => void;
+  onInspectRoom?: (roomId: string) => void;
   onSignOut?: () => void;
 }
 
@@ -121,6 +122,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onGuestCheckedIn,
   onNavigate,
   onOpenReservationFolio,
+  onInspectRoom,
   onSignOut,
 }) => {
   const { cms } = useCms();
@@ -142,7 +144,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [confirmDeleteResId, setConfirmDeleteResId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyResId, setBusyResId] = useState<string | null>(null);
-  const [selectedChartDay, setSelectedChartDay] = useState<string | null>(null);
 
   const arrivalsTodayList = reservations.filter(
     (r) => r.status === 'confirmed' && r.checkInDate <= todayIso
@@ -169,38 +170,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const openMaintenance = maintenanceTickets.filter((t) => t.status !== 'resolved');
 
   const analytics = useMemo(() => {
-    const days: Array<{
-      iso: string;
-      shortLabel: string;
-      fullLabel: string;
-      revenueNgn: number;
-      expenseNgn: number;
-    }> = [];
     const baseDate = new Date(`${todayIso}T00:00:00Z`);
+    let total7DayRevenue = 0;
     for (let offset = 6; offset >= 0; offset -= 1) {
       const d = new Date(baseDate);
       d.setUTCDate(baseDate.getUTCDate() - offset);
       const iso = d.toISOString().slice(0, 10);
-      const shortLabel = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
-      const fullLabel = d.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        timeZone: 'UTC',
-      });
-      const dayRev = ledgerEntries
+      total7DayRevenue += ledgerEntries
         .filter((e) => e.entryType === 'revenue' && e.entryDate === iso)
         .reduce((s, e) => s + e.amountNgn, 0);
-      const dayExp = ledgerEntries
-        .filter((e) => e.entryType === 'expense' && e.entryDate === iso)
-        .reduce((s, e) => s + e.amountNgn, 0);
-      days.push({ iso, shortLabel, fullLabel, revenueNgn: dayRev, expenseNgn: dayExp });
     }
-    const maxDailyVal = Math.max(
-      100000,
-      ...days.map((d) => Math.max(d.revenueNgn, d.expenseNgn))
-    );
-    const total7DayRevenue = days.reduce((s, d) => s + d.revenueNgn, 0);
-    const total7DayExpense = days.reduce((s, d) => s + d.expenseNgn, 0);
     const avgDailyRevenue = Math.round(total7DayRevenue / 7);
 
     // Channel Mix & Exact Original Currency Breakdown
@@ -300,10 +279,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
 
     return {
-      days,
-      maxDailyVal,
-      total7DayRevenue,
-      total7DayExpense,
       avgDailyRevenue,
       channelMix,
       nonCancelledCount: nonCancelled.length,
@@ -437,16 +412,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     {
       key: 'Serviced Apartment',
       title: cms.dashboard.servicedSectionTitle || 'Serviced Apartment Section',
-      subtitle:
+      subtitle: (
         cms.dashboard.servicedSectionSubtitle ||
-        'Self-contained studios and suites equipped with fitted kitchenettes',
+        'Self-contained studios and rooms equipped with fitted kitchenettes'
+      ).replace(/\bsuites\b/gi, 'rooms'),
     },
     {
       key: 'Hotel Rooms',
       title: cms.dashboard.hotelSectionTitle || 'Hotel Rooms Section',
-      subtitle:
+      subtitle: (
         cms.dashboard.hotelSectionSubtitle ||
-        'Individual executive studios and one-bedroom hospitality suites',
+        'Individual executive studios and one-bedroom hospitality rooms'
+      ).replace(/\bsuites\b/gi, 'rooms'),
     },
   ];
 
@@ -501,7 +478,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     {
       id: 'kpi-inhouse',
       label: 'In-House Guests',
-      subtitle: 'Currently occupied suites',
+      subtitle: 'Currently occupied rooms',
       value: String(inHouseList.length),
       borderAccent: 'border-t-emerald-600',
       cardTint: 'bg-gradient-to-br from-white via-white to-emerald-50/70',
@@ -509,7 +486,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       barColor: 'bg-gradient-to-r from-emerald-600 to-teal-500',
       barTrack: 'bg-emerald-100',
       barPct: occupancyPct,
-      barHint: `${occupancyPct}% suite occupancy rate`,
+      barHint: `${occupancyPct}% room occupancy rate`,
       target: 'in_house',
     },
   ];
@@ -536,14 +513,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     },
     {
       id: 'kpi-available',
-      label: 'Available Suites',
+      label: 'Available Rooms',
       value: String(availableRoomsCount),
       borderAccent: 'border-t-cyan-600',
       barColor: 'bg-cyan-600',
       barTrack: 'bg-cyan-100',
       barPct:
         rooms.length > 0 ? Math.min(100, Math.round((availableRoomsCount / rooms.length) * 100)) : 0,
-      target: 'walk_in',
+      target: 'rooms',
     },
     {
       id: 'kpi-revenue',
@@ -826,197 +803,83 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         onNotify={onNotify}
       />
 
-      {/* Colorful Visual Analytics: 7-Day Revenue vs Expense Chart, Channel Currency Mix Bars, & Operations Pulse */}
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* 7-Day Revenue vs Expense Column Bar Chart */}
-          <div className="lg:col-span-2 bg-white border border-slate-200 border-t-4 border-t-emerald-600 rounded-xl p-5 flex flex-col justify-between gap-4 shadow-xs">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="font-display text-base font-extrabold text-[#061539]">
-                  7-Day Revenue vs Expense Flow
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Daily posted ledger inflows vs operating expenses (click any day bar to inspect)
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono-tabular">
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-600" />
-                  Rev: {formatNgn(analytics.total7DayRevenue)}
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 font-bold">
-                  <span className="w-2 h-2 rounded-full bg-rose-600" />
-                  Exp: {formatNgn(analytics.total7DayExpense)}
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 font-bold">
-                  Net: {formatNgn(analytics.total7DayRevenue - analytics.total7DayExpense)}
-                </span>
-              </div>
+      {/* Colorful Visual Analytics: Booking Sources & Operations Pulse */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Booking Channel Mix & Exact Original Currency Breakdown */}
+        <div className="lg:col-span-5 bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-5 flex flex-col justify-between gap-4 shadow-xs">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h2 className="font-display text-base font-extrabold text-[#061539]">
+                Booking Sources &amp; Currency
+              </h2>
+              <p className="text-xs text-slate-500">
+                Share across {analytics.nonCancelledCount} active/completed stays
+              </p>
             </div>
-
-            {(() => {
-              const activeDay =
-                analytics.days.find((d) => d.iso === selectedChartDay) ||
-                analytics.days[analytics.days.length - 1];
-              return (
-                <div className="space-y-3">
-                  <div className="relative bg-slate-50/70 border border-slate-100 rounded-xl px-3 sm:px-4 pt-5 pb-3">
-                    {/* Horizontal subtle grid lines */}
-                    <div className="relative h-44 flex items-end justify-between gap-2 sm:gap-4">
-                      <div className="pointer-events-none absolute inset-x-0 top-0 bottom-6 flex flex-col justify-between">
-                        <div className="border-b border-dashed border-slate-200/80 w-full" />
-                        <div className="border-b border-dashed border-slate-200/80 w-full" />
-                        <div className="border-b border-dashed border-slate-200/80 w-full" />
-                        <div className="border-b border-slate-200 w-full" />
-                      </div>
-
-                      {analytics.days.map((day) => {
-                        const revPct = Math.round((day.revenueNgn / analytics.maxDailyVal) * 100);
-                        const expPct = Math.round((day.expenseNgn / analytics.maxDailyVal) * 100);
-                        const isSelected = activeDay?.iso === day.iso;
-                        return (
-                          <button
-                            key={day.iso}
-                            type="button"
-                            onClick={() => setSelectedChartDay(day.iso)}
-                            title={`${day.fullLabel}: Revenue ${formatNgn(day.revenueNgn)} · Expense ${formatNgn(day.expenseNgn)}`}
-                            className={`relative z-10 flex-1 flex flex-col items-center gap-1.5 group cursor-pointer rounded-lg p-1 transition-colors ${
-                              isSelected ? 'bg-blue-50/80 ring-1 ring-blue-200' : 'hover:bg-slate-100/70'
-                            }`}
-                          >
-                            <div className="w-full h-36 flex items-end justify-center gap-1 sm:gap-1.5">
-                              <div
-                                className="w-3.5 sm:w-5 rounded-t-md bg-gradient-to-t from-emerald-600 to-teal-400 group-hover:from-emerald-700 group-hover:to-teal-500 transition-all duration-300"
-                                style={{
-                                  height: `${day.revenueNgn > 0 ? Math.max(8, revPct) : 3}%`,
-                                  opacity: day.revenueNgn > 0 ? 1 : 0.25,
-                                }}
-                              />
-                              <div
-                                className="w-3.5 sm:w-5 rounded-t-md bg-gradient-to-t from-rose-600 to-orange-400 group-hover:from-rose-700 group-hover:to-orange-500 transition-all duration-300"
-                                style={{
-                                  height: `${day.expenseNgn > 0 ? Math.max(8, expPct) : 3}%`,
-                                  opacity: day.expenseNgn > 0 ? 1 : 0.25,
-                                }}
-                              />
-                            </div>
-                            <span
-                              className={`text-[10px] sm:text-[11px] font-semibold ${
-                                day.iso === todayIso
-                                  ? 'text-[#1c46be]'
-                                  : isSelected
-                                    ? 'text-slate-900'
-                                    : 'text-slate-500'
-                              }`}
-                            >
-                              {day.iso === todayIso ? 'Today' : day.shortLabel}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {activeDay && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#061539]/5 border border-slate-200 text-xs">
-                      <span className="font-semibold text-[#061539]">
-                        {activeDay.fullLabel} ({activeDay.iso})
-                      </span>
-                      <div className="flex flex-wrap items-center gap-3 font-mono-tabular">
-                        <span className="text-emerald-700 font-bold">
-                          Revenue: {formatNgn(activeDay.revenueNgn)}
-                        </span>
-                        <span className="text-rose-700 font-bold">
-                          Expense: {formatNgn(activeDay.expenseNgn)}
-                        </span>
-                        <span className="text-[#1c46be] font-bold">
-                          Net: {formatNgn(activeDay.revenueNgn - activeDay.expenseNgn)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            <button
+              type="button"
+              onClick={() => onNavigate('ota_channels')}
+              className="text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
+            >
+              Channels →
+            </button>
           </div>
 
-          {/* Booking Channel Mix & Exact Original Currency Breakdown */}
-          <div className="bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-5 flex flex-col justify-between gap-4 shadow-xs">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h2 className="font-display text-base font-extrabold text-[#061539]">
-                  Booking Sources &amp; Currency
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Share across {analytics.nonCancelledCount} active/completed stays
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onNavigate('ota_channels')}
-                className="text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
-              >
-                Channels →
-              </button>
+          {analytics.channelMix.length === 0 ? (
+            <div className="py-10 text-center text-xs text-slate-500">
+              Channel mix bars populate automatically as bookings arrive from Direct, Airbnb, or Booking.com.
             </div>
-
-            {analytics.channelMix.length === 0 ? (
-              <div className="py-10 text-center text-xs text-slate-500">
-                Channel mix bars populate automatically as bookings arrive from Direct, Airbnb, or Booking.com.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {analytics.channelMix.slice(0, 6).map((ch) => (
-                  <div key={ch.label} className="space-y-1">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${ch.style.dot}`} />
-                        <span className="font-semibold text-slate-800 truncate">{ch.label}</span>
-                        <span className="font-mono-tabular text-[11px] text-slate-500">
-                          ({ch.count})
-                        </span>
-                      </div>
-                      <div className="text-right font-mono-tabular shrink-0">
-                        {ch.usdTotal > 0 ? (
-                          <span className="font-bold text-blue-800">
-                            {formatUsd(ch.usdTotal)} USD
-                          </span>
-                        ) : (
-                          <span className="font-bold text-slate-900">{formatNgn(ch.ngnTotal)}</span>
-                        )}
-                      </div>
+          ) : (
+            <div className="space-y-3">
+              {analytics.channelMix.slice(0, 6).map((ch) => (
+                <div key={ch.label} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${ch.style.dot}`} />
+                      <span className="font-semibold text-slate-800 truncate">{ch.label}</span>
+                      <span className="font-mono-tabular text-[11px] text-slate-500">
+                        ({ch.count})
+                      </span>
                     </div>
-                    <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${ch.style.bar}`}
-                        style={{ width: `${Math.max(8, ch.pct)}%` }}
-                      />
+                    <div className="text-right font-mono-tabular shrink-0">
+                      {ch.usdTotal > 0 ? (
+                        <span className="font-bold text-blue-800">
+                          {formatUsd(ch.usdTotal)} USD
+                        </span>
+                      ) : (
+                        <span className="font-bold text-slate-900">{formatNgn(ch.ngnTotal)}</span>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-              <span>OTA USD payments preserved verbatim</span>
-              <button
-                type="button"
-                onClick={() => onNavigate('reports')}
-                className="font-semibold text-emerald-700 hover:underline cursor-pointer"
-              >
-                Full Revenue Report →
-              </button>
+                  <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${ch.style.bar}`}
+                      style={{ width: `${Math.max(8, ch.pct)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
+          )}
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+            <span>OTA USD payments preserved verbatim</span>
+            <button
+              type="button"
+              onClick={() => onNavigate('reports')}
+              className="font-semibold text-emerald-700 hover:underline cursor-pointer"
+            >
+              Full Revenue Report →
+            </button>
           </div>
         </div>
 
-        {/* Operations & Settlement Pulse Stacked Bars Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* 1. Suite Occupancy Stacked Bar */}
+        {/* Operations & Settlement Pulse Stacked Bars */}
+        <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* 1. Room Occupancy Stacked Bar */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold text-[#061539]">Suite Occupancy Split</span>
+              <span className="text-xs font-extrabold text-[#061539]">Room Occupancy Split</span>
               <span className="font-mono-tabular text-xs font-bold text-blue-700">
                 {occupancyPct}% Occupied
               </span>
@@ -1146,7 +1009,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {/* 3. Folio Settlement Mix Stacked Bar */}
-          <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
+          <div className="sm:col-span-2 bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
             <div className="flex items-center justify-between">
               <span className="text-xs font-extrabold text-[#061539]">Folio Settlement Mix</span>
               <span className="font-mono-tabular text-xs font-bold text-indigo-700">
@@ -1397,6 +1260,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     onClick={() => {
                       if (activeRes) {
                         onOpenReservationFolio(activeRes.id, 'front_desk');
+                      } else if (onInspectRoom) {
+                        onInspectRoom(room.id);
                       } else {
                         onNavigate('rooms');
                       }
@@ -2043,7 +1908,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <p className="text-slate-600 leading-relaxed">
               Select free cancellation or apply a cancellation fee before releasing{' '}
               <span className="font-mono-tabular font-semibold text-slate-800">
-                {cancelTarget.roomNumber || 'the suite hold'}
+                {cancelTarget.roomNumber || 'the room hold'}
               </span>
               .
             </p>

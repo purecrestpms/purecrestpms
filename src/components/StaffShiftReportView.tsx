@@ -228,9 +228,9 @@ export const StaffShiftReportView: React.FC<StaffShiftReportViewProps> = ({
         ['Check-Ins Completed', String(checkInsOnDate.length)],
         ['Pending Arrivals Due', String(pendingArrivals.length)],
         ['Check-Outs Completed', String(checkOutsOnDate.length)],
-        ['In-House Occupied Suites', `${inHouseCount} of ${rooms.length}`],
-        ['Vacant & Ready Suites', String(vacantCleanRooms)],
-        ['Suites Needing Cleaning', String(dirtyRooms)],
+        ['In-House Occupied Rooms', `${inHouseCount} of ${rooms.length}`],
+        ['Vacant & Ready Rooms', String(vacantCleanRooms)],
+        ['Rooms Needing Cleaning', String(dirtyRooms)],
         ['Housekeeping Tasks Completed / Open', `${completedHkTasks.length} completed / ${openHkTasks.length} open`],
         ['Kitchen Tickets Served / Active', `${servedKitchenCount} served / ${activeKitchenCount} active`],
         ['Open Maintenance Work Orders', String(openMaintTickets.length)],
@@ -419,7 +419,7 @@ export const StaffShiftReportView: React.FC<StaffShiftReportViewProps> = ({
 
           <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/60">
             <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>Suites &amp; Housekeeping</span>
+              <span>Rooms &amp; Housekeeping</span>
               <BedDouble className="w-4 h-4 text-indigo-600" />
             </div>
             <p className="font-mono-tabular text-2xl font-bold text-[#061539] mt-1.5">

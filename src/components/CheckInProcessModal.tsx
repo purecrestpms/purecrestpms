@@ -373,7 +373,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 font-bold text-slate-900">
               <BedDouble className="w-4 h-4 text-emerald-700" />
-              <span>Step 2 — Assign Room / Suite</span>
+              <span>Step 2 — Assign Room</span>
             </div>
             {selectedRoom && (
               <span className="capitalize font-semibold text-slate-600">
@@ -392,14 +392,14 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                 <option key={r.id} value={r.id}>
                   {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}/nt) —{' '}
                   {r.id === reservation.roomId
-                    ? 'Booked Suite'
+                    ? 'Booked Room'
                     : `Vacant · HK: ${r.housekeepingStatus}`}
                 </option>
               ))}
             </select>
             {isRoomChanged && selectedRoom && (
               <p className="text-[11px] text-amber-700 font-medium mt-1.5">
-                Suite reassigned from {reservation.roomNumber} to {selectedRoom.roomNumber} (
+                Room reassigned from {reservation.roomNumber} to {selectedRoom.roomNumber} (
                 {formatNgn(selectedRoom.nightlyRateNgn)}/night). Folio total adjusted automatically.
               </p>
             )}
@@ -468,10 +468,10 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-bold text-slate-900">
               <KeyRound className="w-4 h-4 text-emerald-700" />
-              <span>Step 4 — Key Issue &amp; Suite Readiness</span>
+              <span>Step 4 — Key Issue &amp; Room Readiness</span>
             </div>
             <span className="font-mono-tabular text-[11px] font-semibold text-slate-700">
-              Suite {selectedRoom?.roomNumber || reservation.roomNumber}
+              Room {selectedRoom?.roomNumber || reservation.roomNumber}
             </span>
           </div>
 
@@ -479,7 +479,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
             <div>
               <p className="font-semibold text-slate-900">Key Issued to Guest? *</p>
               <p className="text-[11px] text-slate-500">
-                Select Yes once physical key card / suite key is handed over
+                Select Yes once physical key card / room key is handed over
               </p>
             </div>
             <div className="inline-flex items-center gap-2">
@@ -521,7 +521,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
               onChange={(e) => setRoomReadyConfirmed(e.target.checked)}
               className="rounded border-slate-300 text-emerald-600"
             />
-            <span>Suite power, AC, and amenities inspected ready for guest arrival</span>
+            <span>Room power, AC, and amenities inspected ready for guest arrival</span>
           </label>
         </div>
 

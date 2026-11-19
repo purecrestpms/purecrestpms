@@ -1685,7 +1685,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
     doc.addPage();
     autoTable(doc, {
       startY: 16,
-      head: [['Suite', 'Section', 'Room Type', 'Occupied Nights', 'Occupancy %', 'Earned Rev', 'ADR', 'RevPAR']],
+      head: [['Room', 'Section', 'Room Type', 'Occupied Nights', 'Occupancy %', 'Earned Rev', 'ADR', 'RevPAR']],
       body: current.roomBreakdown.map((r) => [
         r.room.roomNumber,
         r.section,
@@ -1706,7 +1706,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
     doc.text(`Room Bookings Daily Report (${dateWindow.label})`, 14, 16);
     autoTable(doc, {
       startY: 20,
-      head: [['Booked', 'Ref', 'Guest Name', 'Suite', 'Stay Dates', 'Nights', 'Source', 'Total', 'Paid', 'Status']],
+      head: [['Booked', 'Ref', 'Guest Name', 'Room', 'Stay Dates', 'Nights', 'Source', 'Total', 'Paid', 'Status']],
       body:
         dailyBookingsDataset.rows.length > 0
           ? dailyBookingsDataset.rows.map(({ res, bookedDate, roomDisplay, payment, sourceLabel }) => [
@@ -2833,10 +2833,10 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                   <h2 className="font-display text-sm font-bold text-slate-900">
                     {barMode === 'category'
                       ? 'Revenue vs Expenses by Category'
-                      : 'Earned Revenue by Suite (RM-1 to RM-8)'}
+                      : 'Earned Revenue by Room (RM-1 to RM-8)'}
                   </h2>
                   <p className="text-[11px] text-slate-500">
-                    Hover or click any bar to inspect exact category or suite totals
+                    Hover or click any bar to inspect exact category or room totals
                   </p>
                 </div>
                 <div className="no-print flex items-center gap-1.5 text-xs">
@@ -2866,7 +2866,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                         : 'bg-slate-100 text-slate-700'
                     }`}
                   >
-                    By Suite
+                    By Room
                   </button>
                 </div>
               </div>
@@ -2893,7 +2893,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
 
               {barData.length === 0 ? (
                 <p className="text-xs text-slate-500 py-10 text-center">
-                  No ledger or suite revenue entries in this date range.
+                  No ledger or room revenue entries in this date range.
                 </p>
               ) : (
                 <div className="w-full overflow-x-auto">
@@ -3161,10 +3161,10 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="font-display text-sm font-bold text-slate-900">
-                Room Occupancy, ADR &amp; RevPAR Breakdown ({rooms.length} Suites)
+                Room Occupancy, ADR &amp; RevPAR Breakdown ({rooms.length} Rooms)
               </h2>
               <p className="text-xs text-slate-500">
-                Live suite stays overlapping {dateWindow.label} · Blocked Date Windows: {blockedDates.length}
+                Live room stays overlapping {dateWindow.label} · Blocked Date Windows: {blockedDates.length}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs font-mono-tabular">
@@ -3184,7 +3184,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Suite</th>
+                  <th className="px-4 py-3 font-semibold">Room</th>
                   <th className="px-4 py-3 font-semibold">Section &amp; Type</th>
                   <th className="px-4 py-3 font-semibold text-right">Rack Rate</th>
                   <th className="px-4 py-3 font-semibold text-right">Occ. Nights</th>
@@ -3337,7 +3337,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
                         <th className="px-4 py-2.5 font-semibold text-right">Booked</th>
                         <th className="px-4 py-2.5 font-semibold text-right">Arrivals</th>
                         <th className="px-4 py-2.5 font-semibold text-right">Departures</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Occupied Suites</th>
+                        <th className="px-4 py-2.5 font-semibold text-right">Occupied Rooms</th>
                         <th className="px-4 py-2.5 font-semibold text-right">Booked Value</th>
                         <th className="px-4 py-2.5 font-semibold text-right">Collected</th>
                         <th className="px-4 py-2.5 font-semibold text-right">Balance</th>

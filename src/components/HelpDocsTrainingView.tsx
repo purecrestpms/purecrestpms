@@ -60,7 +60,7 @@ const TRAINING_MODULES: TrainingModule[] = [
     roleAudience: 'Front Desk · Property Admin',
     durationSec: 40,
     summary:
-      'Learn how to confirm payment, verify guest KYC ID, assign a suite (RM-1 to RM-8+), mark Key Issued = Yes, and trigger the check-in confirmation.',
+      'Learn how to confirm payment, verify guest KYC ID, assign a room (RM-1 to RM-8+), mark Key Issued = Yes, and trigger the check-in confirmation.',
     steps: [
       {
         title: 'Open Arrivals or Reservations',
@@ -87,13 +87,13 @@ const TRAINING_MODULES: TrainingModule[] = [
         ],
       },
       {
-        title: 'Assign Suite & Issue Key (Yes/No)',
-        caption: 'Step 3: Assign suite, verify Housekeeping status is Clean/Inspected, and set Key Issued = Yes before completing check-in.',
-        uiBanner: 'Step 3 & 4 · Suite Assignment & Key Issuance',
-        highlightBox: 'Suite RM-4 · Key Issued: Yes · Guest Checked In',
+        title: 'Assign Room & Issue Key (Yes/No)',
+        caption: 'Step 3: Assign room, verify Housekeeping status is Clean/Inspected, and set Key Issued = Yes before completing check-in.',
+        uiBanner: 'Step 3 & 4 · Room Assignment & Key Issuance',
+        highlightBox: 'Room RM-4 · Key Issued: Yes · Guest Checked In',
         actionButton: 'Complete Check-In ->',
         metrics: [
-          { label: 'Suite Status', value: 'Occupied' },
+          { label: 'Room Status', value: 'Occupied' },
           { label: 'Key Issued', value: 'Yes' },
           { label: 'Folio', value: 'Active' },
         ],
@@ -106,7 +106,7 @@ const TRAINING_MODULES: TrainingModule[] = [
     roleAudience: 'Property Admin',
     durationSec: 36,
     summary:
-      'Add new suites up to Richgates Apartments’ 20-room license ceiling, edit NGN nightly rates, and upload suite photos.',
+      'Add new rooms up to Richgates Apartments’ 20-room license ceiling, edit NGN nightly rates, and upload room gallery photos.',
     steps: [
       {
         title: 'Monitor Licensed Capacity',
@@ -115,7 +115,7 @@ const TRAINING_MODULES: TrainingModule[] = [
         highlightBox: 'Serviced Apartments (RM-1..RM-3) & Hotel Rooms',
         actionButton: '+ Add New Room',
         metrics: [
-          { label: 'Active Suites', value: '8 Rooms' },
+          { label: 'Active Rooms', value: '8 Rooms' },
           { label: 'License Max', value: '20 Rooms' },
           { label: 'Remaining', value: '12 Slots' },
         ],
@@ -140,23 +140,23 @@ const TRAINING_MODULES: TrainingModule[] = [
     roleAudience: 'Front Desk · Maintenance · Property Admin',
     durationSec: 36,
     summary:
-      'Check suite availability by check-in/out dates, click any open calendar cell to create a booking, or place Owner/Maintenance date blocks.',
+      'Check room availability by check-in/out dates, click any open calendar cell to create a booking, or place Owner/Maintenance date blocks.',
     steps: [
       {
-        title: 'Filter Open Suites by Date Range',
-        caption: 'Step 1: Pick Check-In and Check-Out dates (checkout automatically defaults to Check-In + 1 day) to find open suites.',
+        title: 'Filter Open Rooms by Date Range',
+        caption: 'Step 1: Pick Check-In and Check-Out dates (checkout automatically defaults to Check-In + 1 day) to find open rooms.',
         uiBanner: 'Availability Calendar · Date Search',
-        highlightBox: '4 Suites Available for Selected Stay Dates',
+        highlightBox: '4 Rooms Available for Selected Stay Dates',
         actionButton: 'Book Open Cell',
         metrics: [
           { label: 'Check-In', value: 'Today' },
           { label: 'Check-Out', value: 'Tomorrow' },
-          { label: 'Open Suites', value: '4 Ready' },
+          { label: 'Open Rooms', value: '4 Ready' },
         ],
       },
       {
         title: 'Block Dates for Maintenance or VIP Hold',
-        caption: 'Step 2: Click Block Room Dates to lock a suite for AC maintenance, deep clean, or VIP hold across OTA & Front Desk.',
+        caption: 'Step 2: Click Block Room Dates to lock a room for AC maintenance, deep clean, or VIP hold across OTA & Front Desk.',
         uiBanner: 'Date Block Placed -> Synced to iCal',
         highlightBox: 'RM-6 · Maintenance Hold · Synced to Channels',
         actionButton: 'Save Date Block',
@@ -278,23 +278,23 @@ const DOC_TOPICS = [
     category: 'Front Desk',
     title: 'Mandatory Guest Check-In & Room Change Rules',
     summary:
-      'Every arrival and walk-in must confirm payment, verify guest ID (NIN/Passport/Driver License), assign an available suite, and confirm Key Issued = Yes.',
+      'Every arrival and walk-in must confirm payment, verify guest ID (NIN/Passport/Driver License), assign an available room, and confirm Key Issued = Yes.',
     bullets: [
       'Use Walk-in Check-in for immediate arrivals; checkout automatically defaults to Tomorrow and blocks invalid earlier checkout dates.',
       'For existing Confirmed or Pending bookings, click Check In from Arrivals or Reservations to run the 4-step verification modal.',
-      'To relocate an In-House guest, open their reservation row or Folio and click Change Room to pick a vacant suite and optionally adjust the nightly rate.',
+      'To relocate an In-House guest, open their reservation row or Folio and click Change Room to pick a vacant room and optionally adjust the nightly rate.',
     ],
   },
   {
     id: 'doc-rooms',
     category: 'Inventory & License',
-    title: 'Adding Suites & Richgates 20-Room License Limit',
+    title: 'Adding Rooms & Richgates 20-Room License Limit',
     summary:
       'Richgates Apartments operates under an active Lifetime Sovereign license capped at 20 rooms maximum across Serviced Apartments and Hotel Rooms.',
     bullets: [
-      'Property Administrators can click + Add New Room inside Rooms & Rates to register new suites (e.g. RM-9 through RM-20).',
+      'Property Administrators can click + Add New Room inside Rooms & Rates to register new rooms (e.g. RM-9 through RM-20).',
       'Room creation automatically checks current room count against the 20-room Richgates ceiling and blocks creation once 20 rooms exist.',
-      'Nightly Naira rates and suite photos can be edited anytime via Manage Suite or the inline Rate button.',
+      'Nightly Naira rates and room gallery photos can be edited anytime via Edit Room or the inline Rate button.',
     ],
   },
   {
@@ -326,7 +326,7 @@ const DOC_TOPICS = [
     category: 'Channel Manager',
     title: 'Two-Way iCal (.ics) Sync with Airbnb, Booking.com & VRBO',
     summary:
-      'Prevent double bookings by linking inbound and outbound iCal feeds per suite or property-wide.',
+      'Prevent double bookings by linking inbound and outbound iCal feeds per room or property-wide.',
     bullets: [
       'Click Add Channel / iCal Link inside Channel Manager & iCal to paste an OTA .ics feed URL and set the guest booking currency (NGN, USD, GBP, EUR).',
       'Copy the Outbound Property iCal Export Feed URL or download the .ics file to paste back into Airbnb or Booking.com.',
@@ -360,7 +360,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'Why did my Check-In button stay disabled?',
-    a: 'All mandatory steps must be satisfied: suite assigned, payment confirmed, valid guest ID entered & verified, suite readiness confirmed, and Key Issued set to Yes.',
+    a: 'All mandatory steps must be satisfied: room assigned, payment confirmed, valid guest ID entered & verified, room readiness confirmed, and Key Issued set to Yes.',
   },
 ];
 
