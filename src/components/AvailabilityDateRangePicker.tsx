@@ -220,14 +220,24 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
             excludeReservationId,
           }).available
       ).length;
-      if (openCount > 0) {
+      const unassignedHeld = reservations.filter(
+        (r) =>
+          r.id !== excludeReservationId &&
+          (r.status === 'confirmed' || r.status === 'checked_in' || r.status === 'pending') &&
+          !r.roomId &&
+          (!roomType || r.requestedRoomType === roomType) &&
+          r.checkInDate <= cell.iso &&
+          cell.iso < (r.checkOutDate > r.checkInDate ? r.checkOutDate : addDaysIso(r.checkInDate, 1))
+      ).length;
+      const netOpen = Math.max(0, openCount - unassignedHeld);
+      if (netOpen > 0) {
         return {
           ...cell,
           info: {
             status: 'available' as const,
             available: true,
-            label: `${openCount}/${pool.length} open`,
-            detail: `${openCount} of ${pool.length} ${roomType || 'rooms'} open on ${formatPrettyDate(cell.iso)}`,
+            label: `${netOpen}/${pool.length} open`,
+            detail: `${netOpen} of ${pool.length} ${roomType || 'rooms'} open on ${formatPrettyDate(cell.iso)}`,
           },
         };
       }
@@ -236,8 +246,8 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
         info: {
           status: 'reserved' as const,
           available: false,
-          label: 'Full',
-          detail: `All ${pool.length} ${roomType || 'rooms'} are reserved or blocked on ${formatPrettyDate(cell.iso)}.`,
+          label: 'Unavailable',
+          detail: `All ${pool.length} ${roomType || 'rooms'} are reserved, booked on OTA, or blocked on ${formatPrettyDate(cell.iso)}.`,
         },
       };
     });

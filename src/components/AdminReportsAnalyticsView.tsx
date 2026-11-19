@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   BedDouble,
@@ -77,6 +77,7 @@ interface AdminReportsAnalyticsViewProps {
   housekeepingTasks: HousekeepingTaskRecord[];
   maintenanceTickets: MaintenanceTicketRecord[];
   otaChannels: OtaIntegrationRecord[];
+  initialTab?: ReportTab;
   onNavigate?: (section: NavSectionId) => void;
   onNotify: (msg: string) => void;
 }
@@ -92,7 +93,7 @@ type PeriodPreset =
   | 'all_time'
   | 'custom';
 
-type ReportTab = 'bookings' | 'financials' | 'rooms';
+export type ReportTab = 'bookings' | 'financials' | 'rooms' | 'guests';
 
 function isoDate(d: Date): string {
   const y = d.getFullYear();
@@ -212,6 +213,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
   staffMembers,
   housekeepingTasks,
   maintenanceTickets,
+  initialTab,
   onNavigate,
   onNotify,
 }) => {
@@ -219,10 +221,16 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('this_month');
   const [customStart, setCustomStart] = useState(() => isoDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
   const [customEnd, setCustomEnd] = useState(() => todayIso);
-  const [activeTab, setActiveTab] = useState<ReportTab>('bookings');
+  const [activeTab, setActiveTab] = useState<ReportTab>(initialTab || 'bookings');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | ReservationStatus>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('ALL');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   const canAccess = activeRole === 'pch_admin' || activeRole === 'property_admin';
 
@@ -892,7 +900,19 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
             }`}
           >
             <BedDouble className="w-4 h-4" />
-            <span>Rooms &amp; Operations</span>
+            <span>Occupancy &amp; Rooms</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('guests')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+              activeTab === 'guests'
+                ? 'bg-[#0c562c] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Guest Report ({guests.length})</span>
           </button>
         </div>
 
@@ -1338,6 +1358,177 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           </div>
         </div>
       )}
+
+      {/* TAB 4: GUEST REPORT */}
+      {activeTab === 'guests' && (() => {
+        const guestMetrics = guests.map((g) => {
+          const gEmail = (g.email || '').trim().toLowerCase();
+          const gPhone = (g.phone || '').replace(/\s+/g, '');
+          const gName = g.fullName.trim().toLowerCase();
+          const guestRes = reservations.filter((r) => {
+            if (r.status === 'cancelled') return false;
+            if (gEmail && (r.guestEmail || '').trim().toLowerCase() === gEmail) return true;
+            if (gPhone && (r.guestPhone || '').replace(/\s+/g, '') === gPhone) return true;
+            return r.guestName.trim().toLowerCase() === gName;
+          });
+          const totalSpendNgn = guestRes.reduce(
+            (sum, r) => sum + getReservationEffectiveRevenueNgn(r, property.usdExchangeRateNgn),
+            0
+          );
+          const stayCount = Math.max(g.totalStays || 0, guestRes.length);
+          const lastStay = guestRes
+            .map((r) => r.checkInDate)
+            .sort((a, b) => b.localeCompare(a))[0];
+          return {
+            guest: g,
+            stayCount,
+            totalSpendNgn,
+            lastStay,
+          };
+        });
+        const repeatGuests = guestMetrics.filter((m) => m.stayCount > 1).length;
+        const vipGuests = guests.filter((g) => g.vipTier !== 'Standard').length;
+        const verifiedKyc = guests.filter((g) => Boolean(g.idNumber && g.idNumber.trim().length >= 3)).length;
+        const q = searchQuery.trim().toLowerCase();
+        const filteredGuestMetrics = guestMetrics
+          .filter((m) => {
+            if (!q) return true;
+            return (
+              m.guest.fullName.toLowerCase().includes(q) ||
+              (m.guest.email || '').toLowerCase().includes(q) ||
+              (m.guest.phone || '').toLowerCase().includes(q) ||
+              (m.guest.nationality || '').toLowerCase().includes(q)
+            );
+          })
+          .sort((a, b) => b.totalSpendNgn - a.totalSpendNgn);
+
+        return (
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-semibold text-slate-500">Total Registered Guests</p>
+                <p className="font-mono-tabular text-2xl font-extrabold text-slate-900 mt-1">
+                  {guests.length}
+                </p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-semibold text-slate-500">Repeat Guests</p>
+                <p className="font-mono-tabular text-2xl font-extrabold text-emerald-700 mt-1">
+                  {repeatGuests}
+                </p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-semibold text-slate-500">VIP / Corporate Tier</p>
+                <p className="font-mono-tabular text-2xl font-extrabold text-blue-700 mt-1">
+                  {vipGuests}
+                </p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                <p className="text-xs font-semibold text-slate-500">KYC ID On File</p>
+                <p className="font-mono-tabular text-2xl font-extrabold text-violet-700 mt-1">
+                  {verifiedKyc}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <div className="bg-gradient-to-r from-[#0c562c] to-[#136f3b] px-4 sm:px-5 py-3 text-white flex items-center justify-between gap-2">
+                <h3 className="font-display text-sm font-bold">
+                  Guest Activity &amp; Lifetime Value ({filteredGuestMetrics.length})
+                </h3>
+                {onNavigate && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('guests')}
+                    className="text-xs font-semibold text-white/90 hover:text-white hover:underline cursor-pointer"
+                  >
+                    Open Guest Directory →
+                  </button>
+                )}
+              </div>
+
+              <div className="px-4 sm:px-5 py-3 bg-slate-50/70 border-b border-slate-200 print:hidden">
+                <div className="relative max-w-md">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Filter guests by name, phone, email or country..."
+                    className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-300 bg-white text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                      <th className="py-3 px-4">Guest Name</th>
+                      <th className="py-3 px-4">Contact</th>
+                      <th className="py-3 px-4">Nationality</th>
+                      <th className="py-3 px-4">Tier</th>
+                      <th className="py-3 px-4 text-center">Stays</th>
+                      <th className="py-3 px-4">Last Check-In</th>
+                      <th className="py-3 px-4 text-right">Lifetime Spend</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs sm:text-[13px]">
+                    {filteredGuestMetrics.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-10 text-center text-slate-500">
+                          No guest profiles match your filter yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredGuestMetrics.map(({ guest, stayCount, totalSpendNgn, lastStay }) => (
+                        <tr key={guest.id} className="hover:bg-slate-50/80">
+                          <td className="py-3 px-4 font-semibold text-slate-900 whitespace-nowrap">
+                            {guest.fullName}
+                          </td>
+                          <td className="py-3 px-4 text-slate-600">
+                            <span className="block font-mono-tabular text-xs">{guest.phone || '—'}</span>
+                            {guest.email && (
+                              <span className="block text-[11px] text-slate-400">{guest.email}</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+                            {guest.nationality || '—'}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                guest.vipTier === 'Gold'
+                                  ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                  : guest.vipTier === 'Diplomatic'
+                                    ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                    : guest.vipTier === 'Silver'
+                                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                      : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {guest.vipTier}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-mono-tabular text-center font-semibold text-slate-800">
+                            {stayCount}
+                          </td>
+                          <td className="py-3 px-4 font-mono-tabular text-slate-600 whitespace-nowrap">
+                            {lastStay ? formatReadableDate(lastStay) : '—'}
+                          </td>
+                          <td className="py-3 px-4 font-mono-tabular text-right font-bold text-emerald-700 whitespace-nowrap">
+                            {formatNgn(totalSpendNgn)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Clean Bottom Report Footer Strip */}
       <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">

@@ -14,6 +14,7 @@ import {
   Ban,
   BedDouble,
   BookOpenCheck,
+  Calendar,
   CalendarPlus,
   CheckCircle2,
   ChefHat,
@@ -97,7 +98,10 @@ import {
   StaffRole,
   SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
-import { checkRoomDateRangeAvailability } from '../utils/availability';
+import {
+  checkRoomDateRangeAvailability,
+  formatRoomAvailabilityTag,
+} from '../utils/availability';
 import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
@@ -122,6 +126,8 @@ interface RoomsReservationsViewProps {
   onConsumeRoomDetailId?: () => void;
   prefillBookingRoomId?: string | null;
   onConsumePrefillBookingRoomId?: () => void;
+  prefillBookingGuest?: GuestRecord | null;
+  onConsumePrefillBookingGuest?: () => void;
   onStartNewReservationForRoom?: (roomId: string) => void;
   onConsumeIntent?: () => void;
   onSelectReservation?: (id: string | null) => void;
@@ -275,6 +281,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   onConsumeRoomDetailId,
   prefillBookingRoomId,
   onConsumePrefillBookingRoomId,
+  prefillBookingGuest,
+  onConsumePrefillBookingGuest,
   onStartNewReservationForRoom,
   onConsumeIntent,
   onSelectReservation,
@@ -328,7 +336,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [selectedRoomDetailId, setSelectedRoomDetailId] = useState<string | null>(null);
   const [editingRoom, setEditingRoom] = useState<RoomRecord | null>(null);
   const [draftRoomNumber, setDraftRoomNumber] = useState('');
-  const [draftName, setDraftName] = useState('');
   const [draftRoomType, setDraftRoomType] = useState('');
   const [draftSection, setDraftSection] = useState<RoomSection>('Serviced Apartment');
   const [draftRateInput, setDraftRateInput] = useState<string>('65,500');
@@ -353,7 +360,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   // Add New Room Page state
   const [showAddRoomModal, setShowAddRoomModal] = useState(false);
   const [newRoomNumber, setNewRoomNumber] = useState('');
-  const [newRoomName, setNewRoomName] = useState('');
   const [newRoomType, setNewRoomType] = useState('Studio Apartment');
   const [newRoomSection, setNewRoomSection] = useState<RoomSection>('Hotel Rooms');
   const [newRoomFloor, setNewRoomFloor] = useState<number>(2);
@@ -416,7 +422,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [walkInIdNumber, setWalkInIdNumber] = useState('');
   const [walkInAddress, setWalkInAddress] = useState('');
   const [walkInCity, setWalkInCity] = useState('Enugu');
+  const [walkInState, setWalkInState] = useState('Enugu');
   const [walkInCountry, setWalkInCountry] = useState('Nigeria');
+  const [walkInAdults, setWalkInAdults] = useState(1);
+  const [walkInChildren, setWalkInChildren] = useState(0);
   const [walkInRoomTypeFilter, setWalkInRoomTypeFilter] = useState('ALL');
   const [walkInRoomId, setWalkInRoomId] = useState('');
   const [walkInCheckOut, setWalkInCheckOut] = useState(tomorrowIso);
@@ -424,6 +433,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [walkInPaymentMethod, setWalkInPaymentMethod] =
     useState<ReservationRecord['paymentMethod']>('Cash NGN');
   const [walkInDepositNgn, setWalkInDepositNgn] = useState(65500);
+  const [walkInPaymentStatus, setWalkInPaymentStatus] = useState<PaymentStatusLabel>('Paid');
+  const [walkInPaymentStatusManual, setWalkInPaymentStatusManual] = useState(false);
+  const [walkInCautionEnabled, setWalkInCautionEnabled] = useState(false);
+  const [walkInCautionAmount, setWalkInCautionAmount] = useState(20000);
+  const [walkInCautionCollected, setWalkInCautionCollected] = useState(0);
   const [walkInPayConfirmed, setWalkInPayConfirmed] = useState(false);
   const [walkInIdVerified, setWalkInIdVerified] = useState(false);
   const [walkInRoomReady, setWalkInRoomReady] = useState(false);
@@ -552,9 +566,30 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (section === 'reservations' && prefillBookingRoomId && rooms.length > 0) {
       const target = rooms.find((r) => r.id === prefillBookingRoomId);
       if (target) {
-        setSelectedRoomId(target.id);
+        const targetAvail = checkRoomDateRangeAvailability({
+          room: target,
+          checkInDate,
+          checkOutDate,
+          reservations,
+          blockedDates,
+        });
+        const nextRoom = targetAvail.available
+          ? target
+          : sortRoomsByNumber(rooms).find(
+              (r) =>
+                r.roomType === target.roomType &&
+                checkRoomDateRangeAvailability({
+                  room: r,
+                  checkInDate,
+                  checkOutDate,
+                  reservations,
+                  blockedDates,
+                }).available
+            );
+        setSelectedRoomId(nextRoom ? nextRoom.id : '');
         setNewRequestedRoomType(target.roomType);
-        const formatted = formatPriceInputWithCommas(target.nightlyRateNgn);
+        const rateNgn = (nextRoom || target).nightlyRateNgn;
+        const formatted = formatPriceInputWithCommas(rateNgn);
         setBookingNightlyRateInput(formatted);
         setBookingExpectedPayoutManual(false);
         setBookingExpectedPayoutInput(formatted);
@@ -564,6 +599,60 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       }
     }
   }, [section, prefillBookingRoomId, rooms]);
+
+  useEffect(() => {
+    if (section === 'reservations' && prefillBookingGuest) {
+      const [gFirst, gLast] = splitFullName(prefillBookingGuest.fullName || '');
+      setGuestFirstName(gFirst);
+      setGuestLastName(gLast);
+      setGuestPhone(prefillBookingGuest.phone || '+234 ');
+      setGuestEmail(prefillBookingGuest.email || '');
+      setGuestAddress(prefillBookingGuest.address || '');
+      setGuestCity(prefillBookingGuest.city || 'Enugu');
+      setGuestState(prefillBookingGuest.state || 'Enugu');
+      setGuestCountry(prefillBookingGuest.country || prefillBookingGuest.nationality || 'Nigeria');
+      setInlineIdType(prefillBookingGuest.idType || 'NIN');
+      setInlineIdNumber(prefillBookingGuest.idNumber || '');
+      // Ensure an actually available room is selected for the active stay dates
+      const sorted = sortRoomsByNumber(rooms);
+      const currentRoom = sorted.find((r) => r.id === selectedRoomId);
+      const currentAvail = currentRoom
+        ? checkRoomDateRangeAvailability({
+            room: currentRoom,
+            checkInDate,
+            checkOutDate,
+            reservations,
+            blockedDates,
+          })
+        : null;
+      if (!currentAvail?.available) {
+        const firstOpen = sorted.find(
+          (r) =>
+            checkRoomDateRangeAvailability({
+              room: r,
+              checkInDate,
+              checkOutDate,
+              reservations,
+              blockedDates,
+            }).available
+        );
+        if (firstOpen) {
+          setSelectedRoomId(firstOpen.id);
+          setNewRequestedRoomType(firstOpen.roomType);
+          const formatted = formatPriceInputWithCommas(firstOpen.nightlyRateNgn);
+          setBookingNightlyRateInput(formatted);
+          setBookingExpectedPayoutManual(false);
+          setBookingExpectedPayoutInput(formatted);
+          setBookingHotelPaidInput(formatted);
+        } else {
+          setSelectedRoomId('');
+        }
+      }
+      setBookingError(null);
+      setShowBookingForm(true);
+      onConsumePrefillBookingGuest?.();
+    }
+  }, [section, prefillBookingGuest]);
 
   useEffect(() => {
     if (activeFolioReservation) {
@@ -677,31 +766,69 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (!roomDefaultInitRef.current && rooms.length > 0) {
       roomDefaultInitRef.current = true;
       const sorted = sortRoomsByNumber(rooms);
-      const first = sorted.find((r) => r.occupancyStatus === 'vacant') || sorted[0];
-      if (first) {
-        setSelectedRoomId(first.id);
-        setNewRequestedRoomType(first.roomType);
-        const formatted = formatPriceInputWithCommas(first.nightlyRateNgn);
+      const firstAvailable = sorted.find(
+        (r) =>
+          checkRoomDateRangeAvailability({
+            room: r,
+            checkInDate,
+            checkOutDate,
+            reservations,
+            blockedDates,
+          }).available
+      );
+      const fallbackRoom = sorted.find((r) => r.occupancyStatus === 'vacant') || sorted[0];
+      if (firstAvailable) {
+        setSelectedRoomId(firstAvailable.id);
+        setNewRequestedRoomType(firstAvailable.roomType);
+        const formatted = formatPriceInputWithCommas(firstAvailable.nightlyRateNgn);
+        setBookingNightlyRateInput(formatted);
+        setBookingExpectedPayoutInput(formatted);
+        setBookingHotelPaidInput(formatted);
+      } else if (fallbackRoom) {
+        setSelectedRoomId('');
+        setNewRequestedRoomType(fallbackRoom.roomType);
+        const formatted = formatPriceInputWithCommas(fallbackRoom.nightlyRateNgn);
         setBookingNightlyRateInput(formatted);
         setBookingExpectedPayoutInput(formatted);
         setBookingHotelPaidInput(formatted);
       }
     }
-  }, [rooms]);
+  }, [rooms, reservations, blockedDates]);
 
   useEffect(() => {
     if (walkInEligibleRooms.length > 0) {
-      const currentValid = walkInEligibleRooms.find((r) => r.id === walkInRoomId);
-      if (!currentValid) {
+      const currentRoom = walkInEligibleRooms.find((r) => r.id === walkInRoomId);
+      const currentAvailable = currentRoom
+        ? checkRoomDateRangeAvailability({
+            room: currentRoom,
+            checkInDate: todayIso,
+            checkOutDate: walkInCheckOut,
+            reservations,
+            blockedDates,
+          }).available
+        : false;
+      if (!currentRoom || !currentAvailable) {
         const preferred =
+          walkInEligibleRooms.find(
+            (r) =>
+              checkRoomDateRangeAvailability({
+                room: r,
+                checkInDate: todayIso,
+                checkOutDate: walkInCheckOut,
+                reservations,
+                blockedDates,
+              }).available
+          ) ||
           walkInEligibleRooms.find((r) => r.occupancyStatus === 'vacant') ||
           walkInEligibleRooms[0];
-        setWalkInRoomId(preferred.id);
-        setWalkInRateNgn(preferred.nightlyRateNgn);
-        setWalkInDepositNgn(preferred.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
+        if (preferred) {
+          setWalkInRoomId(preferred.id);
+          setWalkInRateNgn(preferred.nightlyRateNgn);
+          setWalkInDepositNgn(preferred.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
+        }
       }
     }
-  }, [walkInRoomTypeFilter, rooms.length]);
+  }, [walkInRoomTypeFilter, rooms.length, walkInCheckOut, reservations.length, blockedDates.length]);
 
   const openGuestProfileModal = (guest: GuestRecord) => {
     setSelectedGuestId(guest.id);
@@ -735,7 +862,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const openRoomEditor = (room: RoomRecord) => {
     setEditingRoom(room);
     setDraftRoomNumber(room.roomNumber);
-    setDraftName(room.name);
     setDraftRoomType(room.roomType);
     setDraftSection(getRoomSection(room));
     setDraftRateInput(formatPriceInputWithCommas(room.nightlyRateNgn));
@@ -845,13 +971,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       const cleanGallery = Array.from(
         new Set([coverUrl, ...draftGalleryImages.map((u) => u.trim()).filter(Boolean)])
       ).slice(0, 6);
+      const cleanRoomNumber = draftRoomNumber.trim() || editingRoom.roomNumber;
+      const cleanRoomType = draftRoomType.trim() || editingRoom.roomType;
+      const derivedRoomName = `${cleanRoomNumber} ${cleanRoomType}`.slice(0, 80);
       await updateRoomStatus({
         property,
         room: editingRoom,
         updates: {
-          roomNumber: draftRoomNumber.trim() || editingRoom.roomNumber,
-          name: draftName.trim() || editingRoom.name,
-          roomType: draftRoomType.trim() || editingRoom.roomType,
+          roomNumber: cleanRoomNumber,
+          name: derivedRoomName,
+          roomType: cleanRoomType,
           section: draftSection,
           nightlyRateNgn: cleanRate,
           maxGuests: Math.max(1, draftMaxGuests),
@@ -875,7 +1004,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const openAddRoomModal = () => {
     const nextNum = rooms.length + 1;
     setNewRoomNumber(`RM-${nextNum}`);
-    setNewRoomName(`Room ${nextNum}`);
     setNewRoomType('Deluxe Studio with Kitchenette');
     setNewRoomSection('Hotel Rooms');
     setNewRoomFloor(2);
@@ -956,8 +1084,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setAddRoomError(null);
 
     const trimmedCode = newRoomNumber.trim().toUpperCase();
-    if (!trimmedCode || !newRoomName.trim() || !newRoomType.trim()) {
-      setAddRoomError('Room code, room title, and room type are required.');
+    const trimmedType = newRoomType.trim();
+    if (!trimmedCode || !trimmedType) {
+      setAddRoomError('Room code and room type are required.');
       return;
     }
     const parsedNewRate = parseFormattedPriceInput(newRoomRateInput);
@@ -982,13 +1111,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       const cleanGallery = Array.from(
         new Set([coverUrl, ...newRoomGalleryImages.map((u) => u.trim()).filter(Boolean)])
       ).slice(0, 6);
+      const derivedRoomName = `${trimmedCode} ${trimmedType}`.slice(0, 80);
       await createRoomWorkflow({
         property,
         currentRoomCount: rooms.length,
         maxRooms: effectiveMaxRooms,
         roomNumber: trimmedCode,
-        name: newRoomName.trim(),
-        roomType: newRoomType.trim(),
+        name: derivedRoomName,
+        roomType: trimmedType,
         section: newRoomSection,
         floor: newRoomFloor,
         nightlyRateNgn: Number(parsedNewRate),
@@ -1001,7 +1131,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           .filter(Boolean),
         actorRole,
       });
-      onNotify(`Added new room ${trimmedCode} (${newRoomType.trim()}) to ${property.name}`);
+      onNotify(`Added new room ${trimmedCode} (${trimmedType}) to ${property.name}`);
       setShowAddRoomModal(false);
     } catch (err) {
       setAddRoomError(err instanceof Error ? err.message : 'Unable to add room.');
@@ -1283,26 +1413,46 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
 
     const stayNights = diffNights(todayIso, walkInCheckOut);
+    const effectiveRate = Math.max(5000, walkInRateNgn);
+    const stayTotalNgn = effectiveRate * stayNights;
+    const paidTodayNgn = Math.max(0, walkInDepositNgn);
+    const computedPayStatus: PaymentStatusLabel = walkInPaymentStatusManual
+      ? walkInPaymentStatus
+      : paidTodayNgn >= stayTotalNgn && stayTotalNgn > 0
+        ? 'Paid'
+        : paidTodayNgn > 0
+          ? 'Partial'
+          : 'Unpaid';
+
     setBusyId('walk_in');
     try {
       await createReservationWorkflow({
         property,
-        room: { ...targetRoom, nightlyRateNgn: Math.max(5000, walkInRateNgn) },
+        room: { ...targetRoom, nightlyRateNgn: effectiveRate },
+        requestedRoomType: targetRoom.roomType,
         guestName: fullGuestName,
         guestPhone: walkInPhone.trim(),
         guestEmail: walkInEmail.trim(),
         guestAddress: walkInAddress.trim(),
         guestCity: walkInCity.trim(),
+        guestState: walkInState.trim(),
         guestNationality: walkInCountry.trim() || 'Nigeria',
         guestIdType: walkInIdType,
         guestIdNumber: walkInIdNumber.trim(),
         checkInDate: todayIso,
         checkOutDate: walkInCheckOut,
         nights: stayNights,
-        adults: 1,
+        adults: Math.max(1, walkInAdults),
+        children: Math.max(0, walkInChildren),
         channel: 'Direct Walk-In',
         paymentMethod: walkInPaymentMethod,
-        depositNgn: Math.max(0, walkInDepositNgn),
+        paymentStatus: computedPayStatus,
+        depositNgn: paidTodayNgn,
+        hotelPaidNgn: paidTodayNgn,
+        cautionDepositEnabled: walkInCautionEnabled,
+        cautionDepositNgn: walkInCautionEnabled ? Math.max(0, walkInCautionAmount) : 0,
+        cautionDepositCollectedNgn: walkInCautionEnabled ? Math.max(0, walkInCautionCollected) : 0,
+        cautionDepositRefunded: false,
         immediateCheckIn: true,
         paymentConfirmed: true,
         idVerified: true,
@@ -1316,9 +1466,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       });
       setWalkInFirstName('');
       setWalkInLastName('');
+      setWalkInPhone('+234 ');
       setWalkInEmail('');
       setWalkInIdNumber('');
       setWalkInAddress('');
+      setWalkInAdults(1);
+      setWalkInChildren(0);
+      setWalkInPaymentStatus('Paid');
+      setWalkInPaymentStatusManual(false);
+      setWalkInCautionEnabled(false);
+      setWalkInCautionCollected(0);
       setWalkInPayConfirmed(false);
       setWalkInIdVerified(false);
       setWalkInRoomReady(false);
@@ -2256,357 +2413,610 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         </div>
       )}
 
-      {/* SECTION: DEDICATED WALK-IN CHECK-IN (matches IMG_2075) */}
-      {section === 'walk_in' && (
-        <form
-          onSubmit={handleWalkInSubmit}
-          className="bg-white border border-slate-200 rounded-xl p-6 space-y-5"
-        >
-          {walkInError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
-              {walkInError}
-            </div>
-          )}
+      {/* SECTION: DEDICATED WALK-IN CHECK-IN */}
+      {section === 'walk_in' && (() => {
+        const walkInNights = diffNights(todayIso, walkInCheckOut);
+        const walkInTotalNgn = Math.max(0, walkInRateNgn) * walkInNights;
+        const walkInBalanceNgn = Math.max(0, walkInTotalNgn - Math.max(0, walkInDepositNgn));
+        const selectedWalkInRoom = rooms.find((r) => r.id === walkInRoomId);
+        const walkInChecklistMissing: string[] = [];
+        if (!walkInFirstName.trim() || !walkInLastName.trim()) walkInChecklistMissing.push('Guest Name');
+        if (walkInIdNumber.trim().length < 3) walkInChecklistMissing.push('ID Number');
+        if (!walkInPayConfirmed) walkInChecklistMissing.push('Confirm Payment');
+        if (!walkInIdVerified) walkInChecklistMissing.push('Verify Guest ID');
+        if (!walkInRoomReady) walkInChecklistMissing.push('Room Inspected Ready');
+        if (walkInKeyIssued !== 'yes') walkInChecklistMissing.push('Key Issued = Yes');
+        const walkInCanSubmit = busyId !== 'walk_in' && walkInChecklistMissing.length === 0 && Boolean(selectedWalkInRoom);
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">First Name *</label>
-              <input
-                required
-                type="text"
-                value={walkInFirstName}
-                onChange={(e) => setWalkInFirstName(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Last Name *</label>
-              <input
-                required
-                type="text"
-                value={walkInLastName}
-                onChange={(e) => setWalkInLastName(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Phone *</label>
-              <input
-                required
-                type="text"
-                value={walkInPhone}
-                onChange={(e) => setWalkInPhone(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Email</label>
-              <input
-                type="email"
-                value={walkInEmail}
-                onChange={(e) => setWalkInEmail(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">ID Type</label>
-              <select
-                value={walkInIdType}
-                onChange={(e) => setWalkInIdType(e.target.value as GuestRecord['idType'])}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
-              >
-                <option value="NIN">NIN</option>
-                <option value="International Passport">International Passport</option>
-                <option value="Driver License">Driver License</option>
-                <option value="Voter Card">Voter Card</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">ID Number</label>
-              <input
-                type="text"
-                value={walkInIdNumber}
-                onChange={(e) => setWalkInIdNumber(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Address</label>
-              <input
-                type="text"
-                value={walkInAddress}
-                onChange={(e) => setWalkInAddress(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">City</label>
-              <input
-                type="text"
-                value={walkInCity}
-                onChange={(e) => setWalkInCity(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Country</label>
-              <CountrySelect
-                value={walkInCountry}
-                onChange={setWalkInCountry}
-                placeholder="Select country..."
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Room Type *</label>
-              <select
-                value={walkInRoomTypeFilter}
-                onChange={(e) => {
-                  const nextType = e.target.value;
-                  setWalkInRoomTypeFilter(nextType);
-                  const matching = sortedRooms.filter(
-                    (r) =>
-                      r.occupancyStatus !== 'out_of_order' &&
-                      (nextType === 'ALL' || r.roomType === nextType)
-                  );
-                  const pick =
-                    matching.find((r) => r.occupancyStatus === 'vacant') || matching[0];
-                  if (pick) {
-                    setWalkInRoomId(pick.id);
-                    setWalkInRateNgn(pick.nightlyRateNgn);
-                    setWalkInDepositNgn(pick.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
-                  }
-                }}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
-              >
-                <option value="ALL">All Room Types</option>
-                {uniqueRoomTypes.map((rt) => {
-                  const sample = sortedRooms.find((r) => r.roomType === rt);
-                  return (
-                    <option key={rt} value={rt}>
-                      {rt} {sample ? `- ${formatNgn(sample.nightlyRateNgn)}/night` : ''}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Room *</label>
-              <select
-                value={walkInRoomId}
-                onChange={(e) => {
-                  const rm = rooms.find((r) => r.id === e.target.value);
-                  setWalkInRoomId(e.target.value);
-                  if (rm) {
-                    setWalkInRateNgn(rm.nightlyRateNgn);
-                    setWalkInDepositNgn(rm.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
-                  }
-                }}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
-              >
-                {walkInEligibleRooms.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.roomNumber} · {r.name} ({r.occupancyStatus === 'vacant' ? 'Available' : r.occupancyStatus})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="sm:col-span-2 lg:col-span-2">
-              <AvailabilityDateRangePicker
-                checkInDate={todayIso}
-                checkOutDate={walkInCheckOut}
-                onChangeDates={(_, nextOut) => {
-                  const safeOut = !nextOut || nextOut <= todayIso ? addDaysIso(todayIso, 1) : nextOut;
-                  setWalkInCheckOut(safeOut);
-                  setWalkInDepositNgn(walkInRateNgn * diffNights(todayIso, safeOut));
-                  setWalkInError(null);
-                }}
-                room={rooms.find((r) => r.id === walkInRoomId)}
-                rooms={sortedRooms}
-                reservations={reservations}
-                blockedDates={blockedDates}
-                onSelectAlternativeRoom={(alt) => {
-                  setWalkInRoomId(alt.id);
-                  setWalkInRateNgn(alt.nightlyRateNgn);
-                  setWalkInDepositNgn(alt.nightlyRateNgn * diffNights(todayIso, walkInCheckOut));
-                  setWalkInError(null);
-                }}
-                checkOutLabel={`Check-Out Date * (Check-in: Today ${todayIso})`}
-                lockCheckIn
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Rate/Night (₦)</label>
-              <input
-                type="number"
-                min={5000}
-                step={500}
-                value={walkInRateNgn}
-                onChange={(e) => {
-                  const nextRate = Number(e.target.value);
-                  setWalkInRateNgn(nextRate);
-                  setWalkInDepositNgn(nextRate * diffNights(todayIso, walkInCheckOut));
-                }}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">Payment</label>
-              <select
-                value={walkInPaymentMethod}
-                onChange={(e) =>
-                  setWalkInPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
-                }
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
-              >
-                <option value="Cash NGN">Cash</option>
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="Card POS">Card POS</option>
-                <option value="Corporate Invoice">Corporate Invoice</option>
-                <option value="Online Gateway">Online Gateway</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1.5">
-                Deposit Paid Today (₦ · {diffNights(todayIso, walkInCheckOut)} night
-                {diffNights(todayIso, walkInCheckOut) > 1 ? 's' : ''})
-              </label>
-              <input
-                type="number"
-                min={0}
-                step={500}
-                value={walkInDepositNgn}
-                onChange={(e) => setWalkInDepositNgn(Number(e.target.value))}
-                className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
-              />
-            </div>
-          </div>
-
-          {/* Mandatory Check-In Verification Checklist + Explicit Key Issue */}
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 font-bold text-slate-900">
-                <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                <span>Mandatory Check-In Process</span>
+        return (
+          <form
+            onSubmit={handleWalkInSubmit}
+            className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-6 shadow-xs"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="font-display text-lg font-bold text-slate-900">
+                  Walk-In Guest Check-In
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Assign an available room, record guest KYC &amp; payment, and complete immediate check-in.
+                </p>
               </div>
-              {cms.brand.checkInPolicyNote && (
-                <span className="text-[11px] text-emerald-800 font-medium">
-                  {cms.brand.checkInPolicyNote}
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-semibold text-[#0b5d34]">
+                <Calendar className="w-3.5 h-3.5" />
+                <span className="font-mono-tabular">
+                  Check-In: {todayIso} · {walkInNights} night{walkInNights > 1 ? 's' : ''}
                 </span>
-              )}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-              <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={walkInPayConfirmed}
-                  onChange={(e) => setWalkInPayConfirmed(e.target.checked)}
-                  className="mt-0.5 rounded border-slate-300 text-emerald-600"
-                />
-                <span>
-                  <strong className="block text-slate-900">1. Confirm Payment</strong>
-                  <span className="text-[11px] text-slate-500">
-                    Deposit / full rate verified ({walkInPaymentMethod})
-                  </span>
-                </span>
-              </label>
-
-              <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={walkInIdVerified}
-                  onChange={(e) => setWalkInIdVerified(e.target.checked)}
-                  className="mt-0.5 rounded border-slate-300 text-emerald-600"
-                />
-                <span>
-                  <strong className="block text-slate-900">2. Verify Guest ID (KYC)</strong>
-                  <span className="text-[11px] text-slate-500">
-                    {walkInIdType} number entered above &amp; ID inspected
-                  </span>
-                </span>
-              </label>
-
-              <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={walkInRoomReady}
-                  onChange={(e) => setWalkInRoomReady(e.target.checked)}
-                  className="mt-0.5 rounded border-slate-300 text-emerald-600"
-                />
-                <span>
-                  <strong className="block text-slate-900">3. Room Inspected Ready</strong>
-                  <span className="text-[11px] text-slate-500">
-                    Assigned room clean &amp; ready for occupancy
-                  </span>
-                </span>
-              </label>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-lg p-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-4 h-4 text-emerald-700" />
-                <div>
-                  <p className="font-semibold text-slate-900">4. Key Issued to Guest? *</p>
-                  <p className="text-[11px] text-slate-500">
-                    Select Yes once physical key is handed to guest
-                  </p>
+            {walkInError && (
+              <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+                {walkInError}
+              </div>
+            )}
+
+            {/* 1. STAY DATES & ROOM ASSIGNMENT */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-4 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-display text-sm font-bold text-slate-900">
+                  1. Stay Dates &amp; Room Assignment
+                </h3>
+                <span className="font-mono-tabular text-[11px] font-semibold text-[#0b5d34]">
+                  {walkInNights} night{walkInNights > 1 ? 's' : ''} · {formatNgn(walkInTotalNgn)}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                <div className="md:col-span-6">
+                  <AvailabilityDateRangePicker
+                    checkInDate={todayIso}
+                    checkOutDate={walkInCheckOut}
+                    onChangeDates={(_, nextOut) => {
+                      const safeOut = !nextOut || nextOut <= todayIso ? addDaysIso(todayIso, 1) : nextOut;
+                      setWalkInCheckOut(safeOut);
+                      const nextNights = diffNights(todayIso, safeOut);
+                      const curRoom = rooms.find((r) => r.id === walkInRoomId);
+                      if (curRoom) {
+                        const curAvail = checkRoomDateRangeAvailability({
+                          room: curRoom,
+                          checkInDate: todayIso,
+                          checkOutDate: safeOut,
+                          reservations,
+                          blockedDates,
+                        });
+                        if (!curAvail.available) {
+                          const openAlt = walkInEligibleRooms.find(
+                            (r) =>
+                              checkRoomDateRangeAvailability({
+                                room: r,
+                                checkInDate: todayIso,
+                                checkOutDate: safeOut,
+                                reservations,
+                                blockedDates,
+                              }).available
+                          );
+                          if (openAlt) {
+                            setWalkInRoomId(openAlt.id);
+                            setWalkInRateNgn(openAlt.nightlyRateNgn);
+                            setWalkInDepositNgn(openAlt.nightlyRateNgn * nextNights);
+                            setWalkInError(null);
+                            return;
+                          }
+                        }
+                      }
+                      setWalkInDepositNgn(walkInRateNgn * nextNights);
+                      setWalkInError(null);
+                    }}
+                    room={selectedWalkInRoom}
+                    rooms={sortedRooms}
+                    reservations={reservations}
+                    blockedDates={blockedDates}
+                    onSelectAlternativeRoom={(alt) => {
+                      setWalkInRoomId(alt.id);
+                      setWalkInRateNgn(alt.nightlyRateNgn);
+                      setWalkInDepositNgn(alt.nightlyRateNgn * walkInNights);
+                      setWalkInError(null);
+                    }}
+                    checkOutLabel={`Check-Out Date * (Check-In: Today ${todayIso})`}
+                    lockCheckIn
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <label className="block font-semibold text-slate-700 mb-1.5">Adults *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    required
+                    value={walkInAdults}
+                    onChange={(e) => setWalkInAdults(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white font-mono-tabular focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <label className="block font-semibold text-slate-700 mb-1.5">Children</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={walkInChildren}
+                    onChange={(e) => setWalkInChildren(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white font-mono-tabular focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div className="md:col-span-6">
+                  <label className="block font-semibold text-slate-700 mb-1.5">Room Type *</label>
+                  <select
+                    value={walkInRoomTypeFilter}
+                    onChange={(e) => {
+                      const nextType = e.target.value;
+                      setWalkInRoomTypeFilter(nextType);
+                      const matching = sortedRooms.filter(
+                        (r) =>
+                          r.occupancyStatus !== 'out_of_order' &&
+                          (nextType === 'ALL' || r.roomType === nextType)
+                      );
+                      const pick =
+                        matching.find(
+                          (r) =>
+                            checkRoomDateRangeAvailability({
+                              room: r,
+                              checkInDate: todayIso,
+                              checkOutDate: walkInCheckOut,
+                              reservations,
+                              blockedDates,
+                            }).available
+                        ) || matching[0];
+                      if (pick) {
+                        setWalkInRoomId(pick.id);
+                        setWalkInRateNgn(pick.nightlyRateNgn);
+                        setWalkInDepositNgn(pick.nightlyRateNgn * walkInNights);
+                      }
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+                  >
+                    <option value="ALL">All Room Types</option>
+                    {uniqueRoomTypes.map((rt) => {
+                      const sample = sortedRooms.find((r) => r.roomType === rt);
+                      return (
+                        <option key={rt} value={rt}>
+                          {rt} {sample ? `- ${formatNgn(sample.nightlyRateNgn)}/night` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="md:col-span-6">
+                  <label className="block font-semibold text-slate-700 mb-1.5">Assign Room *</label>
+                  <select
+                    required
+                    value={walkInRoomId}
+                    onChange={(e) => {
+                      const rm = rooms.find((r) => r.id === e.target.value);
+                      setWalkInRoomId(e.target.value);
+                      if (rm) {
+                        setWalkInRateNgn(rm.nightlyRateNgn);
+                        setWalkInDepositNgn(rm.nightlyRateNgn * walkInNights);
+                      }
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+                  >
+                    {walkInEligibleRooms.map((r) => {
+                      const avail = checkRoomDateRangeAvailability({
+                        room: r,
+                        checkInDate: todayIso,
+                        checkOutDate: walkInCheckOut,
+                        reservations,
+                        blockedDates,
+                      });
+                      return (
+                        <option key={r.id} value={r.id} disabled={!avail.available}>
+                          {r.roomNumber} · {r.roomType} — {formatRoomAvailabilityTag(avail)}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
               </div>
-              <div className="inline-flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setWalkInKeyIssued('yes')}
-                  className={`px-3.5 py-1.5 rounded-lg font-semibold border cursor-pointer ${
-                    walkInKeyIssued === 'yes'
-                      ? 'bg-emerald-600 border-emerald-600 text-white'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  Yes — Key Issued
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setWalkInKeyIssued('no')}
-                  className={`px-3.5 py-1.5 rounded-lg font-semibold border cursor-pointer ${
-                    walkInKeyIssued === 'no'
-                      ? 'bg-rose-600 border-rose-600 text-white'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  No — Not Issued
-                </button>
+            </div>
+
+            {/* 2. GUEST DETAILS & KYC */}
+            <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-4 text-xs">
+              <h3 className="font-display text-sm font-bold text-slate-900">
+                2. Guest Details &amp; Identity (KYC)
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">First Name *</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. Chinedu"
+                    value={walkInFirstName}
+                    onChange={(e) => setWalkInFirstName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">Last Name *</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. Okafor"
+                    value={walkInLastName}
+                    onChange={(e) => setWalkInLastName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">Phone Number *</label>
+                  <input
+                    required
+                    type="text"
+                    value={walkInPhone}
+                    onChange={(e) => setWalkInPhone(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="guest@example.com"
+                    value={walkInEmail}
+                    onChange={(e) => setWalkInEmail(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">ID Type *</label>
+                  <select
+                    value={walkInIdType}
+                    onChange={(e) => setWalkInIdType(e.target.value as GuestRecord['idType'])}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+                  >
+                    <option value="NIN">NIN</option>
+                    <option value="International Passport">International Passport</option>
+                    <option value="Driver License">Driver License</option>
+                    <option value="Voter Card">Voter Card</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">ID Number *</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Enter ID / Passport No."
+                    value={walkInIdNumber}
+                    onChange={(e) => setWalkInIdNumber(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1.5">Street Address</label>
+                    <input
+                      type="text"
+                      placeholder="House / Street address"
+                      value={walkInAddress}
+                      onChange={(e) => setWalkInAddress(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1.5">City</label>
+                    <input
+                      type="text"
+                      value={walkInCity}
+                      onChange={(e) => setWalkInCity(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1.5">State / Province</label>
+                    <input
+                      type="text"
+                      value={walkInState}
+                      onChange={(e) => setWalkInState(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1.5">Country</label>
+                    <CountrySelect
+                      value={walkInCountry}
+                      onChange={setWalkInCountry}
+                      placeholder="Select country..."
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          <button
-            type="submit"
-            disabled={
-              busyId === 'walk_in' ||
-              !walkInPayConfirmed ||
-              !walkInIdVerified ||
-              walkInIdNumber.trim().length < 3 ||
-              walkInKeyIssued !== 'yes' ||
-              !walkInRoomReady
-            }
-            className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold transition-colors cursor-pointer"
-          >
-          </button>
-        </form>
-      )}
+            {/* 3. PAYMENT & OPTIONAL CAUTION DEPOSIT */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-4 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="font-display text-sm font-bold text-slate-900">
+                  3. Payment &amp; Refundable Caution Deposit
+                </h3>
+                <div className="flex flex-wrap items-center gap-3 font-mono-tabular text-[11px]">
+                  <span className="text-slate-600">
+                    Total Stay: <strong className="text-slate-900">{formatNgn(walkInTotalNgn)}</strong>
+                  </span>
+                  <span className="text-emerald-700">
+                    Paid: <strong>{formatNgn(Math.max(0, walkInDepositNgn))}</strong>
+                  </span>
+                  <span className={walkInBalanceNgn > 0 ? 'text-rose-700' : 'text-slate-500'}>
+                    Balance: <strong>{formatNgn(walkInBalanceNgn)}</strong>
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">Rate / Night (₦)</label>
+                  <input
+                    type="number"
+                    min={5000}
+                    step={500}
+                    value={walkInRateNgn}
+                    onChange={(e) => {
+                      const nextRate = Number(e.target.value);
+                      setWalkInRateNgn(nextRate);
+                      setWalkInDepositNgn(nextRate * walkInNights);
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white font-mono-tabular focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">Payment Method</label>
+                  <select
+                    value={walkInPaymentMethod}
+                    onChange={(e) =>
+                      setWalkInPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
+                    }
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+                  >
+                    <option value="Cash NGN">Cash (₦)</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Card POS">Card POS</option>
+                    <option value="Corporate Invoice">Corporate Invoice</option>
+                    <option value="Online Gateway">Online Gateway</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">
+                    Amount Paid Today (₦)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={500}
+                    value={walkInDepositNgn}
+                    onChange={(e) => setWalkInDepositNgn(Number(e.target.value))}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white font-mono-tabular focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1.5">Payment Status</label>
+                  <select
+                    value={
+                      walkInPaymentStatusManual
+                        ? walkInPaymentStatus
+                        : walkInDepositNgn >= walkInTotalNgn && walkInTotalNgn > 0
+                          ? 'Paid'
+                          : walkInDepositNgn > 0
+                            ? 'Partial'
+                            : 'Unpaid'
+                    }
+                    onChange={(e) => {
+                      setWalkInPaymentStatus(e.target.value as PaymentStatusLabel);
+                      setWalkInPaymentStatusManual(true);
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 bg-white focus:outline-none focus:border-emerald-600"
+                  >
+                    <option value="Paid">Paid</option>
+                    <option value="Partial">Partial Payment</option>
+                    <option value="Unpaid">Unpaid / Balance Due</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200/80 space-y-3">
+                <label className="inline-flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={walkInCautionEnabled}
+                    onChange={(e) => {
+                      setWalkInCautionEnabled(e.target.checked);
+                      if (e.target.checked && walkInCautionCollected === 0) {
+                        setWalkInCautionCollected(walkInCautionAmount);
+                      }
+                    }}
+                    className="rounded border-slate-300 text-emerald-600"
+                  />
+                  <span>Collect optional refundable caution / security deposit</span>
+                </label>
+
+                {walkInCautionEnabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Caution Fee Required (₦)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={walkInCautionAmount}
+                        onChange={(e) => setWalkInCautionAmount(Math.max(0, Number(e.target.value)))}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Caution Collected Today (₦)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={walkInCautionCollected}
+                        onChange={(e) => setWalkInCautionCollected(Math.max(0, Number(e.target.value)))}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-mono-tabular"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 4. MANDATORY CHECK-IN VERIFICATION CHECKLIST */}
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-bold text-slate-900">
+                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                  <span>4. Mandatory Check-In Verification</span>
+                </div>
+                {cms.brand.checkInPolicyNote && (
+                  <span className="text-[11px] text-emerald-800 font-medium">
+                    {cms.brand.checkInPolicyNote}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={walkInPayConfirmed}
+                    onChange={(e) => setWalkInPayConfirmed(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-emerald-600"
+                  />
+                  <span>
+                    <strong className="block text-slate-900">1. Confirm Payment</strong>
+                    <span className="text-[11px] text-slate-500">
+                      Deposit / full rate verified ({walkInPaymentMethod})
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={walkInIdVerified}
+                    onChange={(e) => setWalkInIdVerified(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-emerald-600"
+                  />
+                  <span>
+                    <strong className="block text-slate-900">2. Verify Guest ID (KYC)</strong>
+                    <span className="text-[11px] text-slate-500">
+                      {walkInIdType} number entered above &amp; ID inspected
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={walkInRoomReady}
+                    onChange={(e) => setWalkInRoomReady(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-emerald-600"
+                  />
+                  <span>
+                    <strong className="block text-slate-900">3. Room Inspected Ready</strong>
+                    <span className="text-[11px] text-slate-500">
+                      Assigned room clean &amp; ready for occupancy
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-lg p-3">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-emerald-700" />
+                  <div>
+                    <p className="font-semibold text-slate-900">4. Key Issued to Guest? *</p>
+                    <p className="text-[11px] text-slate-500">
+                      Select Yes once physical key is handed to guest
+                    </p>
+                  </div>
+                </div>
+                <div className="inline-flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWalkInKeyIssued('yes')}
+                    className={`px-3.5 py-1.5 rounded-lg font-semibold border cursor-pointer ${
+                      walkInKeyIssued === 'yes'
+                        ? 'bg-[#0b5d34] border-[#0b5d34] text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    Yes — Key Issued
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWalkInKeyIssued('no')}
+                    className={`px-3.5 py-1.5 rounded-lg font-semibold border cursor-pointer ${
+                      walkInKeyIssued === 'no'
+                        ? 'bg-rose-600 border-rose-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    No — Not Issued
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Submit Bar with Prominent Check-In Button */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+              <div className="text-xs text-slate-500">
+                {walkInChecklistMissing.length > 0 ? (
+                  <span>
+                    Complete to enable Check In:{' '}
+                    <strong className="text-amber-700">{walkInChecklistMissing.join(' · ')}</strong>
+                  </span>
+                ) : (
+                  <span className="text-emerald-700 font-semibold">
+                    All check-in verifications complete — ready to check in{' '}
+                    {selectedWalkInRoom?.roomNumber || 'selected room'}.
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={!walkInCanSubmit}
+                className="inline-flex items-center justify-center gap-2 py-3 px-7 rounded-xl bg-[#0b5d34] hover:bg-[#094b2a] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold shadow-sm transition-colors cursor-pointer shrink-0"
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>
+                  {busyId === 'walk_in'
+                    ? 'Checking In Guest...'
+                    : `Check In Guest${selectedWalkInRoom ? ` · ${selectedWalkInRoom.roomNumber}` : ''}`}
+                </span>
+              </button>
+            </div>
+          </form>
+        );
+      })()}
 
       {/* SECTION: ROOMS */}
       {section === 'rooms' && (() => {
@@ -4468,17 +4878,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Room Display Title</label>
-                  <input
-                    type="text"
-                    required
-                    value={draftName}
-                    onChange={(e) => setDraftName(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-
-                <div>
                   <label className="block font-medium text-slate-700 mb-1">
                     Nightly Rate (₦ NGN)
                   </label>
@@ -4850,18 +5249,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     value={newRoomType}
                     onChange={(e) => setNewRoomType(e.target.value)}
                     placeholder="e.g. Deluxe Studio with Kitchenette"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Room Display Title</label>
-                  <input
-                    type="text"
-                    required
-                    value={newRoomName}
-                    onChange={(e) => setNewRoomName(e.target.value)}
-                    placeholder="e.g. Garden View Studio 9"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2"
                   />
                 </div>
@@ -5499,16 +5886,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                       blockedDates,
                                       excludeReservationId: activeFolioReservation.id,
                                     });
-                                    const tag = avail.available
-                                      ? 'Available'
-                                      : avail.status === 'out_of_order'
-                                        ? 'Out of Order'
-                                        : avail.status === 'blocked'
-                                          ? 'Blocked'
-                                          : 'Reserved';
                                     return (
-                                      <option key={r.id} value={r.id}>
-                                        {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}) — {tag}
+                                      <option
+                                        key={r.id}
+                                        value={r.id}
+                                        disabled={!avail.available && r.id !== editRoomId}
+                                      >
+                                        {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}) —{' '}
+                                        {formatRoomAvailabilityTag(avail)}
                                       </option>
                                     );
                                   })}
@@ -7008,10 +7393,49 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         setCheckOutDate(safeOut);
                         const nextNights = diffNights(val, safeOut);
                         setNights(nextNights);
+                        let effectiveRate = activeSourceNightlyRate;
+                        // Automatically switch away from a room if it is booked/reserved on OTA or PMS for the new dates
+                        if (selectedRoomId) {
+                          const curRoom = rooms.find((r) => r.id === selectedRoomId);
+                          if (
+                            curRoom &&
+                            !checkRoomDateRangeAvailability({
+                              room: curRoom,
+                              checkInDate: val,
+                              checkOutDate: safeOut,
+                              reservations,
+                              blockedDates,
+                            }).available
+                          ) {
+                            const sameTypeOpen = sortedRooms.find(
+                              (r) =>
+                                r.roomType === curRoom.roomType &&
+                                checkRoomDateRangeAvailability({
+                                  room: r,
+                                  checkInDate: val,
+                                  checkOutDate: safeOut,
+                                  reservations,
+                                  blockedDates,
+                                }).available
+                            );
+                            if (sameTypeOpen) {
+                              setSelectedRoomId(sameTypeOpen.id);
+                              effectiveRate =
+                                activeCur === 'NGN'
+                                  ? sameTypeOpen.nightlyRateNgn
+                                  : Number((sameTypeOpen.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2));
+                              setBookingNightlyRateInput(
+                                activeCur === 'NGN'
+                                  ? formatPriceInputWithCommas(sameTypeOpen.nightlyRateNgn)
+                                  : String(effectiveRate)
+                              );
+                            }
+                          }
+                        }
                         const nextStayNgn =
                           activeCur === 'NGN'
-                            ? Math.round(activeSourceNightlyRate * nextNights)
-                            : Math.round(activeSourceNightlyRate * nextNights * fxRate);
+                            ? Math.round(effectiveRate * nextNights)
+                            : Math.round(effectiveRate * nextNights * fxRate);
                         if (!bookingExpectedPayoutManual) {
                           setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
                         }
@@ -7061,25 +7485,29 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             const matching = sortedRooms.filter(
                               (r) => r.roomType === rt && r.occupancyStatus !== 'out_of_order'
                             );
-                            const preferred =
-                              matching.find(
-                                (r) =>
-                                  checkRoomDateRangeAvailability({
-                                    room: r,
-                                    checkInDate,
-                                    checkOutDate,
-                                    reservations,
-                                    blockedDates,
-                                  }).available
-                              ) || matching[0];
+                            const preferred = matching.find(
+                              (r) =>
+                                checkRoomDateRangeAvailability({
+                                  room: r,
+                                  checkInDate,
+                                  checkOutDate,
+                                  reservations,
+                                  blockedDates,
+                                }).available
+                            );
+                            const rateSource = preferred || matching[0];
                             if (preferred) {
                               setSelectedRoomId(preferred.id);
-                              const nextTotal = preferred.nightlyRateNgn * Math.max(1, nights);
+                            } else {
+                              setSelectedRoomId('');
+                            }
+                            if (rateSource) {
+                              const nextTotal = rateSource.nightlyRateNgn * Math.max(1, nights);
                               setBookingNightlyRateInput(
                                 activeCur === 'NGN'
-                                  ? formatPriceInputWithCommas(preferred.nightlyRateNgn)
+                                  ? formatPriceInputWithCommas(rateSource.nightlyRateNgn)
                                   : String(
-                                      Number((preferred.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
+                                      Number((rateSource.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
                                     )
                               );
                               if (!bookingExpectedPayoutManual) {
@@ -7088,18 +7516,34 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               if (!isOta && estPayStatus === 'Paid') {
                                 setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
                               }
-                            } else {
-                              setSelectedRoomId('');
                             }
                             setBookingError(null);
                           }}
                           className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium"
                         >
                           {uniqueRoomTypes.map((rt) => {
-                            const sample = sortedRooms.find((r) => r.roomType === rt);
+                            const typeRooms = sortedRooms.filter((r) => r.roomType === rt);
+                            const sample = typeRooms[0];
+                            const openCount = typeRooms.filter(
+                              (r) =>
+                                checkRoomDateRangeAvailability({
+                                  room: r,
+                                  checkInDate,
+                                  checkOutDate,
+                                  reservations,
+                                  blockedDates,
+                                }).available
+                            ).length;
+                            const availLabel =
+                              typeRooms.length > 0
+                                ? openCount > 0
+                                  ? `(${openCount} available)`
+                                  : '(Unavailable for selected dates)'
+                                : '';
                             return (
                               <option key={rt} value={rt}>
-                                {rt} {sample ? `· ${formatNgn(sample.nightlyRateNgn)}/nt` : ''}
+                                {rt} {sample ? `· ${formatNgn(sample.nightlyRateNgn)}/nt` : ''}{' '}
+                                {availLabel}
                               </option>
                             );
                           })}
@@ -7148,20 +7592,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               reservations,
                               blockedDates,
                             });
-                            const tag = avail.available
-                              ? 'Available'
-                              : avail.status === 'out_of_order'
-                                ? 'Out of Order'
-                                : avail.status === 'blocked'
-                                  ? 'Blocked'
-                                  : 'Reserved';
                             return (
                               <option
                                 key={r.id}
                                 value={r.id}
-                                disabled={r.occupancyStatus === 'out_of_order'}
+                                disabled={!avail.available}
                               >
-                                {r.roomNumber} · {r.name} — {tag}
+                                {r.roomNumber} · {r.name} — {formatRoomAvailabilityTag(avail)}
                               </option>
                             );
                           })}
@@ -7245,18 +7682,60 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           value={nights}
                           onChange={(e) => {
                             const nextN = Math.max(1, Number(e.target.value));
+                            const nextOut = addDaysIso(checkInDate, nextN);
                             setNights(nextN);
-                            setCheckOutDate(addDaysIso(checkInDate, nextN));
+                            setCheckOutDate(nextOut);
+                            let effectiveRate = activeSourceNightlyRate;
+                            if (selectedRoomId) {
+                              const curRoom = rooms.find((r) => r.id === selectedRoomId);
+                              if (
+                                curRoom &&
+                                !checkRoomDateRangeAvailability({
+                                  room: curRoom,
+                                  checkInDate,
+                                  checkOutDate: nextOut,
+                                  reservations,
+                                  blockedDates,
+                                }).available
+                              ) {
+                                const sameTypeOpen = sortedRooms.find(
+                                  (r) =>
+                                    r.roomType === curRoom.roomType &&
+                                    checkRoomDateRangeAvailability({
+                                      room: r,
+                                      checkInDate,
+                                      checkOutDate: nextOut,
+                                      reservations,
+                                      blockedDates,
+                                    }).available
+                                );
+                                if (sameTypeOpen) {
+                                  setSelectedRoomId(sameTypeOpen.id);
+                                  effectiveRate =
+                                    activeCur === 'NGN'
+                                      ? sameTypeOpen.nightlyRateNgn
+                                      : Number(
+                                          (sameTypeOpen.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2)
+                                        );
+                                  setBookingNightlyRateInput(
+                                    activeCur === 'NGN'
+                                      ? formatPriceInputWithCommas(sameTypeOpen.nightlyRateNgn)
+                                      : String(effectiveRate)
+                                  );
+                                }
+                              }
+                            }
                             const nextStayNgn =
                               activeCur === 'NGN'
-                                ? Math.round(activeSourceNightlyRate * nextN)
-                                : Math.round(activeSourceNightlyRate * nextN * fxRate);
+                                ? Math.round(effectiveRate * nextN)
+                                : Math.round(effectiveRate * nextN * fxRate);
                             if (!bookingExpectedPayoutManual) {
                               setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
                             }
                             if (!isOta && estPayStatus === 'Paid') {
                               setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
                             }
+                            setBookingError(null);
                           }}
                           className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
                         />

@@ -1,4 +1,10 @@
-import { BlockedDateRecord, ReservationRecord, RoomRecord } from '../types/pms';
+import {
+  BlockedDateRecord,
+  formatBookingSourceLabel,
+  isOtaBookingChannel,
+  ReservationRecord,
+  RoomRecord,
+} from '../types/pms';
 
 export type DayAvailabilityStatus =
   | 'available'
@@ -60,26 +66,43 @@ export function isActiveBlockingReservation(res: ReservationRecord): boolean {
   );
 }
 
+function normalizeRoomCode(val?: string): string {
+  return (val || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
 export function matchesRoomRecord(
   room: RoomRecord,
   candidateRoomId?: string,
   candidateRoomNumber?: string
 ): boolean {
   if (candidateRoomId && candidateRoomId === room.id) return true;
-  if (
-    !candidateRoomId &&
-    candidateRoomNumber &&
-    candidateRoomNumber.trim().toLowerCase() === room.roomNumber.trim().toLowerCase()
-  ) {
-    return true;
-  }
-  if (
-    candidateRoomNumber &&
-    candidateRoomNumber.trim().toLowerCase() === room.roomNumber.trim().toLowerCase()
-  ) {
-    return true;
+  if (candidateRoomNumber) {
+    const normCand = normalizeRoomCode(candidateRoomNumber);
+    const normRoom = normalizeRoomCode(room.roomNumber);
+    if (normCand && normRoom && normCand === normRoom) {
+      return true;
+    }
   }
   return false;
+}
+
+export function formatRoomAvailabilityTag(avail: RangeAvailabilityResult): string {
+  if (avail.available) return 'Available';
+  if (avail.status === 'out_of_order') return 'Unavailable · Out of Order';
+  if (avail.status === 'blocked') {
+    const cat = avail.conflictBlock?.category || 'Blocked';
+    return `Unavailable · ${cat}`;
+  }
+  if (avail.conflictReservation) {
+    const res = avail.conflictReservation;
+    if (isOtaBookingChannel(res.channel)) {
+      return `Unavailable · Booked on ${formatBookingSourceLabel(res.channel)}`;
+    }
+    if (res.status === 'checked_in') return 'Unavailable · Occupied';
+    if (res.status === 'pending') return 'Unavailable · Pending Hold';
+    return 'Unavailable · Reserved';
+  }
+  return 'Unavailable';
 }
 
 /**
@@ -122,8 +145,11 @@ export function checkDayStatusForRoom(params: {
       dayIso < (r.checkOutDate > r.checkInDate ? r.checkOutDate : addDaysIso(r.checkInDate, 1))
   );
   if (resMatch) {
-    const statusLabel =
-      resMatch.status === 'checked_in'
+    const isOta = isOtaBookingChannel(resMatch.channel);
+    const sourceLabel = formatBookingSourceLabel(resMatch.channel);
+    const statusLabel = isOta
+      ? `Booked (${sourceLabel})`
+      : resMatch.status === 'checked_in'
         ? 'Checked In'
         : resMatch.status === 'pending'
           ? 'Pending Hold'
@@ -137,7 +163,9 @@ export function checkDayStatusForRoom(params: {
             : 'reserved',
       available: false,
       label: statusLabel,
-      detail: `${room.roomNumber} is ${statusLabel.toLowerCase()} by ${resMatch.guestName} (${resMatch.bookingRef}: ${resMatch.checkInDate} → ${resMatch.checkOutDate}).`,
+      detail: isOta
+        ? `${room.roomNumber} is booked on ${sourceLabel} by ${resMatch.guestName} (${resMatch.bookingRef}: ${resMatch.checkInDate} → ${resMatch.checkOutDate}).`
+        : `${room.roomNumber} is ${statusLabel.toLowerCase()} by ${resMatch.guestName} (${resMatch.bookingRef}: ${resMatch.checkInDate} → ${resMatch.checkOutDate}).`,
       reservation: resMatch,
     };
   }
@@ -219,8 +247,11 @@ export function checkRoomDateRangeAvailability(params: {
         datesOverlapIso(checkInDate, checkOutDate, r.checkInDate, r.checkOutDate)
     );
     if (resMatch) {
-      const tag =
-        resMatch.status === 'checked_in'
+      const isOta = isOtaBookingChannel(resMatch.channel);
+      const sourceLabel = formatBookingSourceLabel(resMatch.channel);
+      const tag = isOta
+        ? `booked on ${sourceLabel}`
+        : resMatch.status === 'checked_in'
           ? 'occupied (checked-in)'
           : resMatch.status === 'pending'
             ? 'on pending hold'
@@ -228,7 +259,7 @@ export function checkRoomDateRangeAvailability(params: {
       return {
         available: false,
         status: 'reserved',
-        message: `${room.roomNumber} is ${tag} by ${resMatch.guestName} (${resMatch.bookingRef}: ${resMatch.checkInDate} → ${resMatch.checkOutDate}).`,
+        message: `${room.roomNumber} is unavailable — ${tag} by ${resMatch.guestName} (${resMatch.bookingRef}: ${resMatch.checkInDate} → ${resMatch.checkOutDate}).`,
         conflictReservation: resMatch,
       };
     }
@@ -242,7 +273,7 @@ export function checkRoomDateRangeAvailability(params: {
       return {
         available: false,
         status: 'blocked',
-        message: `${room.roomNumber} is blocked (${blkMatch.category}: ${blkMatch.reason} · ${blkMatch.startDate} → ${blkMatch.endDate}).`,
+        message: `${room.roomNumber} is unavailable — blocked (${blkMatch.category}: ${blkMatch.reason} · ${blkMatch.startDate} → ${blkMatch.endDate}).`,
         conflictBlock: blkMatch,
       };
     }

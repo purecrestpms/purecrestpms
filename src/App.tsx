@@ -30,7 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import { AdminLicensingView } from './components/AdminLicensingView';
-import { AdminReportsAnalyticsView } from './components/AdminReportsAnalyticsView';
+import { AdminReportsAnalyticsView, ReportTab } from './components/AdminReportsAnalyticsView';
 import { AppHomepageView } from './components/AppHomepageView';
 import { CmsAdminView } from './components/CmsAdminView';
 import { DashboardView } from './components/DashboardView';
@@ -39,9 +39,11 @@ import {
   isMessageUnreadForUser,
 } from './components/DepartmentMessagingView';
 import { FinanceInventoryView } from './components/FinanceInventoryView';
+import { GuestsDirectoryView } from './components/GuestsDirectoryView';
 import { HelpDocsTrainingView } from './components/HelpDocsTrainingView';
 import { HousekeepingMaintenanceView } from './components/HousekeepingMaintenanceView';
 import { InvoicesView } from './components/InvoicesView';
+import { PchAdminDashboardView } from './components/PchAdminDashboardView';
 import { PortalGateway } from './components/PortalGateway';
 import { PosKitchenView } from './components/PosKitchenView';
 import { ProfileView } from './components/ProfileView';
@@ -345,11 +347,14 @@ export default function App() {
   const propIdsBackfilledRef = useRef(false);
 
   const [activeSection, setActiveSection] = useState<NavSectionId>(detectInitialSection);
+  const [activeReportTab, setActiveReportTab] = useState<ReportTab>('bookings');
+  const [prefillLoginPropertyId, setPrefillLoginPropertyId] = useState<string | null>(null);
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
   const [reservationIntent, setReservationIntent] = useState<'view' | 'edit'>('view');
   const [selectedRoomIdToInspect, setSelectedRoomIdToInspect] = useState<string | null>(null);
   const [prefillBookingRoomId, setPrefillBookingRoomId] = useState<string | null>(null);
-  const [activePropertyId, setActivePropertyId] = useState<string>(RICHGATES_PROPERTY_ID);
+  const [prefillBookingGuest, setPrefillBookingGuest] = useState<GuestRecord | null>(null);
+  const [activePropertyId, setActivePropertyId] = useState<string>('');
   const [toast, setToast] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -559,7 +564,17 @@ export default function App() {
   const handleStartNewReservationForRoom = (roomId: string) => {
     setSelectedReservationId(null);
     setSelectedRoomIdToInspect(null);
+    setPrefillBookingGuest(null);
     setPrefillBookingRoomId(roomId);
+    setActiveSection('reservations');
+    syncUrlParams(portalMode, 'reservations');
+  };
+
+  const handleStartNewReservationForGuest = (guest: GuestRecord) => {
+    setSelectedReservationId(null);
+    setSelectedRoomIdToInspect(null);
+    setPrefillBookingRoomId(null);
+    setPrefillBookingGuest(guest);
     setActiveSection('reservations');
     syncUrlParams(portalMode, 'reservations');
   };
@@ -782,7 +797,7 @@ export default function App() {
           setPropsLoaded(true);
         }
         setActivePropertyId((curr) => {
-          if (list.length === 0) return curr;
+          if (list.length === 0) return '';
           const host = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
           const propSlug = extractPropertySubdomainSlug(host);
           if (propSlug) {
@@ -796,7 +811,9 @@ export default function App() {
           return !list.some((p) => p.id === curr) ? list[0].id : curr;
         });
         const needsBootstrapSeed =
-          isAdmin && !list.some((p) => p.id === RICHGATES_PROPERTY_ID);
+          isAdmin &&
+          portalMode !== 'pch-admin' &&
+          list.length === 0;
         if (!snap.metadata.fromCache && needsBootstrapSeed && autoSeedAttemptedRef.current !== user.uid) {
           autoSeedAttemptedRef.current = user.uid;
           void runBootstrapSeed(RICHGATES_PROPERTY_ID);
@@ -1557,17 +1574,36 @@ export default function App() {
     .sort((a, b) => b.createdAtIso.localeCompare(a.createdAtIso));
 
   const headerFormattedDate = new Date().toLocaleDateString('en-GB', {
-    weekday: 'short',
+    weekday: 'long',
     day: 'numeric',
-    month: 'short',
+    month: 'long',
     year: 'numeric',
   });
 
+  const fallbackPlatformProperty: PropertyRecord = activeProperty || {
+    id: '__platform__',
+    systemPropertyId: 'PCH-000',
+    name: cms.brand.pchPortalName || 'PCH PMS Platform',
+    code: 'PCH',
+    city: 'Lagos',
+    state: 'Lagos',
+    country: 'Nigeria',
+    address: '',
+    currency: 'NGN',
+    roomCount: 0,
+    status: 'active',
+    adminEmail: user.email || '',
+    authorizedEmails: user.email ? [user.email.toLowerCase()] : [],
+    ownerUid: user.uid,
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex">
+    <div className="min-h-screen bg-[#f6f8fa] text-slate-900 flex">
       <Sidebar
         activeSection={activeSection}
         onSelectSection={handleSelectSection}
+        activeReportTab={activeReportTab}
+        onSelectReportTab={setActiveReportTab}
         properties={properties}
         activePropertyId={activePropertyId}
         onSelectProperty={setActivePropertyId}
@@ -1628,10 +1664,9 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
-            {/* Current Date moved from Dashboard to Header */}
-            <div className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50/70 border border-blue-200/80 text-xs font-bold text-[#061539]">
-              <Calendar className="w-3.5 h-3.5 text-[#1c46be]" />
-              <span className="font-mono-tabular whitespace-nowrap">{headerFormattedDate}</span>
+            <div className="hidden md:inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
+              <Calendar className="w-3.5 h-3.5 text-[#0b5d34]" />
+              <span className="whitespace-nowrap">{headerFormattedDate}</span>
             </div>
 
             {/* Real-Time Message Alert Bell & Dropdown */}
@@ -1806,7 +1841,7 @@ export default function App() {
         )}
 
         <main className="flex-1 p-4 sm:p-6 max-w-[1440px] w-full mx-auto print:p-0 print:max-w-none">
-          {seeding || !activeProperty ? (
+          {seeding || (!activeProperty && portalMode !== 'pch-admin') ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[1, 2, 3].map((item) => (
@@ -1818,23 +1853,22 @@ export default function App() {
               </div>
               {!seeding && propsLoaded && properties.length === 0 && isBootstrappedAdmin && (
                 <div className="bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between gap-4">
-                  <p className="text-xs font-bold text-[#061539]">
-                    Ready to initialize property workspace.
+                  <p className="text-xs font-bold text-slate-900">
+                    No properties registered yet. Add your first property to begin.
                   </p>
                   <button
                     type="button"
-                    onClick={() => runBootstrapSeed(RICHGATES_PROPERTY_ID)}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
+                    onClick={() => handleSelectSection('properties_admin')}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0b5d34] hover:bg-[#094b2a] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Initialize Property Workspace</span>
+                    <span>Add First Property</span>
                   </button>
                 </div>
               )}
             </div>
           ) : (
             <PageErrorBoundary onReset={() => handleSelectSection('dashboard')}>
-              {icalViewRoom !== null && (
+              {icalViewRoom !== null && activeProperty && (
                 <div className="mb-6 bg-white border border-emerald-300 rounded-xl p-5 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -1892,7 +1926,30 @@ export default function App() {
                 </div>
               )}
 
-              {activeSection === 'dashboard' && (
+              {activeSection === 'dashboard' && portalMode === 'pch-admin' && (
+                <PchAdminDashboardView
+                  properties={properties}
+                  activePropertyId={activePropertyId}
+                  licenses={licenses}
+                  planInquiries={planInquiries}
+                  userName={
+                    matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    'Admin'
+                  }
+                  onSelectProperty={setActivePropertyId}
+                  onNavigate={handleSelectSection}
+                  onCreateLoginForProperty={(propId) => {
+                    setPrefillLoginPropertyId(propId);
+                    if (propId) setActivePropertyId(propId);
+                    handleSelectSection('user_management');
+                  }}
+                  onOpenPortalLinksModal={() => setShowPortalModal(true)}
+                />
+              )}
+
+              {activeSection === 'dashboard' && portalMode !== 'pch-admin' && activeProperty && (
                 <DashboardView
                   key={`dashboard-${activeProperty.id}`}
                   property={activeProperty}
@@ -1931,7 +1988,7 @@ export default function App() {
                 />
               )}
 
-              {activeSection === 'calendar' && (
+              {activeSection === 'calendar' && activeProperty && (
                 <ReservationsCalendarView
                   key={`calendar-${activeProperty.id}`}
                   property={activeProperty}
@@ -1946,40 +2003,57 @@ export default function App() {
                 />
               )}
 
+              {activeSection === 'guests' && activeProperty && (
+                <GuestsDirectoryView
+                  key={`guests-${activeProperty.id}`}
+                  property={activeProperty}
+                  guests={guests}
+                  reservations={reservations}
+                  rooms={rooms}
+                  activeRole={effectiveRole}
+                  actorRole={ROLE_LABELS[effectiveRole]}
+                  onNotify={notify}
+                  onOpenReservationFolio={handleOpenReservationFolio}
+                  onStartNewReservationForGuest={handleStartNewReservationForGuest}
+                />
+              )}
+
               {(activeSection === 'rooms' ||
                 activeSection === 'reservations' ||
                 activeSection === 'arrivals' ||
                 activeSection === 'in_house' ||
                 activeSection === 'walk_in' ||
-                activeSection === 'front_desk' ||
-                activeSection === 'guests') && (
-                <RoomsReservationsView
-                  key={`${activeSection}-${activeProperty.id}`}
-                  section={activeSection}
-                  property={activeProperty}
-                  activeLicense={activeLicense}
-                  rooms={rooms}
-                  reservations={reservations}
-                  blockedDates={blockedDates}
-                  guests={guests}
-                  selectedReservationId={selectedReservationId}
-                  initialReservationIntent={reservationIntent}
-                  initialRoomDetailId={selectedRoomIdToInspect}
-                  onConsumeRoomDetailId={() => setSelectedRoomIdToInspect(null)}
-                  prefillBookingRoomId={prefillBookingRoomId}
-                  onConsumePrefillBookingRoomId={() => setPrefillBookingRoomId(null)}
-                  onStartNewReservationForRoom={handleStartNewReservationForRoom}
-                  onConsumeIntent={() => setReservationIntent('view')}
-                  onSelectReservation={setSelectedReservationId}
-                  onNavigateSection={handleSelectSection}
-                  activeRole={effectiveRole}
-                  actorRole={ROLE_LABELS[effectiveRole]}
-                  onNotify={notify}
-                  onGuestCheckedIn={(info) => setCheckedInPopup(info)}
-                />
-              )}
+                activeSection === 'front_desk') &&
+                activeProperty && (
+                  <RoomsReservationsView
+                    key={`${activeSection}-${activeProperty.id}`}
+                    section={activeSection}
+                    property={activeProperty}
+                    activeLicense={activeLicense}
+                    rooms={rooms}
+                    reservations={reservations}
+                    blockedDates={blockedDates}
+                    guests={guests}
+                    selectedReservationId={selectedReservationId}
+                    initialReservationIntent={reservationIntent}
+                    initialRoomDetailId={selectedRoomIdToInspect}
+                    onConsumeRoomDetailId={() => setSelectedRoomIdToInspect(null)}
+                    prefillBookingRoomId={prefillBookingRoomId}
+                    onConsumePrefillBookingRoomId={() => setPrefillBookingRoomId(null)}
+                    prefillBookingGuest={prefillBookingGuest}
+                    onConsumePrefillBookingGuest={() => setPrefillBookingGuest(null)}
+                    onStartNewReservationForRoom={handleStartNewReservationForRoom}
+                    onConsumeIntent={() => setReservationIntent('view')}
+                    onSelectReservation={setSelectedReservationId}
+                    onNavigateSection={handleSelectSection}
+                    activeRole={effectiveRole}
+                    actorRole={ROLE_LABELS[effectiveRole]}
+                    onNotify={notify}
+                    onGuestCheckedIn={(info) => setCheckedInPopup(info)}
+                  />
+                )}
 
-              {activeSection === 'invoices' && (
+              {activeSection === 'invoices' && activeProperty && (
                 <InvoicesView
                   key={`invoices-${activeProperty.id}`}
                   property={activeProperty}
@@ -1994,8 +2068,8 @@ export default function App() {
 
               {activeSection === 'profile' && (
                 <ProfileView
-                  key={`profile-${activeProperty.id}`}
-                  property={activeProperty}
+                  key={`profile-${fallbackPlatformProperty.id}`}
+                  property={fallbackPlatformProperty}
                   activeLicense={activeLicense}
                   activeRole={effectiveRole}
                   userEmail={user.email || ''}
@@ -2008,21 +2082,24 @@ export default function App() {
                 />
               )}
 
-              {(activeSection === 'housekeeping' || activeSection === 'maintenance') && (
-                <HousekeepingMaintenanceView
-                  key={`${activeSection}-${activeProperty.id}`}
-                  section={activeSection}
-                  property={activeProperty}
-                  rooms={rooms}
-                  housekeepingTasks={housekeepingTasks}
-                  maintenanceTickets={maintenanceTickets}
-                  canManageRecords={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
-                  actorRole={ROLE_LABELS[effectiveRole]}
-                  onNotify={notify}
-                />
-              )}
+              {(activeSection === 'housekeeping' || activeSection === 'maintenance') &&
+                activeProperty && (
+                  <HousekeepingMaintenanceView
+                    key={`${activeSection}-${activeProperty.id}`}
+                    section={activeSection}
+                    property={activeProperty}
+                    rooms={rooms}
+                    housekeepingTasks={housekeepingTasks}
+                    maintenanceTickets={maintenanceTickets}
+                    canManageRecords={
+                      effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'
+                    }
+                    actorRole={ROLE_LABELS[effectiveRole]}
+                    onNotify={notify}
+                  />
+                )}
 
-              {activeSection === 'pos_kitchen' && (
+              {activeSection === 'pos_kitchen' && activeProperty && (
                 <PosKitchenView
                   key={`pos-${activeProperty.id}`}
                   property={activeProperty}
@@ -2031,13 +2108,15 @@ export default function App() {
                   inventoryItems={inventoryItems}
                   ledgerEntries={ledgerEntries}
                   reservations={reservations}
-                  canManageMenu={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
+                  canManageMenu={
+                    effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'
+                  }
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                 />
               )}
 
-              {activeSection === 'reports' && (
+              {activeSection === 'reports' && activeProperty && (
                 <AdminReportsAnalyticsView
                   key={`reports-${activeProperty.id}`}
                   property={activeProperty}
@@ -2057,6 +2136,7 @@ export default function App() {
                   housekeepingTasks={housekeepingTasks}
                   maintenanceTickets={maintenanceTickets}
                   otaChannels={otaChannels}
+                  initialTab={activeReportTab}
                   onNavigate={handleSelectSection}
                   onNotify={notify}
                 />
@@ -2064,23 +2144,26 @@ export default function App() {
 
               {(activeSection === 'accounting' ||
                 activeSection === 'inventory' ||
-                activeSection === 'procurement') && (
-                <FinanceInventoryView
-                  key={`${activeSection}-${activeProperty.id}`}
-                  section={activeSection}
-                  property={activeProperty}
-                  activeRole={effectiveRole}
-                  ledgerEntries={ledgerEntries}
-                  inventoryItems={inventoryItems}
-                  purchaseOrders={purchaseOrders}
-                  canManageRecords={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
-                  actorRole={ROLE_LABELS[effectiveRole]}
-                  onNavigate={handleSelectSection}
-                  onNotify={notify}
-                />
-              )}
+                activeSection === 'procurement') &&
+                activeProperty && (
+                  <FinanceInventoryView
+                    key={`${activeSection}-${activeProperty.id}`}
+                    section={activeSection}
+                    property={activeProperty}
+                    activeRole={effectiveRole}
+                    ledgerEntries={ledgerEntries}
+                    inventoryItems={inventoryItems}
+                    purchaseOrders={purchaseOrders}
+                    canManageRecords={
+                      effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'
+                    }
+                    actorRole={ROLE_LABELS[effectiveRole]}
+                    onNavigate={handleSelectSection}
+                    onNotify={notify}
+                  />
+                )}
 
-              {activeSection === 'shift_daily_report' && (
+              {activeSection === 'shift_daily_report' && activeProperty && (
                 <StaffShiftReportView
                   key={`shift-daily-${activeProperty.id}`}
                   property={activeProperty}
@@ -2110,10 +2193,15 @@ export default function App() {
                 activeSection === 'shifts_attendance' ||
                 activeSection === 'payroll') && (
                 <StaffHrPayrollView
-                  key={`${activeSection}-${activeProperty.id}`}
+                  key={`${activeSection}-${fallbackPlatformProperty.id}`}
                   section={activeSection === 'user_management' ? 'staff' : activeSection}
                   initialTab={activeSection === 'user_management' ? 'users' : undefined}
-                  property={activeProperty}
+                  portalMode={portalMode}
+                  property={fallbackPlatformProperty}
+                  properties={properties}
+                  onSelectProperty={setActivePropertyId}
+                  prefillLoginPropertyId={prefillLoginPropertyId}
+                  onConsumePrefillLoginPropertyId={() => setPrefillLoginPropertyId(null)}
                   activeRole={effectiveRole}
                   staffMembers={staffMembers}
                   userAccounts={userAccounts}
@@ -2142,7 +2230,7 @@ export default function App() {
                 />
               )}
 
-              {activeSection === 'staff_sessions' && (
+              {activeSection === 'staff_sessions' && activeProperty && (
                 <StaffSessionsView
                   key={`staff-sessions-${activeProperty.id}`}
                   property={activeProperty}
@@ -2173,9 +2261,9 @@ export default function App() {
                 activeSection === 'rbac_audit' ||
                 activeSection === 'deployment') && (
                 <AdminLicensingView
-                  key={`${activeSection}-${activeProperty.id}`}
+                  key={`${activeSection}-${fallbackPlatformProperty.id}`}
                   section={activeSection}
-                  property={activeProperty}
+                  property={fallbackPlatformProperty}
                   properties={properties}
                   rooms={rooms}
                   reservations={reservations}
@@ -2197,8 +2285,8 @@ export default function App() {
               )}
               {activeSection === 'cms' && (
                 <CmsAdminView
-                  key={`cms-${activeProperty.id}`}
-                  property={activeProperty}
+                  key={`cms-${fallbackPlatformProperty.id}`}
+                  property={fallbackPlatformProperty}
                   activeRole={effectiveRole}
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNavigate={handleSelectSection}
@@ -2206,7 +2294,7 @@ export default function App() {
                 />
               )}
 
-              {activeSection === 'messages' && (
+              {activeSection === 'messages' && activeProperty && (
                 <DepartmentMessagingView
                   key={`messages-${activeProperty.id}`}
                   property={activeProperty}
@@ -2226,8 +2314,8 @@ export default function App() {
 
               {activeSection === 'training_help' && (
                 <HelpDocsTrainingView
-                  key={`training-${activeProperty.id}`}
-                  property={activeProperty}
+                  key={`training-${fallbackPlatformProperty.id}`}
+                  property={fallbackPlatformProperty}
                   activeRole={effectiveRole}
                   userEmail={user.email || ''}
                   userName={

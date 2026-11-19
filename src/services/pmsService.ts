@@ -34,6 +34,7 @@ import {
 } from '../firebase';
 import { mergeCmsWithDefaults } from '../context/CmsContext';
 import { buildRichgatesSeedPayload, generateLicenseKey, RICHGATES_PROPERTY_ID } from '../data/seedData';
+import { checkRoomDateRangeAvailability } from '../utils/availability';
 import { deterministicOtaReservationId, ParsedIcalEvent, parseIcalEvents } from '../utils/icalParser';
 import { ParsedOtaCsvRow } from '../utils/otaCsvParser';
 import {
@@ -254,6 +255,40 @@ export async function createReservationWorkflow(params: {
 }) {
   if (params.immediateCheckIn && !params.room) {
     throw new Error('A physical room must be assigned for immediate front desk check-in.');
+  }
+
+  // Enforce real Firestore-level room availability check to block double-booking
+  // against any active direct reservation, OTA booking (Airbnb/Booking.com/Expedia/VRBO), or blocked date.
+  if (params.room) {
+    try {
+      const [liveResSnap, liveBlkSnap] = await Promise.all([
+        getDocs(collection(db, 'properties', params.property.id, 'reservations')),
+        getDocs(collection(db, 'properties', params.property.id, 'blocked_dates')),
+      ]);
+      const liveReservations = liveResSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<ReservationRecord, 'id'>),
+      }));
+      const liveBlocks = liveBlkSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<BlockedDateRecord, 'id'>),
+      }));
+      const liveCheck = checkRoomDateRangeAvailability({
+        room: params.room,
+        checkInDate: params.checkInDate,
+        checkOutDate: params.checkOutDate,
+        reservations: liveReservations,
+        blockedDates: liveBlocks,
+      });
+      if (!liveCheck.available) {
+        throw new Error(liveCheck.message);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('unavailable')) {
+        throw err;
+      }
+      // If offline/transient read error, let client-side check govern rather than blocking unexpectedly
+    }
   }
 
   const { uid } = getActorContext();
@@ -482,7 +517,7 @@ export async function createReservationWorkflow(params: {
         : `New Booking ${bookingRef}`,
       details: `${params.guestName} · ${roomNumberVal} (${requestedTypeVal}) · ${params.nights} nights · ${params.channel}`,
       authorizedEmails: authEmails,
-    });
+    }).catch(() => undefined);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `properties/${params.property.id}/reservations/${resId}`);
   }
@@ -1816,23 +1851,43 @@ export async function createGuestRecord(params: {
   const { uid } = getActorContext();
   const id = cleanId('gst');
   const ref = doc(db, 'properties', params.property.id, 'guests', id);
+  const cleanName = (params.guest.fullName || '').trim().slice(0, 120);
+  if (cleanName.length < 2) {
+    throw new Error('Guest full name must be at least 2 characters.');
+  }
+  const cleanPhone = (params.guest.phone || '').trim().slice(0, 32) || 'Not Provided';
+  const payload: Record<string, unknown> = {
+    propertyId: params.property.id,
+    fullName: cleanName,
+    phone: cleanPhone,
+    email: (params.guest.email || '').trim().slice(0, 120),
+    address: (params.guest.address || '').trim().slice(0, 200),
+    city: (params.guest.city || '').trim().slice(0, 80),
+    state: (params.guest.state || '').trim().slice(0, 80),
+    country: (params.guest.country || params.guest.nationality || 'Nigeria').trim().slice(0, 80),
+    nationality: (params.guest.nationality || params.guest.country || 'Nigeria').trim().slice(0, 64),
+    idType: params.guest.idType || 'NIN',
+    idNumber: (params.guest.idNumber || '').trim().slice(0, 64),
+    vipTier: params.guest.vipTier || 'Standard',
+    totalStays: Math.max(0, Math.round(Number(params.guest.totalStays) || 0)),
+    lifetimeSpendNgn: Math.max(0, Math.round(Number(params.guest.lifetimeSpendNgn) || 0)),
+    notes: (params.guest.notes || '').trim().slice(0, 400),
+    authorizedEmails: params.property.authorizedEmails,
+    ownerUid: uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
   try {
-    await setDoc(ref, {
-      ...params.guest,
-      propertyId: params.property.id,
-      authorizedEmails: params.property.authorizedEmails,
-      ownerUid: uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(ref, payload);
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Guests',
-      action: `Registered Guest ${params.guest.fullName}`,
-      details: `VIP: ${params.guest.vipTier} · ID: ${params.guest.idType}`,
+      action: `Registered Guest ${cleanName}`,
+      details: `VIP: ${payload.vipTier} · ID: ${payload.idType}`,
       authorizedEmails: params.property.authorizedEmails,
-    });
+    }).catch(() => undefined);
+    return id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, ref.path);
   }
@@ -1850,19 +1905,34 @@ export async function updateGuestRecord(params: {
   actorRole: string;
 }) {
   const ref = doc(db, 'properties', params.property.id, 'guests', params.guest.id);
+  const sanitized: Record<string, unknown> = { updatedAt: serverTimestamp() };
+  if (params.updates.fullName !== undefined) {
+    const cleanName = params.updates.fullName.trim().slice(0, 120);
+    if (cleanName.length < 2) throw new Error('Guest full name must be at least 2 characters.');
+    sanitized.fullName = cleanName;
+  }
+  if (params.updates.email !== undefined) sanitized.email = params.updates.email.trim().slice(0, 120);
+  if (params.updates.phone !== undefined) sanitized.phone = params.updates.phone.trim().slice(0, 32) || 'Not Provided';
+  if (params.updates.address !== undefined) sanitized.address = params.updates.address.trim().slice(0, 200);
+  if (params.updates.city !== undefined) sanitized.city = params.updates.city.trim().slice(0, 80);
+  if (params.updates.state !== undefined) sanitized.state = params.updates.state.trim().slice(0, 80);
+  if (params.updates.country !== undefined) sanitized.country = params.updates.country.trim().slice(0, 80);
+  if (params.updates.nationality !== undefined) sanitized.nationality = params.updates.nationality.trim().slice(0, 64);
+  if (params.updates.idType !== undefined) sanitized.idType = params.updates.idType;
+  if (params.updates.idNumber !== undefined) sanitized.idNumber = params.updates.idNumber.trim().slice(0, 64);
+  if (params.updates.vipTier !== undefined) sanitized.vipTier = params.updates.vipTier;
+  if (params.updates.notes !== undefined) sanitized.notes = params.updates.notes.trim().slice(0, 400);
+
   try {
-    await updateDoc(ref, {
-      ...params.updates,
-      updatedAt: serverTimestamp(),
-    });
+    await updateDoc(ref, sanitized);
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Guest Profile',
-      action: `Updated Guest Profile: ${params.updates.fullName || params.guest.fullName}`,
-      details: `Tier: ${params.updates.vipTier || params.guest.vipTier} · Phone: ${params.updates.phone || params.guest.phone}`,
+      action: `Updated Guest Profile: ${(sanitized.fullName as string) || params.guest.fullName}`,
+      details: `Tier: ${(sanitized.vipTier as string) || params.guest.vipTier} · Phone: ${(sanitized.phone as string) || params.guest.phone}`,
       authorizedEmails: params.property.authorizedEmails,
-    });
+    }).catch(() => undefined);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
@@ -1883,7 +1953,7 @@ export async function deleteGuestRecordWorkflow(params: {
       action: `Deleted Guest Record: ${params.guest.fullName}`,
       details: `Removed profile (${params.guest.phone}) from directory.`,
       authorizedEmails: params.property.authorizedEmails,
-    });
+    }).catch(() => undefined);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, ref.path);
   }
@@ -3896,6 +3966,27 @@ export async function syncOtaChannelWorkflow(params: {
           existing.otaPaidNgn = pricing.otaPaidNgn;
           existing.expectedPayoutNgn = pricing.expectedPayoutNgn;
         }
+        // Automatically mark room reserved when updated OTA stay covers today
+        if (
+          targetStatus === 'confirmed' &&
+          ev.checkInDate <= todayIso &&
+          ev.checkOutDate > todayIso &&
+          assignedRoom.occupancyStatus === 'vacant'
+        ) {
+          writes.push({
+            kind: 'update',
+            ref: doc(db, 'properties', params.property.id, 'rooms', assignedRoom.id),
+            data: {
+              occupancyStatus: 'reserved',
+              currentGuestName: safeGuestName,
+              currentReservationId: existing.id,
+              updatedAt: now,
+            },
+          });
+          assignedRoom.occupancyStatus = 'reserved';
+          assignedRoom.currentGuestName = safeGuestName;
+          assignedRoom.currentReservationId = existing.id;
+        }
         updated += 1;
       } else {
         skipped += 1;
@@ -4044,7 +4135,7 @@ export async function syncOtaChannelWorkflow(params: {
       action: `Synced ${params.channel.channelName}`,
       details: `${parsedEvents.length} calendar events checked · Created: ${created} · Updated: ${updated} · Cancelled: ${cancelled} · Unchanged/Skipped: ${skipped}`,
       authorizedEmails: params.property.authorizedEmails,
-    });
+    }).catch(() => undefined);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
@@ -4132,23 +4223,37 @@ export async function importOtaCsvReservationsWorkflow(params: {
     if (r.bookingRef) byBookingRef.set(`${r.channel}::${r.bookingRef.toUpperCase()}`, r);
   }
 
-  const matchRoom = (roomHint?: string): RoomRecord => {
+  const matchRoom = (roomHint: string | undefined, checkIn: string, checkOut: string): RoomRecord => {
+    const isFreeForDates = (candidate: RoomRecord) =>
+      !existingReservations.some(
+        (res) =>
+          res.roomId === candidate.id &&
+          res.status !== 'cancelled' &&
+          res.status !== 'no_show' &&
+          res.status !== 'checked_out' &&
+          datesOverlap(checkIn, checkOut, res.checkInDate, res.checkOutDate)
+      );
+
     const hint = (roomHint || '').trim().toLowerCase();
     if (hint) {
-      const exact = roomList.find(
+      const exactMatches = roomList.filter(
         (r) =>
           r.roomNumber.toLowerCase() === hint ||
           r.name.toLowerCase() === hint ||
           hint.includes(r.roomNumber.toLowerCase()) ||
           hint.includes(r.name.toLowerCase())
       );
-      if (exact) return exact;
-      const byType = roomList.find(
+      if (exactMatches.length > 0) {
+        return exactMatches.find(isFreeForDates) || exactMatches[0];
+      }
+      const byType = roomList.filter(
         (r) => r.roomType.toLowerCase().includes(hint) || hint.includes(r.roomType.toLowerCase())
       );
-      if (byType) return byType;
+      if (byType.length > 0) {
+        return byType.find(isFreeForDates) || byType[0];
+      }
     }
-    return roomList[0];
+    return roomList.find(isFreeForDates) || roomList[0];
   };
 
   type QueuedWrite =
@@ -4166,7 +4271,7 @@ export async function importOtaCsvReservationsWorkflow(params: {
     const resolvedChannelSource: ReservationRecord['channel'] = row.channelOverride
       ? normalizeChannel(row.channelOverride)
       : defaultResolvedChannelSource;
-    const assignedRoom = matchRoom(row.roomHint);
+    const assignedRoom = matchRoom(row.roomHint, row.checkInDate, row.checkOutDate);
     const channelCurrency: ChannelCurrency = row.currency || params.defaultCurrency || 'USD';
     const fxRate = getFxRateToNgn(channelCurrency, params.property.usdExchangeRateNgn);
     const safeNights = Math.max(1, Math.round(Number(row.nights) || 1));
@@ -4368,7 +4473,29 @@ export async function importOtaCsvReservationsWorkflow(params: {
         ref: doc(db, 'properties', params.property.id, 'reservations', deterministicId),
         data: resData as Record<string, unknown>,
       });
+      // Automatically mark vacant room as reserved when imported OTA booking covers today
+      if (
+        row.status !== 'cancelled' &&
+        row.checkInDate <= todayIso &&
+        row.checkOutDate > todayIso &&
+        assignedRoom.occupancyStatus === 'vacant'
+      ) {
+        writes.push({
+          kind: 'update',
+          ref: doc(db, 'properties', params.property.id, 'rooms', assignedRoom.id),
+          data: {
+            occupancyStatus: 'reserved',
+            currentGuestName: safeGuestName,
+            currentReservationId: deterministicId,
+            updatedAt: now,
+          },
+        });
+        assignedRoom.occupancyStatus = 'reserved';
+        assignedRoom.currentGuestName = safeGuestName;
+        assignedRoom.currentReservationId = deterministicId;
+      }
       const cached: ReservationRecord = { id: deterministicId, ...(resData as Omit<ReservationRecord, 'id'>) };
+      existingReservations.push(cached);
       byExternalUid.set(`${resolvedChannelSource}::${externalUid}`, cached);
       byBookingRef.set(`${resolvedChannelSource}::${bookingRef.toUpperCase()}`, cached);
       created += 1;

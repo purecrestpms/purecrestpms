@@ -242,7 +242,7 @@ service cloud.firestore {
       data.propertyId == propertyId &&
       data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
       (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
-      data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 32 &&
+      data.phone is string && data.phone.size() <= 32 &&
       (!('address' in data) || (data.address is string && data.address.size() <= 200)) &&
       (!('city' in data) || (data.city is string && data.city.size() <= 80)) &&
       (!('state' in data) || (data.state is string && data.state.size() <= 80)) &&
@@ -745,7 +745,7 @@ service cloud.firestore {
     // Root collection: Properties
     match /properties/{propertyId} {
       allow get: if isValidId(propertyId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
-      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
       allow create: if isValidId(propertyId) && isPchSuperAdmin() && isValidProperty(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(propertyId) && isValidProperty(incoming()) &&
@@ -786,7 +786,7 @@ service cloud.firestore {
       // Subcollection: Guests
       match /guests/{guestId} {
         allow get: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId) &&
           isValidGuest(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -802,7 +802,7 @@ service cloud.firestore {
       // Subcollection: Reservations
       match /reservations/{reservationId} {
         allow get: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId) &&
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -818,7 +818,7 @@ service cloud.firestore {
       // Subcollection: Housekeeping Tasks
       match /housekeeping_tasks/{taskId} {
         allow get: if isValidId(propertyId) && isValidId(taskId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(taskId) && isPropertyOperator(propertyId) &&
           isValidHousekeepingTask(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -834,7 +834,7 @@ service cloud.firestore {
       // Subcollection: Restaurant POS & Kitchen Orders
       match /pos_orders/{orderId} {
         allow get: if isValidId(propertyId) && isValidId(orderId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(orderId) && isPropertyOperator(propertyId) &&
           isValidPosOrder(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -852,7 +852,7 @@ service cloud.firestore {
       // Subcollection: POS Menu Items
       match /pos_menu_items/{itemId} {
         allow get: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId) &&
           isValidPosMenuItem(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -868,7 +868,7 @@ service cloud.firestore {
       // Subcollection: Accounting Ledger
       match /ledger_entries/{entryId} {
         allow get: if isValidId(propertyId) && isValidId(entryId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(entryId) && isPropertyOperator(propertyId) &&
           isValidLedgerEntry(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -884,7 +884,7 @@ service cloud.firestore {
       // Subcollection: Inventory Items
       match /inventory_items/{itemId} {
         allow get: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId) &&
           isValidInventoryItem(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -900,7 +900,7 @@ service cloud.firestore {
       // Subcollection: Procurement Purchase Orders
       match /purchase_orders/{poId} {
         allow get: if isValidId(propertyId) && isValidId(poId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(poId) && isPropertyOperator(propertyId) &&
           isValidPurchaseOrder(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -918,7 +918,7 @@ service cloud.firestore {
       // Subcollection: Staff Members (Property Admin & Super Admin control)
       match /staff_members/{staffId} {
         allow get: if isValidId(propertyId) && isValidId(staffId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(staffId) && isPropertyAdmin(propertyId) &&
           isValidStaffMember(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -934,7 +934,7 @@ service cloud.firestore {
       // Subcollection: Property User Accounts, Roles & Privileges (Property Admin & Super Admin control)
       match /user_accounts/{accountId} {
         allow get: if isValidId(propertyId) && isValidId(accountId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(accountId) && isPropertyAdmin(propertyId) &&
           isValidPropertyUserAccount(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -950,7 +950,7 @@ service cloud.firestore {
       // Subcollection: Employee Login & Logout Session Monitor
       match /staff_sessions/{sessionId} {
         allow get: if isValidId(propertyId) && isValidId(sessionId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(sessionId) && isPropertyOperator(propertyId) &&
           isValidStaffSession(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -967,7 +967,7 @@ service cloud.firestore {
       // Subcollection: Shifts
       match /shifts/{shiftId} {
         allow get: if isValidId(propertyId) && isValidId(shiftId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(shiftId) && isPropertyOperator(propertyId) &&
           isValidShift(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -983,7 +983,7 @@ service cloud.firestore {
       // Subcollection: Attendance
       match /attendance/{recordId} {
         allow get: if isValidId(propertyId) && isValidId(recordId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(recordId) && isPropertyOperator(propertyId) &&
           isValidAttendance(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -999,7 +999,7 @@ service cloud.firestore {
       // Subcollection: Payroll Runs
       match /payroll_runs/{runId} {
         allow get: if isValidId(propertyId) && isValidId(runId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(runId) && isPropertyAdmin(propertyId) &&
           isValidPayrollRun(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -1017,7 +1017,7 @@ service cloud.firestore {
       // Subcollection: Maintenance Tickets
       match /maintenance_tickets/{ticketId} {
         allow get: if isValidId(propertyId) && isValidId(ticketId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(ticketId) && isPropertyOperator(propertyId) &&
           isValidMaintenanceTicket(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -1033,7 +1033,7 @@ service cloud.firestore {
       // Subcollection: OTA Online Booking Integrations
       match /ota_channels/{channelId} {
         allow get: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId) &&
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -1049,7 +1049,7 @@ service cloud.firestore {
       // Subcollection: Blocked Dates (Calendar)
       match /blocked_dates/{blockId} {
         allow get: if isValidId(propertyId) && isValidId(blockId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(blockId) && isPropertyOperator(propertyId) &&
           isValidBlockedDate(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -1065,7 +1065,7 @@ service cloud.firestore {
       // Subcollection: Inter-Departmental Messages & Alerts
       match /messages/{messageId} {
         allow get: if isValidId(propertyId) && isValidId(messageId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
         allow create: if isValidId(propertyId) && isValidId(messageId) && isPropertyOperator(propertyId) &&
           isValidPropertyMessage(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -1082,7 +1082,7 @@ service cloud.firestore {
     // Root collection: Centralized PureCrest Licenses (PCHPMS Super Admin controlled)
     match /licenses/{licenseId} {
       allow get: if isValidId(licenseId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
-      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
       allow create: if isValidId(licenseId) && isPchSuperAdmin() && isValidLicense(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(licenseId) && isValidLicense(incoming()) &&

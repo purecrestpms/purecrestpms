@@ -313,6 +313,86 @@ async function startServer() {
     }
   });
 
+  // Share staff / property user login details via email (uses Resend API when configured, or returns mailto fallback)
+  app.post('/api/share-login-email', express.json({ limit: '100kb' }), async (req, res) => {
+    const body = (req.body || {}) as {
+      to?: string;
+      subject?: string;
+      text?: string;
+      propertyName?: string;
+    };
+    const to = typeof body.to === 'string' ? body.to.trim() : '';
+    const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      res.status(400).json({ error: 'A valid recipient email address is required.' });
+      return;
+    }
+    if (!subject || !text) {
+      res.status(400).json({ error: 'Email subject and message body are required.' });
+      return;
+    }
+
+    const resendKey = process.env.RESEND_API_KEY?.trim();
+    const fromEmail = process.env.EMAIL_FROM?.trim() || 'PCH PMS <noreply@pchpms.com>';
+    if (!resendKey) {
+      res.status(200).json({
+        delivered: false,
+        fallback: 'mailto',
+        message: 'Opening your email app with login details pre-filled.',
+      });
+      return;
+    }
+
+    try {
+      const escapedHtml = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br/>');
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [to],
+          subject,
+          text,
+          html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#0f172a;line-height:1.6;">
+            <div style="background:#0b5d34;color:#ffffff;padding:16px 20px;border-radius:10px 10px 0 0;font-weight:700;font-size:16px;">
+              ${(body.propertyName || 'PCH PMS').replace(/[<>&]/g, '')}
+            </div>
+            <div style="border:1px solid #e2e8f0;border-top:none;padding:20px;border-radius:0 0 10px 10px;background:#ffffff;font-size:14px;">
+              ${escapedHtml}
+            </div>
+          </div>`,
+        }),
+      });
+      if (!emailRes.ok) {
+        const errPayload = await emailRes.text().catch(() => '');
+        res.status(200).json({
+          delivered: false,
+          fallback: 'mailto',
+          message: errPayload || 'Email gateway unavailable; falling back to email client.',
+        });
+        return;
+      }
+      res.status(200).json({
+        delivered: true,
+        message: `Login details emailed directly to ${to}.`,
+      });
+    } catch {
+      res.status(200).json({
+        delivered: false,
+        fallback: 'mailto',
+        message: 'Opening your email app with login details pre-filled.',
+      });
+    }
+  });
+
   if (!isProduction) {
     const hmrDisabled = process.env.DISABLE_HMR === 'true';
     if (hmrDisabled) {

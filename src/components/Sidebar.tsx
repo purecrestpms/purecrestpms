@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity,
+  BarChart2,
+  BarChart3,
   BedDouble,
+  Bell,
   BookOpenCheck,
   Building2,
   Calendar,
@@ -15,25 +18,26 @@ import {
   CreditCard,
   DoorOpen,
   FileEdit,
-  FileSpreadsheet,
   FileText,
   Globe,
   KeyRound,
   LayoutDashboard,
   LifeBuoy,
   Link2,
+  LogIn,
   LogOut,
-  Mail,
   Package,
   PanelLeftClose,
   PanelLeftOpen,
-  PlaneLanding,
+  PieChart,
+  RefreshCw,
   Settings,
   Shield,
   ShieldCheck,
   ShoppingCart,
   Sparkles,
   UserCheck,
+  UserPlus,
   Users,
   Wallet,
   Wrench,
@@ -45,13 +49,16 @@ import {
   PortalMode,
   PropertyRecord,
   ROLE_ALLOWED_SECTIONS,
-  ROLE_LABELS,
   StaffRole,
 } from '../types/pms';
+
+export type SidebarReportTab = 'bookings' | 'financials' | 'rooms' | 'guests';
 
 interface SidebarProps {
   activeSection: NavSectionId;
   onSelectSection: (section: NavSectionId) => void;
+  activeReportTab?: SidebarReportTab;
+  onSelectReportTab?: (tab: SidebarReportTab) => void;
   properties: PropertyRecord[];
   activePropertyId: string;
   onSelectProperty?: (id: string) => void;
@@ -70,85 +77,72 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
 }
 
-interface SidebarNavItem {
+interface SubMenuItem {
   id: NavSectionId;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }
 
-// Primary navigation ordered cleanly to match core PMS workflow
-const PRIMARY_NAV_ITEMS: SidebarNavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'reservations', label: 'Reservations', icon: CalendarCheck2 },
+const RESERVATION_SUB_ITEMS: SubMenuItem[] = [
+  { id: 'reservations', label: 'All Reservations', icon: CalendarCheck2 },
   { id: 'calendar', label: 'Calendar', icon: Calendar },
-  { id: 'rooms', label: 'Rooms', icon: BedDouble },
-  { id: 'accounting', label: 'Payments', icon: CreditCard },
-  { id: 'ota_channels', label: 'Channel Manager', icon: Globe },
-  { id: 'reports', label: 'Reports', icon: FileSpreadsheet },
-  { id: 'profile', label: 'Settings', icon: Settings },
+  { id: 'walk_in', label: 'Walk-in Check-in', icon: UserCheck },
+  { id: 'in_house', label: 'In-House Guests', icon: DoorOpen },
+  { id: 'front_desk', label: 'Front Desk & Folios', icon: BookOpenCheck },
 ];
 
-// Secondary operational groups (collapsible to keep the sidebar clean without removing any module)
-const SECONDARY_NAV_GROUPS: Array<{
-  group: string;
-  items: SidebarNavItem[];
-}> = [
-  {
-    group: 'Front Desk & Guests',
-    items: [
-      { id: 'arrivals', label: 'Arrivals', icon: PlaneLanding },
-      { id: 'in_house', label: 'In-House', icon: DoorOpen },
-      { id: 'walk_in', label: 'Walk-in Check-in', icon: UserCheck },
-      { id: 'front_desk', label: 'Front Desk & Folios', icon: BookOpenCheck },
-      { id: 'invoices', label: 'Invoices & Receipts', icon: FileText },
-      { id: 'guests', label: 'Guest Profiles', icon: Users },
-      { id: 'shift_daily_report', label: 'Shift Daily Report', icon: ClipboardList },
-      { id: 'messages', label: 'Messages & Alerts', icon: Mail },
-    ],
-  },
-  {
-    group: 'Housekeeping & POS',
-    items: [
-      { id: 'housekeeping', label: 'Housekeeping', icon: Sparkles },
-      { id: 'maintenance', label: 'Maintenance', icon: Wrench },
-      { id: 'pos_kitchen', label: 'Restaurant POS & KDS', icon: ChefHat },
-      { id: 'inventory', label: 'Store Inventory', icon: Package },
-      { id: 'procurement', label: 'Procurement & POs', icon: ShoppingCart },
-    ],
-  },
-  {
-    group: 'Team & HR',
-    items: [
-      { id: 'user_management', label: 'User Management', icon: ShieldCheck },
-      { id: 'staff', label: 'Staff & Performance', icon: Users },
-      { id: 'staff_sessions', label: 'Staff Sessions & Links', icon: Activity },
-      { id: 'shifts_attendance', label: 'Shifts & Attendance', icon: Clock },
-      { id: 'payroll', label: 'Monthly Payroll', icon: Wallet },
-    ],
-  },
-  {
-    group: 'Platform & Help',
-    items: [
-      { id: 'properties_admin', label: 'Multi-Property Admin', icon: Building2 },
-      { id: 'licensing', label: 'Software Licensing', icon: KeyRound },
-      { id: 'rbac_audit', label: 'RBAC & Audit Logs', icon: Shield },
-      { id: 'cms', label: 'App CMS & Text Editor', icon: FileEdit },
-      { id: 'deployment', label: 'Cloudflare Deploy', icon: CloudUpload },
-      { id: 'training_help', label: 'Docs, Training & Help', icon: LifeBuoy },
-    ],
-  },
+const ROOM_SUB_ITEMS: SubMenuItem[] = [
+  { id: 'rooms', label: 'All Rooms', icon: BedDouble },
+  { id: 'housekeeping', label: 'Housekeeping', icon: Sparkles },
+  { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+  { id: 'pos_kitchen', label: 'Restaurant POS', icon: ChefHat },
+  { id: 'inventory', label: 'Store Inventory', icon: Package },
+  { id: 'procurement', label: 'Procurement & POs', icon: ShoppingCart },
 ];
+
+const GUEST_SUB_ITEMS: SubMenuItem[] = [
+  { id: 'guests', label: 'Guest Directory', icon: Users },
+  { id: 'invoices', label: 'Invoices & Receipts', icon: FileText },
+  { id: 'shifts_attendance', label: 'Shifts & Attendance', icon: Clock },
+  { id: 'payroll', label: 'Monthly Payroll', icon: Wallet },
+  { id: 'shift_daily_report', label: 'Shift Daily Report', icon: ClipboardList },
+];
+
+const PchHouseLogo: React.FC<{ className?: string }> = ({ className = 'w-9 h-9' }) => (
+  <svg viewBox="0 0 44 44" fill="none" className={className} aria-hidden="true">
+    <path
+      d="M6 21.5L22 8.5L38 21.5"
+      stroke="#0b5d34"
+      strokeWidth="3.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M11 20V34.5H33V20"
+      stroke="#15803d"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <rect x="17.5" y="19.5" width="3.8" height="3.8" rx="0.6" fill="#0b5d34" />
+    <rect x="22.7" y="19.5" width="3.8" height="3.8" rx="0.6" fill="#0b5d34" />
+    <rect x="17.5" y="24.7" width="3.8" height="3.8" rx="0.6" fill="#15803d" />
+    <rect x="22.7" y="24.7" width="3.8" height="3.8" rx="0.6" fill="#15803d" />
+    <path d="M8 35.5H36" stroke="#0b5d34" strokeWidth="2.8" strokeLinecap="round" />
+  </svg>
+);
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeSection,
   onSelectSection,
+  activeReportTab = 'bookings',
+  onSelectReportTab,
   properties,
   activePropertyId,
   portalMode,
   activeRole,
   allowedSections,
   userEmail,
-  userName,
   mobileOpen,
   onCloseMobile,
   onOpenPortalLinksModal,
@@ -161,6 +155,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { cms } = useCms();
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const collapsed = controlledCollapsed ?? internalCollapsed;
+  const [distributionSelection, setDistributionSelection] = useState<
+    'booking_channels' | 'channel_manager' | 'channel_sync'
+  >('channel_manager');
+  const [reportSelection, setReportSelection] = useState<
+    'reports' | 'occupancy' | 'booking' | 'revenue' | 'guest'
+  >('reports');
+
+  const [openMenus, setOpenMenus] = useState<Record<'reservations' | 'rooms' | 'guests', boolean>>({
+    reservations: false,
+    rooms: false,
+    guests: false,
+  });
+
+  useEffect(() => {
+    if (RESERVATION_SUB_ITEMS.some((i) => i.id !== 'reservations' && i.id === activeSection)) {
+      setOpenMenus((prev) => (prev.reservations ? prev : { ...prev, reservations: true }));
+    } else if (ROOM_SUB_ITEMS.some((i) => i.id !== 'rooms' && i.id === activeSection)) {
+      setOpenMenus((prev) => (prev.rooms ? prev : { ...prev, rooms: true }));
+    } else if (GUEST_SUB_ITEMS.some((i) => i.id !== 'guests' && i.id === activeSection)) {
+      setOpenMenus((prev) => (prev.guests ? prev : { ...prev, guests: true }));
+    }
+  }, [activeSection]);
+
   const handleToggleCollapse = () => {
     if (onToggleCollapse) {
       onToggleCollapse();
@@ -169,330 +186,698 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Start secondary groups collapsed for a clean primary menu, auto-expanding whichever group contains activeSection
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    const activeGroup = SECONDARY_NAV_GROUPS.find((g) =>
-      g.items.some((item) => item.id === activeSection)
-    );
-    if (activeGroup) {
-      setExpandedGroups((prev) =>
-        prev[activeGroup.group] ? prev : { ...prev, [activeGroup.group]: true }
-      );
-    }
-  }, [activeSection]);
-
-  const toggleGroup = (groupName: string) => {
-    setExpandedGroups((prev) => ({
-      ...prev,
-      [groupName]: !prev[groupName],
-    }));
-  };
-
   const allowed =
     allowedSections && allowedSections.length > 0
       ? allowedSections
       : ROLE_ALLOWED_SECTIONS[activeRole];
-  const activeProp = properties.find((p) => p.id === activePropertyId) || properties[0];
-  const propertyName = activeProp?.name || 'Property Workspace';
+
+  const canSee = (id: NavSectionId) => allowed.includes(id);
+
+  const activeProp = properties.find((p) => p.id === activePropertyId);
+  const subtitleLabel =
+    portalMode === 'pch-admin'
+      ? 'Multi-Property Platform'
+      : activeProp?.name || 'Property Management System';
 
   const handleNavClick = (sectionId: NavSectionId) => {
     onSelectSection(sectionId);
     onCloseMobile();
   };
 
-  const renderNavButton = (item: SidebarNavItem, isCollapsed: boolean, prominent = false) => {
-    const Icon = item.icon;
-    const isActive = activeSection === item.id;
-    const navLabel =
-      prominent
-        ? item.label
-        : cms.pages[item.id]?.navLabel || item.label;
-    const showUnread = item.id === 'messages' && unreadMessageCount > 0;
-
-    return (
-      <button
-        key={item.id}
-        type="button"
-        onClick={() => handleNavClick(item.id)}
-        title={isCollapsed ? navLabel : undefined}
-        aria-label={navLabel}
-        className={`relative w-full flex items-center ${
-          isCollapsed
-            ? 'justify-center px-2 py-2.5'
-            : prominent
-              ? 'justify-between gap-2.5 px-3 py-2.5'
-              : 'justify-between gap-2 px-2.5 py-2'
-        } rounded-lg ${prominent ? 'text-[13px]' : 'text-xs'} transition-colors whitespace-nowrap cursor-pointer ${
-          isActive
-            ? 'bg-[#061539] text-white font-semibold shadow-xs'
-            : 'text-[#28488a] hover:bg-blue-50/75 hover:text-[#061539] font-medium'
-        }`}
-      >
-        <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-          <Icon
-            className={`w-4 h-4 shrink-0 ${
-              isActive ? 'text-white' : 'text-[#3a5ea8]'
-            }`}
-          />
-          {!isCollapsed && <span className="truncate">{navLabel}</span>}
-        </span>
-
-        {showUnread && !isCollapsed && (
-          <span
-            className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
-              isActive ? 'bg-white text-[#061539]' : 'bg-[#061539] text-white'
-            }`}
-          >
-            {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
-          </span>
-        )}
-
-        {showUnread && isCollapsed && (
-          <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-rose-600" />
-        )}
-      </button>
-    );
+  const handleReportClick = (
+    itemKey: 'reports' | 'occupancy' | 'booking' | 'revenue' | 'guest',
+    tab: SidebarReportTab
+  ) => {
+    setReportSelection(itemKey);
+    onSelectReportTab?.(tab);
+    handleNavClick('reports');
   };
 
-  const renderSidebarBody = (isCollapsed: boolean) => {
-    const visiblePrimary = PRIMARY_NAV_ITEMS.filter((item) => allowed.includes(item.id));
+  const toggleSubMenu = (key: 'reservations' | 'rooms' | 'guests') => {
+    setOpenMenus((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const navItemClass = (isActive: boolean, isCollapsed: boolean) =>
+    `relative w-full flex items-center ${
+      isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2.5 px-3 py-2'
+    } rounded-lg text-[13px] transition-colors whitespace-nowrap cursor-pointer ${
+      isActive
+        ? 'bg-[#0b5d34] text-white font-semibold shadow-xs'
+        : 'text-slate-700 hover:bg-emerald-50/70 hover:text-[#0b5d34] font-medium'
+    }`;
+
+  const iconClass = (isActive: boolean) =>
+    `w-[17px] h-[17px] shrink-0 ${isActive ? 'text-white' : 'text-[#0b5d34]'}`;
+
+  const renderExpandablePrimary = (
+    menuKey: 'reservations' | 'rooms' | 'guests',
+    primaryId: NavSectionId,
+    label: string,
+    Icon: React.ComponentType<{ className?: string }>,
+    subItems: SubMenuItem[],
+    isCollapsed: boolean
+  ) => {
+    const visibleSubs = subItems.filter((item) => canSee(item.id));
+    if (!canSee(primaryId) && visibleSubs.length === 0) return null;
+
+    const isPrimaryActive = activeSection === primaryId;
+    const isExpanded = openMenus[menuKey];
+    const hasSubItems = visibleSubs.length > 1;
+
+    if (isCollapsed) {
+      return (
+        <button
+          key={menuKey}
+          type="button"
+          onClick={() => handleNavClick(canSee(primaryId) ? primaryId : visibleSubs[0].id)}
+          title={label}
+          aria-label={label}
+          className={navItemClass(
+            isPrimaryActive || visibleSubs.some((i) => i.id === activeSection),
+            true
+          )}
+        >
+          <Icon className={iconClass(isPrimaryActive || visibleSubs.some((i) => i.id === activeSection))} />
+        </button>
+      );
+    }
 
     return (
-      <div
-        className={`${
-          isCollapsed ? 'w-[76px]' : 'w-64'
-        } bg-white text-[#061539] flex flex-col shrink-0 border-r border-slate-200 h-full transition-all duration-200`}
-      >
-        {/* Top Header: PCH PMS + Property Name + Collapse Toggle */}
+      <div key={menuKey} className="space-y-0.5">
         <div
-          className={`px-4 py-4 border-b border-slate-200 flex items-center ${
-            isCollapsed ? 'justify-center' : 'justify-between gap-2'
+          className={`flex items-center rounded-lg transition-colors ${
+            isPrimaryActive
+              ? 'bg-[#0b5d34] text-white shadow-xs'
+              : 'text-slate-700 hover:bg-emerald-50/70 hover:text-[#0b5d34]'
           }`}
         >
-          {!isCollapsed && (
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-[#061539] text-white flex items-center justify-center shrink-0 overflow-hidden">
-                {portalMode === 'pch-admin' ? (
-                  <ShieldCheck className="w-4 h-4 text-amber-300" />
-                ) : activeProp?.logoUrl ? (
-                  <img
-                    src={activeProp.logoUrl}
-                    alt={propertyName}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <Building2 className="w-4 h-4 text-amber-300" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <span className="font-display text-base font-extrabold tracking-tight text-[#061539] block truncate leading-tight">
-                  {cms.brand.pchPortalName || 'PCH PMS'}
-                </span>
-                <p className="text-[11px] font-semibold text-[#28488a] truncate mt-0.5">
-                  {portalMode === 'pch-admin' ? cms.brand.pchRoleSubtitle : propertyName}
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center gap-1 shrink-0">
-            {!isCollapsed && portalMode === 'pch-admin' && (
-              <button
-                type="button"
-                onClick={onOpenPortalLinksModal}
-                title="Portal Login Links & Switcher"
-                className="p-1.5 rounded-lg text-[#061539] hover:bg-blue-50 transition-colors cursor-pointer"
-              >
-                <Link2 className="w-4 h-4" />
-              </button>
-            )}
-
-            {/* Desktop Collapse / Expand Toggle */}
+          <button
+            type="button"
+            onClick={() => handleNavClick(canSee(primaryId) ? primaryId : visibleSubs[0].id)}
+            className="flex-1 flex items-center gap-2.5 pl-3 pr-1 py-2 text-[13px] font-medium text-left min-w-0 cursor-pointer"
+          >
+            <Icon className={iconClass(isPrimaryActive)} />
+            <span className={`truncate ${isPrimaryActive ? 'font-semibold' : ''}`}>{label}</span>
+          </button>
+          {hasSubItems && (
             <button
               type="button"
-              onClick={handleToggleCollapse}
-              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="hidden lg:inline-flex p-1.5 rounded-lg text-[#061539] hover:bg-blue-50 hover:text-[#1c46be] transition-colors cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleSubMenu(menuKey);
+              }}
+              aria-label={`Toggle ${label} submenu`}
+              aria-expanded={isExpanded}
+              className={`p-2 rounded-r-lg cursor-pointer ${
+                isPrimaryActive ? 'text-white/90 hover:text-white' : 'text-slate-400 hover:text-[#0b5d34]'
+              }`}
             >
-              {isCollapsed ? (
-                <PanelLeftOpen className="w-4 h-4" />
+              {isExpanded ? (
+                <ChevronDown className="w-3.5 h-3.5" />
               ) : (
-                <PanelLeftClose className="w-4 h-4" />
+                <ChevronRight className="w-3.5 h-3.5" />
               )}
             </button>
-
-            {/* Mobile Close Button */}
-            <button
-              type="button"
-              onClick={onCloseMobile}
-              className="lg:hidden p-1.5 rounded-lg text-[#061539] hover:bg-blue-50"
-              aria-label="Close navigation menu"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+          )}
         </div>
 
-        {/* Navigation Links */}
-        <nav className="flex-1 overflow-y-auto px-3 py-3.5 space-y-4">
-          {/* Primary Clean Menu (Dashboard → Reservations → Calendar → Rooms → Payments → Reports → Settings) */}
-          <div className="space-y-1">
-            {visiblePrimary.map((item) => renderNavButton(item, isCollapsed, true))}
-          </div>
-
-          {/* Secondary Operational Modules (neatly organized & collapsible) */}
-          <div className="pt-3 border-t border-slate-200 space-y-2">
-            {!isCollapsed && (
-              <p className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                More Modules
-              </p>
-            )}
-            {SECONDARY_NAV_GROUPS.map((group) => {
-              const visibleItems = group.items.filter((item) => allowed.includes(item.id));
-              if (visibleItems.length === 0) return null;
-              const isExpanded = Boolean(expandedGroups[group.group]);
-              const hasActiveChild = visibleItems.some((item) => item.id === activeSection);
-              const groupUnread =
-                group.group === 'Front Desk & Guests' && unreadMessageCount > 0;
-
+        {hasSubItems && isExpanded && (
+          <div className="ml-4 pl-2.5 border-l border-slate-200 space-y-0.5 py-0.5">
+            {visibleSubs.map((sub) => {
+              const SubIcon = sub.icon;
+              const isSubActive = activeSection === sub.id;
               return (
-                <div key={group.group} className="space-y-1">
-                  {!isCollapsed ? (
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(group.group)}
-                      aria-expanded={isExpanded}
-                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
-                        hasActiveChild
-                          ? 'text-[#061539] bg-blue-50/70'
-                          : 'text-[#061539]/85 hover:bg-slate-100/80'
-                      }`}
-                    >
-                      <span className="flex items-center gap-1.5 truncate">
-                        <span className="truncate">{group.group}</span>
-                        {groupUnread && !isExpanded && (
-                          <span className="font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#061539] text-white">
-                            {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
-                          </span>
-                        )}
-                      </span>
-                      {isExpanded ? (
-                        <ChevronDown className="w-3.5 h-3.5 text-[#061539]/70 shrink-0" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5 text-[#061539]/70 shrink-0" />
-                      )}
-                    </button>
-                  ) : (
-                    <div className="mx-2 border-t border-slate-200 my-1.5" />
-                  )}
-
-                  {(isCollapsed || isExpanded) && (
-                    <div className="space-y-0.5 pl-0.5">
-                      {visibleItems.map((item) => renderNavButton(item, isCollapsed, false))}
-                    </div>
-                  )}
-                </div>
+                <button
+                  key={sub.id}
+                  type="button"
+                  onClick={() => handleNavClick(sub.id)}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                    isSubActive
+                      ? 'bg-emerald-50 text-[#0b5d34] font-bold'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium'
+                  }`}
+                >
+                  <SubIcon
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      isSubActive ? 'text-[#0b5d34]' : 'text-slate-400'
+                    }`}
+                  />
+                  <span className="truncate">{sub.label}</span>
+                </button>
               );
             })}
           </div>
-        </nav>
-
-        {/* Bottom Workspace Switcher & User Profile */}
-        <div className="p-3 border-t border-slate-200 space-y-2.5 bg-slate-50/70">
-          {portalMode === 'pch-admin' ? (
-            <button
-              type="button"
-              title={isCollapsed ? 'Portal Links & Switch' : undefined}
-              onClick={() => {
-                onOpenPortalLinksModal();
-                onCloseMobile();
-              }}
-              className={`w-full flex items-center justify-center gap-2 ${
-                isCollapsed ? 'p-2' : 'px-3 py-2'
-              } rounded-lg border border-slate-300 bg-white hover:bg-blue-50 text-xs font-bold text-[#061539] transition-colors cursor-pointer`}
-            >
-              <ClipboardList className="w-3.5 h-3.5 shrink-0" />
-              {!isCollapsed && <span>Portal Links &amp; Switch</span>}
-            </button>
-          ) : (
-            <button
-              type="button"
-              title={
-                isCollapsed
-                  ? portalMode === 'staff'
-                    ? 'Switch to Property Admin'
-                    : 'Switch to Staff View'
-                  : undefined
-              }
-              onClick={() => {
-                onSwitchPropertyPortal(portalMode === 'staff' ? 'richgates-admin' : 'staff');
-                onCloseMobile();
-              }}
-              className={`w-full flex items-center justify-center gap-2 ${
-                isCollapsed ? 'p-2' : 'px-3 py-2'
-              } rounded-lg border border-slate-300 bg-white hover:bg-blue-50 text-xs font-bold text-[#061539] transition-colors cursor-pointer`}
-            >
-              <ClipboardList className="w-3.5 h-3.5 shrink-0" />
-              {!isCollapsed && (
-                <span>
-                  {portalMode === 'staff' ? 'Switch to Property Admin' : 'Switch to Staff View'}
-                </span>
-              )}
-            </button>
-          )}
-
-          <div
-            className={`flex items-center ${
-              isCollapsed ? 'flex-col gap-2' : 'justify-between gap-2'
-            } pt-1`}
-          >
-            <button
-              type="button"
-              onClick={() => handleNavClick('profile')}
-              title={`Open Settings (${userName})`}
-              className={`flex items-center gap-2.5 min-w-0 ${
-                isCollapsed ? 'justify-center' : 'flex-1 text-left'
-              } rounded-lg p-1 -m-1 hover:bg-blue-50 transition-colors cursor-pointer`}
-            >
-              <span className="w-8 h-8 rounded-lg bg-[#061539] text-white font-mono-tabular text-[11px] font-bold flex items-center justify-center shrink-0">
-                {userName
-                  .split(/\s+/)
-                  .slice(0, 2)
-                  .map((p) => p[0]?.toUpperCase() || '')
-                  .join('') || 'RG'}
-              </span>
-              {!isCollapsed && (
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-[#061539] truncate">{userName}</p>
-                  <p className="text-[11px] font-semibold text-slate-600 truncate">
-                    {ROLE_LABELS[activeRole]}
-                  </p>
-                </div>
-              )}
-            </button>
-          </div>
-
-          {/* Logout Action pinned cleanly at the bottom of the sidebar */}
-          <button
-            type="button"
-            onClick={onSignOut}
-            title={isCollapsed ? `Logout (${userEmail})` : undefined}
-            aria-label="Logout"
-            className={`w-full flex items-center ${
-              isCollapsed ? 'justify-center p-2' : 'justify-center gap-2 px-3 py-2'
-            } rounded-lg border border-slate-200 bg-white hover:bg-rose-50 hover:border-rose-200 text-xs font-semibold text-[#28488a] hover:text-rose-700 transition-colors whitespace-nowrap cursor-pointer`}
-          >
-            <LogOut className="w-3.5 h-3.5 shrink-0" />
-            {!isCollapsed && <span>Logout</span>}
-          </button>
-        </div>
+        )}
       </div>
     );
   };
+
+  const renderPchAdminSidebarNav = (isCollapsed: boolean) => {
+    const platformItems: Array<{
+      id: NavSectionId;
+      label: string;
+      icon: React.ComponentType<{ className?: string }>;
+    }> = [
+      { id: 'properties_admin', label: 'Properties', icon: Building2 },
+      { id: 'user_management', label: 'Create Property Login', icon: UserPlus },
+      { id: 'licensing', label: 'Licenses & Plans', icon: KeyRound },
+      { id: 'rbac_audit', label: 'Activity & Audit Log', icon: Shield },
+    ];
+
+    const systemItems: Array<{
+      id: NavSectionId;
+      label: string;
+      icon: React.ComponentType<{ className?: string }>;
+    }> = [
+      { id: 'cms', label: 'App CMS & Branding', icon: FileEdit },
+      { id: 'deployment', label: 'Cloudflare Deploy', icon: CloudUpload },
+      { id: 'training_help', label: 'Docs & Help', icon: LifeBuoy },
+    ];
+
+    return (
+      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+        {/* Top Primary Dashboard Button */}
+        <div>
+          <button
+            type="button"
+            onClick={() => handleNavClick('dashboard')}
+            title={isCollapsed ? 'Dashboard' : undefined}
+            className={navItemClass(activeSection === 'dashboard', isCollapsed)}
+          >
+            <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+              <LayoutDashboard className={iconClass(activeSection === 'dashboard')} />
+              {!isCollapsed && <span className="truncate">Dashboard</span>}
+            </span>
+          </button>
+        </div>
+
+        {/* PLATFORM MANAGEMENT */}
+        <div className="space-y-1">
+          {!isCollapsed && (
+            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Platform Management
+            </p>
+          )}
+          {platformItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeSection === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleNavClick(item.id)}
+                title={isCollapsed ? item.label : undefined}
+                className={navItemClass(isActive, isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Icon className={iconClass(isActive)} />
+                  {!isCollapsed && <span className="truncate">{item.label}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* SYSTEM & PUBLISHING */}
+        <div className="pt-2 border-t border-slate-100 space-y-1">
+          {!isCollapsed && (
+            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              System &amp; Publishing
+            </p>
+          )}
+          {systemItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeSection === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleNavClick(item.id)}
+                title={isCollapsed ? item.label : undefined}
+                className={navItemClass(isActive, isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Icon className={iconClass(isActive)} />
+                  {!isCollapsed && <span className="truncate">{item.label}</span>}
+                </span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => {
+              onOpenPortalLinksModal();
+              onCloseMobile();
+            }}
+            title={isCollapsed ? 'Portal Links & Switch' : undefined}
+            className={navItemClass(false, isCollapsed)}
+          >
+            <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+              <Link2 className={iconClass(false)} />
+              {!isCollapsed && <span className="truncate">Portal Links</span>}
+            </span>
+          </button>
+        </div>
+      </nav>
+    );
+  };
+
+  const renderPropertySidebarNav = (isCollapsed: boolean) => {
+    const showDistribution = canSee('ota_channels');
+    const showReports = canSee('reports');
+    const showAdminGroup =
+      canSee('user_management') ||
+      canSee('staff') ||
+      canSee('profile') ||
+      canSee('messages') ||
+      canSee('staff_sessions');
+
+    return (
+      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+        {/* Top Primary Dashboard Button */}
+        {canSee('dashboard') && (
+          <div>
+            <button
+              type="button"
+              onClick={() => handleNavClick('dashboard')}
+              title={isCollapsed ? 'Dashboard' : undefined}
+              className={navItemClass(activeSection === 'dashboard', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <LayoutDashboard className={iconClass(activeSection === 'dashboard')} />
+                {!isCollapsed && <span className="truncate">Dashboard</span>}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* PROPERTY OPERATIONS */}
+        <div className="space-y-0.5">
+          {!isCollapsed && (
+            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Property Operations
+            </p>
+          )}
+          {renderExpandablePrimary(
+            'reservations',
+            'reservations',
+            'Reservations',
+            CalendarCheck2,
+            RESERVATION_SUB_ITEMS,
+            isCollapsed
+          )}
+          {renderExpandablePrimary('rooms', 'rooms', 'Rooms', BedDouble, ROOM_SUB_ITEMS, isCollapsed)}
+          {renderExpandablePrimary('guests', 'guests', 'Guests', Users, GUEST_SUB_ITEMS, isCollapsed)}
+          {canSee('arrivals') && (
+            <button
+              type="button"
+              onClick={() => handleNavClick('arrivals')}
+              title={isCollapsed ? 'Check-in / Check-out' : undefined}
+              className={navItemClass(activeSection === 'arrivals', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <LogIn className={iconClass(activeSection === 'arrivals')} />
+                {!isCollapsed && <span className="truncate">Check-in / Check-out</span>}
+              </span>
+            </button>
+          )}
+          {canSee('accounting') && (
+            <button
+              type="button"
+              onClick={() => handleNavClick('accounting')}
+              title={isCollapsed ? 'Payments' : undefined}
+              className={navItemClass(activeSection === 'accounting', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <CreditCard className={iconClass(activeSection === 'accounting')} />
+                {!isCollapsed && <span className="truncate">Payments</span>}
+              </span>
+            </button>
+          )}
+        </div>
+
+        {/* DISTRIBUTION */}
+        {showDistribution && (
+          <div className="pt-2.5 border-t border-slate-100 space-y-0.5">
+            {!isCollapsed && (
+              <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Distribution
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setDistributionSelection('booking_channels');
+                handleNavClick('ota_channels');
+              }}
+              title={isCollapsed ? 'Booking Channels' : undefined}
+              className={navItemClass(
+                activeSection === 'ota_channels' && distributionSelection === 'booking_channels',
+                isCollapsed
+              )}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <Globe
+                  className={iconClass(
+                    activeSection === 'ota_channels' && distributionSelection === 'booking_channels'
+                  )}
+                />
+                {!isCollapsed && <span className="truncate">Booking Channels</span>}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setDistributionSelection('channel_manager');
+                handleNavClick('ota_channels');
+              }}
+              title={isCollapsed ? 'Channel Manager' : undefined}
+              className={navItemClass(
+                activeSection === 'ota_channels' && distributionSelection === 'channel_manager',
+                isCollapsed
+              )}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <BarChart2
+                  className={iconClass(
+                    activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
+                  )}
+                />
+                {!isCollapsed && <span className="truncate">Channel Manager</span>}
+              </span>
+              {!isCollapsed && (
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold leading-none ${
+                    activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
+                      ? 'bg-white text-[#0b5d34]'
+                      : 'bg-emerald-600 text-white'
+                  }`}
+                >
+                  New
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setDistributionSelection('channel_sync');
+                handleNavClick('ota_channels');
+              }}
+              title={isCollapsed ? 'Channel Synchronization' : undefined}
+              className={navItemClass(
+                activeSection === 'ota_channels' && distributionSelection === 'channel_sync',
+                isCollapsed
+              )}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <RefreshCw
+                  className={iconClass(
+                    activeSection === 'ota_channels' && distributionSelection === 'channel_sync'
+                  )}
+                />
+                {!isCollapsed && <span className="truncate">Channel Synchronization</span>}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* REPORTS & ANALYTICS */}
+        {showReports && (
+          <div className="pt-2.5 border-t border-slate-100 space-y-0.5">
+            {!isCollapsed && (
+              <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Reports &amp; Analytics
+              </p>
+            )}
+            {(
+              [
+                {
+                  key: 'reports',
+                  label: 'Reports',
+                  tab: 'bookings',
+                  icon: BarChart3,
+                },
+                {
+                  key: 'occupancy',
+                  label: 'Occupancy Report',
+                  tab: 'rooms',
+                  icon: PieChart,
+                },
+                {
+                  key: 'booking',
+                  label: 'Booking Report',
+                  tab: 'bookings',
+                  icon: CalendarCheck2,
+                },
+                {
+                  key: 'revenue',
+                  label: 'Revenue Report',
+                  tab: 'financials',
+                  icon: Wallet,
+                },
+                {
+                  key: 'guest',
+                  label: 'Guest Report',
+                  tab: 'guests',
+                  icon: Users,
+                },
+              ] as const
+            ).map((rep) => {
+              const RepIcon = rep.icon;
+              const isActive =
+                activeSection === 'reports' &&
+                ((reportSelection === rep.key && activeReportTab === rep.tab) ||
+                  (rep.key === 'occupancy' && activeReportTab === 'rooms') ||
+                  (rep.key === 'revenue' && activeReportTab === 'financials') ||
+                  (rep.key === 'guest' && activeReportTab === 'guests'));
+              return (
+                <button
+                  key={rep.key}
+                  type="button"
+                  onClick={() => handleReportClick(rep.key, rep.tab)}
+                  title={isCollapsed ? rep.label : undefined}
+                  className={navItemClass(isActive, isCollapsed)}
+                >
+                  <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                    <RepIcon className={iconClass(isActive)} />
+                    {!isCollapsed && <span className="truncate">{rep.label}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ADMINISTRATION */}
+        {showAdminGroup && (
+          <div className="pt-2.5 border-t border-slate-100 space-y-0.5">
+            {!isCollapsed && (
+              <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Administration
+              </p>
+            )}
+            {canSee('user_management') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('user_management')}
+                title={isCollapsed ? 'User Management' : undefined}
+                className={navItemClass(activeSection === 'user_management', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Users className={iconClass(activeSection === 'user_management')} />
+                  {!isCollapsed && <span className="truncate">User Management</span>}
+                </span>
+              </button>
+            )}
+            {canSee('staff') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('staff')}
+                title={isCollapsed ? 'Roles & Permissions' : undefined}
+                className={navItemClass(activeSection === 'staff', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <ShieldCheck className={iconClass(activeSection === 'staff')} />
+                  {!isCollapsed && <span className="truncate">Roles &amp; Permissions</span>}
+                </span>
+              </button>
+            )}
+            {canSee('profile') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('profile')}
+                title={isCollapsed ? 'Property Settings' : undefined}
+                className={navItemClass(activeSection === 'profile', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Building2 className={iconClass(activeSection === 'profile')} />
+                  {!isCollapsed && <span className="truncate">Property Settings</span>}
+                </span>
+              </button>
+            )}
+            {canSee('messages') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('messages')}
+                title={isCollapsed ? 'Notifications' : undefined}
+                className={navItemClass(activeSection === 'messages', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Bell className={iconClass(activeSection === 'messages')} />
+                  {!isCollapsed && <span className="truncate">Notifications</span>}
+                </span>
+                {unreadMessageCount > 0 && !isCollapsed && (
+                  <span
+                    className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                      activeSection === 'messages'
+                        ? 'bg-white text-[#0b5d34]'
+                        : 'bg-rose-600 text-white'
+                    }`}
+                  >
+                    {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                  </span>
+                )}
+                {unreadMessageCount > 0 && isCollapsed && (
+                  <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-rose-600" />
+                )}
+              </button>
+            )}
+            {canSee('staff_sessions') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('staff_sessions')}
+                title={isCollapsed ? 'Activity Log' : undefined}
+                className={navItemClass(activeSection === 'staff_sessions', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Activity className={iconClass(activeSection === 'staff_sessions')} />
+                  {!isCollapsed && <span className="truncate">Activity Log</span>}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+      </nav>
+    );
+  };
+
+  const renderSidebarBody = (isCollapsed: boolean) => (
+    <div
+      className={`${
+        isCollapsed ? 'w-[76px]' : 'w-64'
+      } bg-white text-slate-900 flex flex-col shrink-0 border-r border-slate-200 h-full transition-all duration-200`}
+    >
+      {/* Top Brand Header matching PCH PMS layout */}
+      <div
+        className={`px-4 py-3.5 border-b border-slate-100 flex items-center ${
+          isCollapsed ? 'justify-center' : 'justify-between gap-2'
+        }`}
+      >
+        {!isCollapsed && (
+          <div className="flex items-center gap-2.5 min-w-0">
+            <PchHouseLogo className="w-9 h-9 shrink-0" />
+            <div className="min-w-0">
+              <span className="font-display text-[17px] font-extrabold tracking-tight text-slate-900 block truncate leading-tight">
+                {cms.brand.pchPortalName || 'PCH PMS'}
+              </span>
+              <p className="text-[10px] font-medium text-slate-500 truncate mt-0.5">
+                {subtitleLabel}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={handleToggleCollapse}
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="hidden lg:inline-flex p-1.5 rounded-lg text-slate-500 hover:bg-emerald-50 hover:text-[#0b5d34] transition-colors cursor-pointer"
+          >
+            {isCollapsed ? (
+              <PanelLeftOpen className="w-4 h-4" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onCloseMobile}
+            className="lg:hidden p-1.5 rounded-lg text-slate-600 hover:bg-slate-100"
+            aria-label="Close navigation menu"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Navigation */}
+      {portalMode === 'pch-admin'
+        ? renderPchAdminSidebarNav(isCollapsed)
+        : renderPropertySidebarNav(isCollapsed)}
+
+      {/* Bottom Utility Footer: Settings & Logout */}
+      <div className="px-3 py-3 border-t border-slate-200 space-y-1 bg-white">
+        {portalMode !== 'pch-admin' && activeRole === 'property_admin' && (
+          <button
+            type="button"
+            onClick={() => {
+              onSwitchPropertyPortal(portalMode === 'staff' ? 'richgates-admin' : 'staff');
+              onCloseMobile();
+            }}
+            title={
+              isCollapsed
+                ? portalMode === 'staff'
+                  ? 'Property Admin View'
+                  : 'Staff View'
+                : undefined
+            }
+            className={navItemClass(false, isCollapsed)}
+          >
+            <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+              <ClipboardList className={iconClass(false)} />
+              {!isCollapsed && (
+                <span className="truncate text-xs">
+                  {portalMode === 'staff' ? 'Switch to Admin View' : 'Switch to Staff View'}
+                </span>
+              )}
+            </span>
+          </button>
+        )}
+
+        {canSee('profile') && (
+          <button
+            type="button"
+            onClick={() => handleNavClick('profile')}
+            title={isCollapsed ? 'Settings' : undefined}
+            className={navItemClass(activeSection === 'profile', isCollapsed)}
+          >
+            <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+              <Settings className={iconClass(activeSection === 'profile')} />
+              {!isCollapsed && <span className="truncate">Settings</span>}
+            </span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={onSignOut}
+          title={isCollapsed ? `Logout (${userEmail})` : undefined}
+          aria-label="Logout"
+          className={`w-full flex items-center ${
+            isCollapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-3 py-2'
+          } rounded-lg text-[13px] font-medium text-slate-700 hover:bg-rose-50 hover:text-rose-700 transition-colors cursor-pointer`}
+        >
+          <LogOut className="w-[17px] h-[17px] shrink-0 text-[#0b5d34]" />
+          {!isCollapsed && <span>Logout</span>}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <>

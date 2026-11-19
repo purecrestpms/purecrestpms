@@ -1,91 +1,43 @@
 import React, { useMemo, useState } from 'react';
 import {
-  AlertTriangle,
   ArrowRight,
   BarChart3,
-  BookOpenCheck,
-  Building2,
+  BedDouble,
   Calendar,
-  CalendarCheck2,
-  CheckCircle2,
-  ChefHat,
-  DoorOpen,
-  Globe,
+  CalendarPlus,
+  CreditCard,
+  ListFilter,
+  LogIn,
   LogOut,
-  PlaneLanding,
-  Search,
-  ShieldCheck,
-  Sparkles,
-  Trash2,
-  UserCheck,
-  Users,
-  Wrench,
-  X,
+  TrendingUp,
+  Wallet,
+  Zap,
 } from 'lucide-react';
-import { useCms } from '../context/CmsContext';
-import {
-  deleteReservationWorkflow,
-  transitionReservationStatus,
-} from '../services/pmsService';
 import {
   AttendanceRecord,
-  convertNgnToUsd,
-  formatBookingSourceLabel,
-  formatChannelCurrency,
   formatNgn,
-  formatUsd,
-  getPropertySystemId,
-  getReservationBookedDate,
-  getReservationPaymentSummary,
   getReservationRoomDisplay,
-  getRoomSection,
   GuestRecord,
   HousekeepingTaskRecord,
-  isOtaBookingChannel,
   LedgerEntryRecord,
   LicenseRecord,
   MaintenanceTicketRecord,
-  matchesBookingSourceFilter,
   NavSectionId,
-  PaymentStatusLabel,
   PortalMode,
   PosOrderRecord,
-  PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
   PropertyUserAccountRecord,
   RESERVATION_STATUS_LABELS,
   ReservationRecord,
-  ReservationStatus,
   RoomRecord,
-  RoomSection,
   ShiftScheduleRecord,
   sortRoomsByNumber,
   StaffMemberRecord,
   StaffRole,
   StaffSessionRecord,
 } from '../types/pms';
-import {
-  BookingsBySourcePieChart,
-  buildBookingsBySource,
-  buildMonthlyBookingTrend,
-  MonthlyTrendBarChart,
-} from './BookingAnalyticsCharts';
-import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
-import { CurrencyConverterWidget } from './CurrencyConverterWidget';
+import { CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { StaffDashboardView } from './StaffDashboardView';
-
-function parseReadableError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  if (raw.trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(raw) as { error?: string };
-      if (parsed.error) return parsed.error;
-    } catch {
-      // fallback below
-    }
-  }
-  return raw;
-}
 
 interface DashboardViewProps {
   property: PropertyRecord;
@@ -122,20 +74,90 @@ interface DashboardViewProps {
   onSignOut?: () => void;
 }
 
-const DEFAULT_SUITE_IMAGE =
+const DEFAULT_HERO_SUITE_IMAGE =
   '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png';
+
+function addDaysIso(baseIso: string, delta: number): string {
+  const [y, m, d] = baseIso.split('-').map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + delta)).toISOString().slice(0, 10);
+}
+
+function formatShortDate(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+function getWeekdayShort(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso.slice(5);
+  return d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+}
+
+function getTimeGreeting(): string {
+  const hr = new Date().getHours();
+  if (hr < 12) return 'Good morning';
+  if (hr < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getReservationStatusBadge(status: ReservationRecord['status']): {
+  label: string;
+  className: string;
+} {
+  switch (status) {
+    case 'checked_in':
+      return {
+        label: 'Checked In',
+        className: 'bg-emerald-100/90 text-emerald-800',
+      };
+    case 'confirmed':
+      return {
+        label: 'Confirmed',
+        className: 'bg-sky-100/90 text-sky-800',
+      };
+    case 'pending':
+      return {
+        label: 'Booked',
+        className: 'bg-purple-100/90 text-purple-800',
+      };
+    case 'checked_out':
+      return {
+        label: 'Checked Out',
+        className: 'bg-slate-100 text-slate-700',
+      };
+    case 'cancelled':
+      return {
+        label: 'Cancelled',
+        className: 'bg-rose-100 text-rose-700',
+      };
+    case 'no_show':
+      return {
+        label: 'No Show',
+        className: 'bg-amber-100 text-amber-800',
+      };
+    default:
+      return {
+        label: RESERVATION_STATUS_LABELS[status] || status,
+        className: 'bg-slate-100 text-slate-700',
+      };
+  }
+}
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   property,
   rooms,
   reservations,
-  guests = [],
-  userAccounts = [],
   ledgerEntries = [],
   posOrders,
   housekeepingTasks = [],
   maintenanceTickets,
-  activeLicense: _activeLicense,
   canManageRooms,
   portalMode,
   activeRole,
@@ -149,391 +171,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   allowedSections,
   actorRole = 'Property Admin',
   onNotify,
-  onGuestCheckedIn,
   onNavigate,
   onOpenReservationFolio,
   onInspectRoom,
   onSignOut,
 }) => {
-  const { cms } = useCms();
+  const [perfRange, setPerfRange] = useState<'7d' | '14d' | '30d'>('7d');
   const todayIso = new Date().toISOString().slice(0, 10);
-  const sortedRooms = sortRoomsByNumber(rooms);
+  const yesterdayIso = addDaysIso(todayIso, -1);
+  const sortedRooms = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
 
-  const [resSearch, setResSearch] = useState('');
-  const [resStatusFilter, setResStatusFilter] = useState<'all' | ReservationStatus>('all');
-  const [resPaymentFilter, setResPaymentFilter] = useState<'all' | PaymentStatusLabel>('all');
-  const [resSourceFilter, setResSourceFilter] = useState<'ALL' | string>('ALL');
-  const [checkInTarget, setCheckInTarget] = useState<ReservationRecord | null>(null);
-  const [cancelTarget, setCancelTarget] = useState<ReservationRecord | null>(null);
-  const [cancelMode, setCancelMode] = useState<'free' | 'paid'>('free');
-  const [cancelFeeNgn, setCancelFeeNgn] = useState<number>(0);
-  const [cancelReason, setCancelReason] = useState('');
-  const [cancelPayMethod, setCancelPayMethod] =
-    useState<ReservationRecord['paymentMethod']>('Bank Transfer');
-  const [collectCancelFeeNow, setCollectCancelFeeNow] = useState(true);
-  const [confirmDeleteResId, setConfirmDeleteResId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [busyResId, setBusyResId] = useState<string | null>(null);
-
-  const arrivalsTodayList = reservations.filter(
-    (r) => r.status === 'confirmed' && r.checkInDate <= todayIso
-  );
-  const departuresTodayList = reservations.filter(
-    (r) => r.status === 'checked_in' && r.checkOutDate <= todayIso
-  );
-  const inHouseList = reservations.filter((r) => r.status === 'checked_in');
-  const occupiedRoomsCount = rooms.filter((r) => r.occupancyStatus === 'occupied').length;
-  const reservedRoomsCount = rooms.filter((r) => r.occupancyStatus === 'reserved').length;
-  const availableRoomsCount = rooms.filter((r) => r.occupancyStatus === 'vacant').length;
-  const maintenanceRoomsCount = rooms.filter((r) => r.occupancyStatus === 'out_of_order').length;
-  const occupancyPct =
-    rooms.length > 0 ? Math.round((occupiedRoomsCount / rooms.length) * 100) : 0;
-
-  const revenueTodayNgn = ledgerEntries
-    .filter((e) => e.entryType === 'revenue' && e.entryDate === todayIso)
-    .reduce((sum, e) => sum + e.amountNgn, 0);
-
-  const activeFolios = reservations.filter(
-    (r) => r.status === 'checked_in' || r.status === 'confirmed'
-  );
-  const openKitchen = posOrders.filter((o) => o.kitchenStatus !== 'served');
-  const openMaintenance = maintenanceTickets.filter((t) => t.status !== 'resolved');
-
-  const analytics = useMemo(() => {
-    const baseDate = new Date(`${todayIso}T00:00:00Z`);
-    let total7DayRevenue = 0;
-    for (let offset = 6; offset >= 0; offset -= 1) {
-      const d = new Date(baseDate);
-      d.setUTCDate(baseDate.getUTCDate() - offset);
-      const iso = d.toISOString().slice(0, 10);
-      total7DayRevenue += ledgerEntries
-        .filter((e) => e.entryType === 'revenue' && e.entryDate === iso)
-        .reduce((s, e) => s + e.amountNgn, 0);
-    }
-    const avgDailyRevenue = Math.round(total7DayRevenue / 7);
-
-    const nonCancelled = reservations.filter(
-      (r) => r.status !== 'cancelled' && r.status !== 'no_show'
-    );
-    const monthlyTrend = buildMonthlyBookingTrend(
-      reservations,
-      property.usdExchangeRateNgn,
-      6,
-      todayIso
-    );
-    const sourceSlices = buildBookingsBySource(reservations, property.usdExchangeRateNgn);
-
-    // Housekeeping counts
-    const hkClean = rooms.filter((r) => r.housekeepingStatus === 'clean').length;
-    const hkInspected = rooms.filter((r) => r.housekeepingStatus === 'inspected').length;
-    const hkCleaning = rooms.filter((r) => r.housekeepingStatus === 'cleaning').length;
-    const hkDirty = rooms.filter((r) => r.housekeepingStatus === 'dirty').length;
-
-    // Settlement health
-    let paidCount = 0;
-    let partialCount = 0;
-    let unpaidCount = 0;
-    let totalSettledNgn = 0;
-    let totalBalanceDueNgn = 0;
-    for (const r of nonCancelled) {
-      const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-      if (pay.paymentStatus === 'Paid') paidCount += 1;
-      else if (pay.paymentStatus === 'Partial') partialCount += 1;
-      else unpaidCount += 1;
-      totalSettledNgn += pay.amountPaid;
-      totalBalanceDueNgn += pay.balance;
-    }
-
-    return {
-      avgDailyRevenue,
-      monthlyTrend,
-      sourceSlices,
-      nonCancelledCount: nonCancelled.length,
-      hkClean,
-      hkInspected,
-      hkCleaning,
-      hkDirty,
-      paidCount,
-      partialCount,
-      unpaidCount,
-      totalSettledNgn,
-      totalBalanceDueNgn,
-    };
-  }, [ledgerEntries, reservations, rooms, property.usdExchangeRateNgn, todayIso]);
-
-  const dashboardStatusCounts = useMemo(() => {
-    const counts: Record<'all' | ReservationStatus, number> = {
-      all: reservations.length,
-      confirmed: 0,
-      pending: 0,
-      checked_in: 0,
-      checked_out: 0,
-      cancelled: 0,
-      no_show: 0,
-    };
-    reservations.forEach((r) => {
-      if (r.status in counts) {
-        counts[r.status as ReservationStatus] += 1;
-      }
-    });
-    return counts;
-  }, [reservations]);
-
-  const filteredDashboardReservations = useMemo(() => {
-    const q = resSearch.trim().toLowerCase();
-    return [...reservations]
-      .filter((r) => {
-        if (resStatusFilter !== 'all' && r.status !== resStatusFilter) return false;
-        if (resSourceFilter !== 'ALL' && !matchesBookingSourceFilter(r.channel, resSourceFilter)) {
-          return false;
-        }
-        const { paymentStatus } = getReservationPaymentSummary(r);
-        if (resPaymentFilter !== 'all' && paymentStatus !== resPaymentFilter) return false;
-        if (!q) return true;
-        const sourceLabel = formatBookingSourceLabel(r.channel).toLowerCase();
-        const bookedDate = getReservationBookedDate(r);
-        const roomDisplay = getReservationRoomDisplay(r, rooms);
-        return (
-          r.guestName.toLowerCase().includes(q) ||
-          r.bookingRef.toLowerCase().includes(q) ||
-          roomDisplay.roomNumberLabel.toLowerCase().includes(q) ||
-          roomDisplay.roomTypeLabel.toLowerCase().includes(q) ||
-          (r.guestPhone || '').toLowerCase().includes(q) ||
-          sourceLabel.includes(q) ||
-          bookedDate.includes(q)
-        );
-      })
-      .sort((a, b) => b.checkInDate.localeCompare(a.checkInDate));
-  }, [reservations, rooms, resSearch, resStatusFilter, resPaymentFilter, resSourceFilter]);
-
-  const openCancelDialog = (res: ReservationRecord) => {
-    setActionError(null);
-    setCancelTarget(res);
-    setCancelMode('free');
-    setCancelFeeNgn(Math.max(10000, Math.round(res.nightlyRateNgn || 50000)));
-    setCancelReason('');
-    setCancelPayMethod(res.paymentMethod || 'Bank Transfer');
-    setCollectCancelFeeNow(true);
-  };
-
-  const handleConfirmCancelOrNoShow = async (nextStatus: 'cancelled' | 'no_show') => {
-    if (!cancelTarget) return;
-    if (nextStatus === 'cancelled' && cancelMode === 'paid' && cancelFeeNgn <= 0) {
-      setActionError('Enter a cancellation fee greater than ₦0 or select Free Cancellation.');
-      return;
-    }
-    setActionError(null);
-    setBusyResId(cancelTarget.id);
-    try {
-      const targetRoom = rooms.find((rm) => rm.id === cancelTarget.roomId);
-      await transitionReservationStatus({
-        property,
-        reservation: cancelTarget,
-        room: targetRoom,
-        nextStatus,
-        cancellationType: nextStatus === 'cancelled' ? cancelMode : undefined,
-        cancellationFeeNgn:
-          nextStatus === 'cancelled' && cancelMode === 'paid' ? cancelFeeNgn : 0,
-        cancellationReason: cancelReason.trim(),
-        paymentMethod: cancelPayMethod,
-        collectCancellationFeeNow:
-          nextStatus === 'cancelled' && cancelMode === 'paid' && collectCancelFeeNow,
-        actorRole,
-      });
-      onNotify?.(
-        nextStatus === 'no_show'
-          ? `Marked ${cancelTarget.bookingRef} (${cancelTarget.guestName}) as No-show`
-          : cancelMode === 'paid'
-            ? `Cancelled ${cancelTarget.bookingRef} with ${formatNgn(cancelFeeNgn)} cancellation fee`
-            : `Cancelled ${cancelTarget.bookingRef} (${cancelTarget.guestName}) — Free cancellation`
-      );
-      setCancelTarget(null);
-    } catch (err) {
-      setActionError(parseReadableError(err));
-    } finally {
-      setBusyResId(null);
-    }
-  };
-
-  const handleDeleteReservation = async (res: ReservationRecord) => {
-    setActionError(null);
-    setBusyResId(res.id);
-    try {
-      const targetRoom = rooms.find((rm) => rm.id === res.roomId);
-      await deleteReservationWorkflow({
-        property,
-        reservation: res,
-        room: targetRoom,
-        actorRole,
-      });
-      onNotify?.(`Deleted reservation ${res.bookingRef} (${res.guestName})`);
-      setConfirmDeleteResId(null);
-    } catch (err) {
-      setActionError(parseReadableError(err));
-    } finally {
-      setBusyResId(null);
-    }
-  };
-
-  const sections: Array<{ key: RoomSection; title: string; subtitle: string }> = [
-    {
-      key: 'Serviced Apartment',
-      title: cms.dashboard.servicedSectionTitle || 'Serviced Apartment Section',
-      subtitle: (
-        cms.dashboard.servicedSectionSubtitle ||
-        'Self-contained studios and rooms equipped with fitted kitchenettes'
-      ).replace(/\bsuites\b/gi, 'rooms'),
-    },
-    {
-      key: 'Hotel Rooms',
-      title: cms.dashboard.hotelSectionTitle || 'Hotel Rooms Section',
-      subtitle: (
-        cms.dashboard.hotelSectionSubtitle ||
-        'Individual executive studios and one-bedroom hospitality rooms'
-      ).replace(/\bsuites\b/gi, 'rooms'),
-    },
-  ];
-
-  const primaryKpiCards: Array<{
-    id: string;
-    label: string;
-    subtitle: string;
-    value: string;
-    borderAccent: string;
-    cardTint: string;
-    valueColor: string;
-    barColor: string;
-    barTrack: string;
-    barPct: number;
-    barHint: string;
-    target: NavSectionId;
-  }> = [
-    {
-      id: 'kpi-arrivals',
-      label: 'Arrivals Today',
-      subtitle: 'Confirmed check-ins expected today',
-      value: String(arrivalsTodayList.length),
-      borderAccent: 'border-t-[#1c46be]',
-      cardTint: 'bg-gradient-to-br from-white via-white to-blue-50/70',
-      valueColor: 'text-[#0B245B]',
-      barColor: 'bg-gradient-to-r from-[#1c46be] to-sky-500',
-      barTrack: 'bg-blue-100',
-      barPct:
-        rooms.length > 0
-          ? Math.min(100, Math.round((arrivalsTodayList.length / rooms.length) * 100))
-          : 0,
-      barHint: `${arrivalsTodayList.length} of ${rooms.length || 0} rooms incoming`,
-      target: 'arrivals',
-    },
-    {
-      id: 'kpi-departures',
-      label: 'Departures Today',
-      subtitle: 'Checked-in guests due out today',
-      value: String(departuresTodayList.length),
-      borderAccent: 'border-t-amber-500',
-      cardTint: 'bg-gradient-to-br from-white via-white to-amber-50/70',
-      valueColor: 'text-amber-950',
-      barColor: 'bg-gradient-to-r from-amber-500 to-orange-500',
-      barTrack: 'bg-amber-100',
-      barPct:
-        inHouseList.length > 0
-          ? Math.min(100, Math.round((departuresTodayList.length / inHouseList.length) * 100))
-          : 0,
-      barHint: `${departuresTodayList.length} of ${inHouseList.length} in-house due out`,
-      target: 'in_house',
-    },
-    {
-      id: 'kpi-inhouse',
-      label: 'In-House Guests',
-      subtitle: 'Currently occupied rooms',
-      value: String(inHouseList.length),
-      borderAccent: 'border-t-emerald-600',
-      cardTint: 'bg-gradient-to-br from-white via-white to-emerald-50/70',
-      valueColor: 'text-emerald-950',
-      barColor: 'bg-gradient-to-r from-emerald-600 to-teal-500',
-      barTrack: 'bg-emerald-100',
-      barPct: occupancyPct,
-      barHint: `${occupancyPct}% room occupancy rate`,
-      target: 'in_house',
-    },
-  ];
-
-  const secondaryKpiCards: Array<{
-    id: string;
-    label: string;
-    value: string;
-    borderAccent: string;
-    barColor: string;
-    barTrack: string;
-    barPct: number;
-    target?: NavSectionId;
-  }> = [
-    {
-      id: 'kpi-occupied',
-      label: `Occupied (${occupancyPct}%)`,
-      value: String(occupiedRoomsCount),
-      borderAccent: 'border-t-violet-600',
-      barColor: 'bg-violet-600',
-      barTrack: 'bg-violet-100',
-      barPct: occupancyPct,
-      target: 'rooms',
-    },
-    {
-      id: 'kpi-available',
-      label: 'Available Rooms',
-      value: String(availableRoomsCount),
-      borderAccent: 'border-t-cyan-600',
-      barColor: 'bg-cyan-600',
-      barTrack: 'bg-cyan-100',
-      barPct:
-        rooms.length > 0 ? Math.min(100, Math.round((availableRoomsCount / rooms.length) * 100)) : 0,
-      target: 'rooms',
-    },
-    {
-      id: 'kpi-revenue',
-      label: 'Revenue Today',
-      value: formatNgn(revenueTodayNgn),
-      borderAccent: 'border-t-indigo-600',
-      barColor: 'bg-indigo-600',
-      barTrack: 'bg-indigo-100',
-      barPct:
-        analytics.avgDailyRevenue > 0
-          ? Math.min(100, Math.round((revenueTodayNgn / analytics.avgDailyRevenue) * 100))
-          : revenueTodayNgn > 0
-            ? 100
-            : 0,
-      target: 'accounting',
-    },
-  ];
-
-  const scheduleEvents = [
-    ...arrivalsTodayList.map((r) => ({
-      id: `arr-${r.id}`,
-      type: 'Arrival',
-      guest: r.guestName,
-      room: getReservationRoomDisplay(r, rooms).roomNumberLabel,
-      date: r.checkInDate,
-      resId: r.id,
-      badgeClass: 'text-blue-700 bg-blue-50',
-    })),
-    ...departuresTodayList.map((r) => ({
-      id: `dep-${r.id}`,
-      type: 'Departure',
-      guest: r.guestName,
-      room: getReservationRoomDisplay(r, rooms).roomNumberLabel,
-      date: r.checkOutDate,
-      resId: r.id,
-      badgeClass: 'text-emerald-700 bg-emerald-50',
-    })),
-  ];
-
-  const activeAccountsCount = userAccounts.filter(
-    (a) => a.role !== 'unassigned' && a.active
-  ).length;
-  const unassignedAccountsCount = userAccounts.filter(
-    (a) => a.role === 'unassigned' || !a.active
-  ).length;
-
+  // Preserve Staff View Dashboard
   if (!canManageRooms || portalMode === 'staff') {
     return (
       <StaffDashboardView
@@ -562,1432 +210,592 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     );
   }
 
+  const heroImageUrl = useMemo(() => {
+    const firstWithImage = sortedRooms.find((r) => r.imageUrl && r.imageUrl.trim().length > 0);
+    return firstWithImage?.imageUrl || DEFAULT_HERO_SUITE_IMAGE;
+  }, [sortedRooms]);
+
+  const greetingName = useMemo(() => {
+    const cleaned = (userName || '').trim();
+    if (!cleaned || cleaned.toLowerCase() === 'property operator') return 'Admin';
+    return cleaned.split(/\s+/)[0] || 'Admin';
+  }, [userName]);
+
+  const metrics = useMemo(() => {
+    const totalRooms = rooms.length;
+    const activeNonCancelled = reservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show'
+    );
+
+    const occupiedRoomsCount = rooms.filter((r) => r.occupancyStatus === 'occupied').length;
+    const activeTodayFromRes = activeNonCancelled.filter(
+      (r) =>
+        r.status === 'checked_in' ||
+        ((r.status === 'confirmed' || r.status === 'pending') &&
+          r.checkInDate <= todayIso &&
+          r.checkOutDate > todayIso)
+    ).length;
+
+    const currentOccupied = Math.max(occupiedRoomsCount, Math.min(totalRooms, activeTodayFromRes));
+    const occupancyRate =
+      totalRooms > 0 ? Math.min(100, Math.round((currentOccupied / totalRooms) * 100)) : 0;
+
+    // Prior week occupancy rate (7 days ago)
+    const lastWeekIso = addDaysIso(todayIso, -7);
+    const lastWeekOccupied = activeNonCancelled.filter(
+      (r) => r.checkInDate <= lastWeekIso && r.checkOutDate > lastWeekIso
+    ).length;
+    const lastWeekOccRate =
+      totalRooms > 0 ? Math.min(100, Math.round((lastWeekOccupied / totalRooms) * 100)) : 0;
+    const occDelta = occupancyRate - lastWeekOccRate;
+
+    // Arrivals today vs yesterday
+    const arrivalsToday = reservations.filter(
+      (r) =>
+        (r.status === 'confirmed' || r.status === 'pending') &&
+        r.checkInDate <= todayIso
+    ).length;
+    const arrivalsYesterday = reservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show' && r.checkInDate === yesterdayIso
+    ).length;
+    const arrivalsDelta = arrivalsToday - arrivalsYesterday;
+
+    // Departures today vs yesterday
+    const departuresToday = reservations.filter(
+      (r) => r.status === 'checked_in' && r.checkOutDate <= todayIso
+    ).length;
+    const departuresYesterday = reservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show' && r.checkOutDate === yesterdayIso
+    ).length;
+    const departuresDelta = departuresToday - departuresYesterday;
+
+    // Today's revenue vs same day last week
+    const revenueToday = ledgerEntries
+      .filter((e) => e.entryType === 'revenue' && e.entryDate === todayIso)
+      .reduce((sum, e) => sum + (Number(e.amountNgn) || 0), 0);
+    const revenueLastWeek = ledgerEntries
+      .filter((e) => e.entryType === 'revenue' && e.entryDate === lastWeekIso)
+      .reduce((sum, e) => sum + (Number(e.amountNgn) || 0), 0);
+    const revenueDeltaPct =
+      revenueLastWeek > 0
+        ? Math.round(((revenueToday - revenueLastWeek) / revenueLastWeek) * 100)
+        : revenueToday > 0
+          ? 100
+          : 0;
+
+    return {
+      occupancyRate,
+      occDelta,
+      arrivalsToday,
+      arrivalsDelta,
+      departuresToday,
+      departuresDelta,
+      revenueToday,
+      revenueDeltaPct,
+    };
+  }, [rooms, reservations, ledgerEntries, todayIso, yesterdayIso]);
+
+  // Booking Performance Bar Chart Data
+  const bookingPerformance = useMemo(() => {
+    const days = perfRange === '7d' ? 7 : perfRange === '14d' ? 14 : 30;
+    const validRes = reservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show'
+    );
+
+    const series: Array<{ iso: string; label: string; count: number }> = [];
+    for (let offset = days - 1; offset >= 0; offset -= 1) {
+      const iso = addDaysIso(todayIso, -offset);
+      const count = validRes.filter((r) => {
+        const bookedOn = (r.bookedDate || r.checkInDate || '').slice(0, 10);
+        const staysOnDay = r.checkInDate <= iso && r.checkOutDate > iso;
+        return bookedOn === iso || staysOnDay;
+      }).length;
+      series.push({
+        iso,
+        label: days === 7 ? getWeekdayShort(iso) : iso.slice(5),
+        count,
+      });
+    }
+
+    const maxCount = Math.max(4, ...series.map((s) => s.count));
+    const yMax = Math.ceil(maxCount / 2) * 2;
+    return { series, yMax };
+  }, [reservations, perfRange, todayIso]);
+
+  // Occupancy Trend Area Chart (Last 7 days ending today)
+  const occupancyTrend = useMemo(() => {
+    const totalRooms = Math.max(1, rooms.length);
+    const validRes = reservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show'
+    );
+    const points: Array<{ iso: string; label: string; pct: number }> = [];
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const iso = addDaysIso(todayIso, -offset);
+      const occupiedOnDay = validRes.filter(
+        (r) => r.checkInDate <= iso && r.checkOutDate > iso
+      ).length;
+      const pct =
+        offset === 0
+          ? metrics.occupancyRate
+          : Math.min(100, Math.round((occupiedOnDay / totalRooms) * 100));
+      points.push({
+        iso,
+        label: getWeekdayShort(iso),
+        pct,
+      });
+    }
+    return points;
+  }, [rooms.length, reservations, todayIso, metrics.occupancyRate]);
+
+  // Recent Reservations (top 6 most recent active/upcoming stays)
+  const recentReservations = useMemo(() => {
+    return [...reservations]
+      .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
+      .sort((a, b) => (b.checkInDate || '').localeCompare(a.checkInDate || ''))
+      .slice(0, 6);
+  }, [reservations]);
+
+  // SVG geometry for Occupancy Trend Area Chart
+  const trendSvg = useMemo(() => {
+    const W = 420;
+    const H = 170;
+    const padL = 34;
+    const padR = 14;
+    const padT = 16;
+    const padB = 26;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+
+    const coords = occupancyTrend.map((pt, idx) => {
+      const x =
+        occupancyTrend.length > 1
+          ? padL + (idx / (occupancyTrend.length - 1)) * plotW
+          : padL + plotW / 2;
+      const y = padT + plotH - (pt.pct / 100) * plotH;
+      return { ...pt, x, y };
+    });
+
+    const linePath = coords
+      .map((c, idx) => `${idx === 0 ? 'M' : 'L'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`)
+      .join(' ');
+    const areaPath =
+      coords.length > 0
+        ? `${linePath} L ${coords[coords.length - 1].x.toFixed(1)} ${(padT + plotH).toFixed(1)} L ${coords[0].x.toFixed(1)} ${(padT + plotH).toFixed(1)} Z`
+        : '';
+
+    return { W, H, padL, padT, plotH, coords, linePath, areaPath };
+  }, [occupancyTrend]);
+
   return (
-    <div className="space-y-6">
-      {actionError && (
-        <div
-          role="alert"
-          className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-900 flex items-center justify-between gap-3 shadow-xs"
-        >
-          <div className="flex items-center gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{actionError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setActionError(null)}
-            className="text-rose-700 hover:text-rose-900 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      {/* Colorful Property Header Banner & Quick Operations */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-        <div className="bg-gradient-to-r from-[#061539] via-[#0B245B] to-[#1c46be] px-5 sm:px-6 py-5 text-white">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-white/15 border border-white/25 text-white flex items-center justify-center shrink-0">
-                <Building2 className="w-5 h-5 text-amber-300" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="font-display text-xl sm:text-2xl font-extrabold text-white tracking-tight truncate">
-                  {property.name}
-                </h1>
-                <p className="font-mono-tabular text-[11px] font-semibold text-blue-100/90 mt-0.5">
-                  {getPropertySystemId(property)} · Code: {property.code} · {rooms.length} Rooms Configured · Occupancy {occupancyPct}%
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => onNavigate('profile')}
-                className="px-3.5 py-1.5 text-xs font-semibold text-[#061539] bg-white hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-              >
-                Edit Profile
-              </button>
-              {onSignOut && (
-                <button
-                  type="button"
-                  onClick={onSignOut}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-rose-500/90 hover:bg-rose-500 border border-rose-400/50 text-white rounded-lg transition-colors cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Sign Out</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="px-5 sm:px-6 py-3.5 bg-slate-50/70 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onNavigate('walk_in')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-[#0B245B] hover:bg-[#082c70] text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <UserCheck className="w-3.5 h-3.5 text-amber-300" />
-            <span>{cms.dashboard.quickWalkInLabel || 'Walk-in Check-in'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('reservations')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <CalendarCheck2 className="w-3.5 h-3.5" />
-            <span>{cms.dashboard.quickReservationsLabel || 'Reservations'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('arrivals')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-sky-200 bg-sky-50 hover:bg-sky-100 text-sky-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <PlaneLanding className="w-3.5 h-3.5 text-sky-700" />
-            <span>{cms.dashboard.quickArrivalsLabel || 'Arrivals'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('in_house')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <DoorOpen className="w-3.5 h-3.5 text-violet-700" />
-            <span>{cms.dashboard.quickInHouseLabel || 'In-House'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('front_desk')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <BookOpenCheck className="w-3.5 h-3.5 text-indigo-700" />
-            <span>{cms.dashboard.quickFrontDeskLabel || 'Front Desk & Folios'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('calendar')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <Calendar className="w-3.5 h-3.5 text-teal-700" />
-            <span>{cms.dashboard.quickCalendarLabel || 'Calendar'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('ota_channels')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-cyan-200 bg-cyan-50 hover:bg-cyan-100 text-cyan-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <Globe className="w-3.5 h-3.5 text-cyan-700" />
-            <span>{cms.dashboard.quickChannelManagerLabel || 'Channel Manager'}</span>
-          </button>
-          {canManageRooms && (
-            <button
-              type="button"
-              onClick={() => onNavigate('reports')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <BarChart3 className="w-3.5 h-3.5 text-amber-700" />
-              <span>{cms.pages.reports?.navLabel || 'Management Reports'}</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Prominent Arrivals, Departures, In-House Flagship Hero KPI Cards with Utilization Bars */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {primaryKpiCards.map((card) => (
-          <div
-            key={card.id}
-            className={`${card.cardTint} border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl p-5 sm:p-6 flex flex-col justify-between gap-4 shadow-xs`}
-          >
-            <div>
-              <p className="text-sm font-extrabold text-[#061539]">{card.label}</p>
-              <p className="text-[11px] text-slate-600 mt-0.5">{card.subtitle}</p>
-            </div>
-
-            <div className="flex items-end justify-between gap-3 pt-1">
-              <p className={`font-mono-tabular text-3xl sm:text-4xl font-bold leading-none ${card.valueColor}`}>
-                {card.value}
-              </p>
-              <button
-                type="button"
-                onClick={() => onNavigate(card.target)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-[#1c46be] cursor-pointer"
-              >
-                <span>Open</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="space-y-1.5 pt-1 border-t border-slate-200/70">
-              <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
-                <span>{card.barHint}</span>
-                <span className="font-mono-tabular font-bold text-slate-800">{card.barPct}%</span>
-              </div>
-              <div className={`h-2 w-full rounded-full overflow-hidden ${card.barTrack}`}>
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${card.barColor}`}
-                  style={{ width: `${Math.max(card.barPct > 0 ? 6 : 0, card.barPct)}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Secondary Metrics Strip: Occupied, Available, Revenue Today */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {secondaryKpiCards.map((card) => (
-          <div
-            key={card.id}
-            className={`bg-white border border-slate-200 border-t-4 ${card.borderAccent} rounded-xl px-5 py-4 space-y-3 shadow-xs`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-mono-tabular text-xl font-bold text-slate-900 leading-tight truncate">
-                  {card.value}
-                </p>
-                <p className="text-xs text-slate-500 mt-0.5">{card.label}</p>
-              </div>
-              {card.target && (
-                <button
-                  type="button"
-                  onClick={() => onNavigate(card.target!)}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#1c46be] hover:underline shrink-0 cursor-pointer"
-                >
-                  <span>View</span>
-                  <ArrowRight className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-            <div className={`h-1.5 w-full rounded-full overflow-hidden ${card.barTrack}`}>
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${card.barColor}`}
-                style={{ width: `${Math.max(card.barPct > 0 ? 6 : 0, card.barPct)}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Daily USD Exchange Rate & Currency Converter */}
-      <CurrencyConverterWidget
-        property={property}
-        rooms={rooms}
-        canEditRate={canManageRooms}
-        actorRole={actorRole}
-        compact
-        onNotify={onNotify}
-      />
-
-      {/* Executive Charts: Booking Trends / Monthly Revenue + Booking Sources */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <div className="lg:col-span-7">
-          <MonthlyTrendBarChart
-            data={analytics.monthlyTrend}
-            defaultMetric="bookings"
-            allowMetricToggle
-            headerTone="emerald"
-            actionLink={{
-              label: 'Full Report →',
-              onClick: () => onNavigate('reports'),
-            }}
-          />
-        </div>
-        <div className="lg:col-span-5">
-          <BookingsBySourcePieChart
-            title="Booking Sources"
-            slices={analytics.sourceSlices}
-            variant="donut"
-            headerTone="emerald"
-            actionLink={{
-              label: 'Channels →',
-              onClick: () => onNavigate('ota_channels'),
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Operations & Settlement Pulse Strip */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* 1. Room Occupancy Split */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-extrabold text-[#061539]">Room Occupancy Split</span>
-            <span className="font-mono-tabular text-xs font-bold text-blue-700">
-              {occupancyPct}% Occupied
-            </span>
-          </div>
-          <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex">
-            {rooms.length > 0 && (
-              <>
-                <div
-                  className="h-full bg-blue-600 transition-all"
-                  style={{ width: `${(occupiedRoomsCount / rooms.length) * 100}%` }}
-                  title={`Occupied: ${occupiedRoomsCount}`}
-                />
-                <div
-                  className="h-full bg-amber-400 transition-all"
-                  style={{ width: `${(reservedRoomsCount / rooms.length) * 100}%` }}
-                  title={`Reserved: ${reservedRoomsCount}`}
-                />
-                <div
-                  className="h-full bg-emerald-500 transition-all"
-                  style={{ width: `${(availableRoomsCount / rooms.length) * 100}%` }}
-                  title={`Available: ${availableRoomsCount}`}
-                />
-                <div
-                  className="h-full bg-slate-400 transition-all"
-                  style={{ width: `${(maintenanceRoomsCount / rooms.length) * 100}%` }}
-                  title={`Maintenance: ${maintenanceRoomsCount}`}
-                />
-              </>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] font-mono-tabular text-slate-600">
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-blue-600" />
-                Occupied
-              </span>
-              <strong className="text-slate-900">{occupiedRoomsCount}</strong>
-            </span>
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                Reserved
-              </span>
-              <strong className="text-slate-900">{reservedRoomsCount}</strong>
-            </span>
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                Available
-              </span>
-              <strong className="text-slate-900">{availableRoomsCount}</strong>
-            </span>
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-slate-400" />
-                Out of Order
-              </span>
-              <strong className="text-slate-900">{maintenanceRoomsCount}</strong>
-            </span>
-          </div>
-        </div>
-
-        {/* 2. Housekeeping Readiness */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-extrabold text-[#061539]">Housekeeping Readiness</span>
-            <span className="inline-flex items-center gap-1 font-mono-tabular text-xs font-bold text-emerald-700">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              {rooms.length > 0
-                ? Math.round(((analytics.hkClean + analytics.hkInspected) / rooms.length) * 100)
-                : 0}
-              % Ready
-            </span>
-          </div>
-          <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex">
-            {rooms.length > 0 && (
-              <>
-                <div
-                  className="h-full bg-emerald-500 transition-all"
-                  style={{ width: `${(analytics.hkClean / rooms.length) * 100}%` }}
-                />
-                <div
-                  className="h-full bg-cyan-500 transition-all"
-                  style={{ width: `${(analytics.hkInspected / rooms.length) * 100}%` }}
-                />
-                <div
-                  className="h-full bg-amber-400 transition-all"
-                  style={{ width: `${(analytics.hkCleaning / rooms.length) * 100}%` }}
-                />
-                <div
-                  className="h-full bg-rose-500 transition-all"
-                  style={{ width: `${(analytics.hkDirty / rooms.length) * 100}%` }}
-                />
-              </>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] font-mono-tabular text-slate-600">
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                Clean
-              </span>
-              <strong className="text-slate-900">{analytics.hkClean}</strong>
-            </span>
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-cyan-500" />
-                Inspected
-              </span>
-              <strong className="text-slate-900">{analytics.hkInspected}</strong>
-            </span>
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                Cleaning
-              </span>
-              <strong className="text-slate-900">{analytics.hkCleaning}</strong>
-            </span>
-            <span className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-sans">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                Dirty
-              </span>
-              <strong className="text-slate-900">{analytics.hkDirty}</strong>
-            </span>
-          </div>
-        </div>
-
-        {/* 3. Folio Settlement Mix */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-extrabold text-[#061539]">Folio Settlement Mix</span>
-            <span className="font-mono-tabular text-xs font-bold text-indigo-700">
-              {formatNgn(analytics.totalSettledNgn)}
-            </span>
-          </div>
-          <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex">
-            {analytics.nonCancelledCount > 0 && (
-              <>
-                <div
-                  className="h-full bg-emerald-500 transition-all"
-                  style={{ width: `${(analytics.paidCount / analytics.nonCancelledCount) * 100}%` }}
-                />
-                <div
-                  className="h-full bg-amber-400 transition-all"
-                  style={{
-                    width: `${(analytics.partialCount / analytics.nonCancelledCount) * 100}%`,
-                  }}
-                />
-                <div
-                  className="h-full bg-rose-500 transition-all"
-                  style={{ width: `${(analytics.unpaidCount / analytics.nonCancelledCount) * 100}%` }}
-                />
-              </>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-tabular text-slate-600">
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              Paid: <strong className="text-slate-900">{analytics.paidCount}</strong>
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              Partial: <strong className="text-slate-900">{analytics.partialCount}</strong>
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-rose-500" />
-              Unpaid: <strong className="text-slate-900">{analytics.unpaidCount}</strong>
-            </span>
-          </div>
-          <p className="text-[11px] font-mono-tabular text-slate-500">
-            Property Balance Due:{' '}
-            <strong className={analytics.totalBalanceDueNgn > 0 ? 'text-rose-700' : 'text-emerald-700'}>
-              {formatNgn(analytics.totalBalanceDueNgn)}
-            </strong>
+    <div className="space-y-5">
+      {/* 1. Greeting Hero Banner with Property Suite Photo */}
+      <div className="relative bg-[#f4f6f9] border border-slate-200/90 rounded-2xl overflow-hidden min-h-[112px] flex items-center">
+        <div className="relative z-10 px-6 py-5 sm:px-8 sm:py-6 max-w-xl">
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
+            <span className="text-[#0b5d34]">{getTimeGreeting()},</span>{' '}
+            <span className="text-slate-900">{greetingName}!</span>
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-600 mt-1">
+            Here&apos;s what&apos;s happening at{' '}
+            <span className="font-semibold text-slate-800">{property.name}</span> today.
           </p>
         </div>
+
+        <div className="hidden sm:block absolute inset-y-0 right-0 w-[48%] lg:w-[44%] pointer-events-none">
+          <img
+            src={heroImageUrl}
+            alt={property.name}
+            referrerPolicy="no-referrer"
+            className="w-full h-full object-cover object-center"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#f4f6f9] via-[#f4f6f9]/70 to-transparent" />
+        </div>
       </div>
 
-      {/* Room Overview Matrix + Today's Schedule */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-display text-base font-extrabold text-[#061539]">
-              {cms.dashboard.roomOverviewTitle || 'Room Overview'}
-            </h2>
-            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
-              <span className="inline-flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                <span>Occupied</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span>Available</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                <span>Reserved</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
-                <span>Maintenance</span>
-              </span>
+      {/* 2. Four Essential Tinted KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {/* Occupancy Rate */}
+        <button
+          type="button"
+          onClick={() => onNavigate('rooms')}
+          className="text-left bg-[#e9f7ef] border border-emerald-200/70 hover:border-emerald-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+        >
+          <div className="w-12 h-12 rounded-full bg-[#169a57] text-white flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-700">Occupancy Rate</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+              {metrics.occupancyRate}%
+            </p>
+            <p
+              className={`text-[11px] font-semibold mt-0.5 font-mono-tabular ${
+                metrics.occDelta >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              }`}
+            >
+              {metrics.occDelta >= 0 ? '↑ +' : '↓ '}
+              {metrics.occDelta}% vs last week
+            </p>
+          </div>
+        </button>
+
+        {/* Arrivals */}
+        <button
+          type="button"
+          onClick={() => onNavigate('arrivals')}
+          className="text-left bg-[#ebf3fe] border border-blue-200/70 hover:border-blue-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+        >
+          <div className="w-12 h-12 rounded-full bg-[#1c64f2] text-white flex items-center justify-center shrink-0">
+            <Calendar className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-700">Arrivals</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+              {String(metrics.arrivalsToday).padStart(2, '0')}
+            </p>
+            <p className="text-[11px] font-semibold text-blue-700 mt-0.5 font-mono-tabular">
+              {metrics.arrivalsDelta >= 0 ? '↑ +' : '↓ '}
+              {metrics.arrivalsDelta} vs yesterday
+            </p>
+          </div>
+        </button>
+
+        {/* Departures */}
+        <button
+          type="button"
+          onClick={() => onNavigate('in_house')}
+          className="text-left bg-[#f4eeff] border border-purple-200/70 hover:border-purple-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+        >
+          <div className="w-12 h-12 rounded-full bg-[#7e3af2] text-white flex items-center justify-center shrink-0">
+            <LogOut className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-700">Departures</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+              {String(metrics.departuresToday).padStart(2, '0')}
+            </p>
+            <p className="text-[11px] font-semibold text-purple-700 mt-0.5 font-mono-tabular">
+              {metrics.departuresDelta >= 0 ? '↑ +' : '↓ '}
+              {metrics.departuresDelta} vs yesterday
+            </p>
+          </div>
+        </button>
+
+        {/* Today's Revenue */}
+        <button
+          type="button"
+          onClick={() => onNavigate('accounting')}
+          className="text-left bg-[#fef7e4] border border-amber-200/70 hover:border-amber-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+        >
+          <div className="w-12 h-12 rounded-full bg-[#d98a0b] text-white flex items-center justify-center shrink-0">
+            <Wallet className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-700">Today&apos;s Revenue</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight mt-0.5 truncate">
+              {formatNgn(metrics.revenueToday)}
+            </p>
+            <p
+              className={`text-[11px] font-semibold mt-0.5 font-mono-tabular ${
+                metrics.revenueDeltaPct >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              }`}
+            >
+              {metrics.revenueDeltaPct >= 0 ? '↑ +' : '↓ '}
+              {metrics.revenueDeltaPct}% vs last week
+            </p>
+          </div>
+        </button>
+      </div>
+
+      {/* 3. Middle Row: Booking Performance Bar Chart + Dark Green Quick Actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Booking Performance */}
+        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-[#0b5d34]" />
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Booking Performance
+              </h2>
             </div>
+
+            <select
+              aria-label="Booking performance period"
+              value={perfRange}
+              onChange={(e) => setPerfRange(e.target.value as '7d' | '14d' | '30d')}
+              className="h-8 px-3 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:border-[#0b5d34] cursor-pointer"
+            >
+              <option value="7d">Last 7 Days</option>
+              <option value="14d">Last 14 Days</option>
+              <option value="30d">Last 30 Days</option>
+            </select>
           </div>
 
-          <div className="space-y-4">
-            {sections.map((sec) => {
-              const secRooms = sortedRooms.filter((r) => getRoomSection(r) === sec.key);
-              if (secRooms.length === 0) return null;
-              return (
-                <div key={sec.key} className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <div className="sm:w-44 shrink-0">
-                    <p className="text-xs font-semibold text-slate-900">{sec.title}</p>
-                    <p className="font-mono-tabular text-[11px] text-slate-500">
-                      ({secRooms.length} rooms)
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2.5">
-                    {secRooms.map((room) => {
-                      const activeRes = activeFolios.find(
-                        (r) => r.id === room.currentReservationId || r.roomId === room.id
-                      );
-                      const tileStyle =
-                        room.occupancyStatus === 'occupied'
-                          ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700'
-                          : room.occupancyStatus === 'reserved'
-                            ? 'bg-amber-50 border-amber-400 text-amber-800 hover:bg-amber-100'
-                            : room.occupancyStatus === 'out_of_order'
-                              ? 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200'
-                              : 'bg-white border-emerald-500 text-emerald-700 hover:bg-emerald-50';
-                      return (
-                        <button
-                          key={room.id}
-                          type="button"
-                          onClick={() => {
-                            if (activeRes) {
-                              onOpenReservationFolio(activeRes.id, 'front_desk');
-                            } else if (room.occupancyStatus === 'vacant') {
-                              onNavigate('walk_in');
-                            } else {
-                              onNavigate('rooms');
-                            }
-                          }}
-                          title={`${room.roomNumber} · ${room.roomType} (${formatNgn(room.nightlyRateNgn)}/nt)`}
-                          className={`min-w-[64px] px-3 py-2 rounded-lg border-2 font-mono-tabular text-xs font-bold transition-colors cursor-pointer ${tileStyle}`}
-                        >
-                          {room.roomNumber}
-                        </button>
-                      );
-                    })}
-                  </div>
+          <div className="relative h-56 flex items-end gap-2 sm:gap-4 pt-6 pb-2 pl-7 pr-2">
+            {/* Horizontal Y-Axis Gridlines */}
+            <div className="absolute inset-x-0 top-6 bottom-8 left-7 right-2 flex flex-col justify-between pointer-events-none">
+              {[1, 0.75, 0.5, 0.25, 0].map((ratio) => (
+                <div key={ratio} className="relative flex items-center w-full">
+                  <span className="absolute -left-7 text-[10px] font-mono-tabular text-slate-400 w-5 text-right">
+                    {Math.round(bookingPerformance.yMax * ratio)}
+                  </span>
+                  <div className="w-full border-t border-slate-100" />
                 </div>
+              ))}
+            </div>
+
+            {/* Bars */}
+            {bookingPerformance.series.map((bar) => {
+              const pct =
+                bookingPerformance.yMax > 0
+                  ? Math.round((bar.count / bookingPerformance.yMax) * 100)
+                  : 0;
+              return (
+                <button
+                  key={bar.iso}
+                  type="button"
+                  onClick={() => onNavigate('reservations')}
+                  title={`${bar.iso}: ${bar.count} active/booked reservation${bar.count === 1 ? '' : 's'}`}
+                  className="relative z-10 flex-1 h-full flex flex-col items-center justify-end gap-1.5 group cursor-pointer"
+                >
+                  <span className="font-mono-tabular text-[11px] font-bold text-slate-700">
+                    {perfRange === '30d' && bar.count === 0 ? '' : bar.count}
+                  </span>
+                  <div className="w-full flex-1 flex items-end justify-center">
+                    <div
+                      className={`w-full ${
+                        perfRange === '7d'
+                          ? 'max-w-[44px]'
+                          : perfRange === '14d'
+                            ? 'max-w-[26px]'
+                            : 'max-w-[14px]'
+                      } rounded-t-md bg-[#169a57] group-hover:bg-[#0b5d34] transition-colors`}
+                      style={{
+                        height: `${bar.count > 0 ? Math.max(8, pct) : 2}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap">
+                    {perfRange === '30d' ? bar.label.slice(3) : bar.label}
+                  </span>
+                </button>
               );
             })}
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-base font-extrabold text-[#061539]">
-                {cms.dashboard.scheduleTitle || "Today's Schedule"}
-              </h2>
-              <span className="font-mono-tabular text-[11px] font-semibold text-slate-600">{todayIso}</span>
-            </div>
-
-            {scheduleEvents.length === 0 ? (
-              <div className="py-6 text-center space-y-2">
-                <p className="text-xs text-slate-500">No arrivals or departures scheduled today</p>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('walk_in')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg cursor-pointer"
-                >
-                  <UserCheck className="w-3.5 h-3.5" />
-                  <span>Check In Walk-In Guest</span>
-                </button>
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {scheduleEvents.slice(0, 5).map((ev) => (
-                  <button
-                    key={ev.id}
-                    type="button"
-                    onClick={() => onOpenReservationFolio(ev.resId, 'front_desk')}
-                    className="w-full py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-50 rounded px-1 cursor-pointer"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-900 truncate">{ev.guest}</p>
-                      <p className="font-mono-tabular text-[11px] text-slate-500">
-                        {ev.room} · {ev.date}
-                      </p>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[11px] font-semibold shrink-0 ${ev.badgeClass}`}
-                    >
-                      {ev.type}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+        {/* Quick Actions Panel */}
+        <div className="lg:col-span-4 bg-[#064e2b] rounded-2xl p-5 text-white flex flex-col justify-between">
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="w-4 h-4 text-emerald-300" />
+            <h2 className="font-display text-base font-bold text-white">Quick Actions</h2>
           </div>
 
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <button
-              type="button"
-              onClick={() => onNavigate('arrivals')}
-              className="font-semibold text-blue-700 hover:underline cursor-pointer"
-            >
-              View Arrivals →
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('in_house')}
-              className="font-semibold text-emerald-700 hover:underline cursor-pointer"
-            >
-              In-House Guests →
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Grouped Suite Showcase: Serviced Apartment Section & Hotel Rooms */}
-      {sections.map((sec) => {
-        const secRooms = sortedRooms.filter((r) => getRoomSection(r) === sec.key);
-        if (secRooms.length === 0) return null;
-
-        return (
-          <div key={sec.key} className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div>
-                <h2 className="font-display text-base font-extrabold text-[#061539]">
-                  {sec.title}
-                </h2>
-                <p className="text-xs text-slate-600 mt-0.5">{sec.subtitle}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onNavigate('rooms')}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap cursor-pointer"
-              >
-                <span>{canManageRooms ? 'Edit Rates & Photos' : 'Inspect Rooms'}</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {secRooms.map((room) => {
-                const activeRes = activeFolios.find(
-                  (r) => r.id === room.currentReservationId || r.roomId === room.id
-                );
-
-                const statusText =
-                  room.occupancyStatus === 'occupied'
-                    ? 'Occupied'
-                    : room.occupancyStatus === 'reserved'
-                      ? 'Reserved'
-                      : room.occupancyStatus === 'out_of_order'
-                        ? 'Out of Order'
-                        : 'Available';
-
-                const statusColor =
-                  room.occupancyStatus === 'occupied'
-                    ? 'text-blue-700'
-                    : room.occupancyStatus === 'reserved'
-                      ? 'text-amber-700'
-                      : room.occupancyStatus === 'out_of_order'
-                        ? 'text-rose-700'
-                        : 'text-emerald-700';
-
-                return (
-                  <button
-                    key={room.id}
-                    type="button"
-                    onClick={() => {
-                      if (activeRes) {
-                        onOpenReservationFolio(activeRes.id, 'front_desk');
-                      } else if (onInspectRoom) {
-                        onInspectRoom(room.id);
-                      } else {
-                        onNavigate('rooms');
-                      }
-                    }}
-                    className="text-left rounded-xl border border-slate-200 hover:border-slate-300 bg-white overflow-hidden transition-colors flex flex-col justify-between cursor-pointer group"
-                  >
-                    <div className="h-32 bg-slate-100 relative overflow-hidden w-full">
-                      <img
-                        src={room.imageUrl || DEFAULT_SUITE_IMAGE}
-                        alt={room.name}
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src = DEFAULT_SUITE_IMAGE;
-                        }}
-                        className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent" />
-                      <div className="absolute bottom-2.5 left-3 right-3 flex items-end justify-between text-white">
-                        <span className="font-mono-tabular text-xs font-bold">
-                          {room.roomNumber}
-                        </span>
-                        <div className="text-right leading-tight">
-                          <span className="block font-mono-tabular text-xs font-semibold text-emerald-300">
-                            {formatNgn(room.nightlyRateNgn)}
-                          </span>
-                          <span className="block font-mono-tabular text-[10px] text-slate-200/95">
-                            ≈ {formatUsd(convertNgnToUsd(room.nightlyRateNgn, property.usdExchangeRateNgn), 0)}/nt
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-3.5 space-y-2 w-full">
-                      <div>
-                        <p className="text-xs font-bold text-slate-900 truncate">{room.roomType}</p>
-                        <p className="text-[11px] text-slate-500 truncate">{room.name}</p>
-                      </div>
-
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                        <span className={`font-semibold ${statusColor}`}>{statusText}</span>
-                        <span className="text-slate-500 capitalize">
-                          HK: {room.housekeepingStatus}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="text-slate-600 truncate">
-                          {room.currentGuestName || 'Ready for check-in'}
-                        </span>
-                        {activeRes && (
-                          <span className="font-semibold text-emerald-700 shrink-0">
-                            Folio →
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Full-Width Reservations Data Grid */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-display text-base font-extrabold text-[#061539]">
-              {cms.dashboard.reservationsLedgerTitle || 'Reservations'}
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {cms.dashboard.reservationsLedgerSubtitle ||
-                'Guest name, room assignment, room type, stay dates, occupancy, booking source, folio balances, payment & reservation status, date booked, and actions'}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="grid grid-cols-2 gap-3 flex-1">
             <button
               type="button"
               onClick={() => onNavigate('reservations')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              <CalendarCheck2 className="w-3.5 h-3.5" />
-              <span>Manage All Reservations</span>
+              <CalendarPlus className="w-6 h-6 text-[#0b5d34]" />
+              <span className="text-xs font-semibold leading-tight">New Reservation</span>
             </button>
+
             <button
               type="button"
-              onClick={() => onNavigate('front_desk')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              onClick={() => onNavigate('walk_in')}
+              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              <BookOpenCheck className="w-3.5 h-3.5" />
-              <span>Open Front Desk</span>
+              <LogIn className="w-6 h-6 text-[#0b5d34]" />
+              <span className="text-xs font-semibold leading-tight">Check In</span>
             </button>
-          </div>
-        </div>
 
-        {/* Filter Bar */}
-        <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1 bg-white border border-slate-200 rounded-lg p-1 text-xs">
-              {(
-                [
-                  'all',
-                  'confirmed',
-                  'pending',
-                  'checked_in',
-                  'checked_out',
-                  'cancelled',
-                  'no_show',
-                ] as Array<'all' | ReservationStatus>
-              ).map((statusKey) => {
-                const isActive = resStatusFilter === statusKey;
-                const label = statusKey === 'all' ? 'All' : RESERVATION_STATUS_LABELS[statusKey];
-                return (
-                  <button
-                    key={statusKey}
-                    type="button"
-                    onClick={() => setResStatusFilter(statusKey)}
-                    className={`px-2.5 py-1 rounded-md font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                      isActive
-                        ? 'bg-slate-900 text-white'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                    }`}
-                  >
-                    {label}{' '}
-                    <span className="font-mono-tabular opacity-75">
-                      ({dashboardStatusCounts[statusKey]})
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={resSearch}
-                  onChange={(e) => setResSearch(e.target.value)}
-                  aria-label="Search reservations"
-                  className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg bg-white text-xs w-48 focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <select
-                value={resSourceFilter}
-                onChange={(e) => setResSourceFilter(e.target.value)}
-                aria-label="Filter by booking source"
-                className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-xs text-slate-700"
-              >
-                <option value="ALL">All Booking Sources</option>
-                {PRIMARY_BOOKING_SOURCES.map((src) => (
-                  <option key={src.value} value={src.value}>
-                    {src.label}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={resPaymentFilter}
-                onChange={(e) => setResPaymentFilter(e.target.value as 'all' | PaymentStatusLabel)}
-                aria-label="Filter by payment status"
-                className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-xs text-slate-700"
-              >
-                <option value="all">All Payment Statuses</option>
-                <option value="Paid">Paid</option>
-                <option value="Partial">Partial</option>
-                <option value="Unpaid">Unpaid</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[1560px]">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Guest Name</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Room Number</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Room Type</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Check-in</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Check-out</th>
-                <th className="py-2.5 px-3.5 text-center whitespace-nowrap">Nights</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Adults/Children</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Booking Source</th>
-                <th className="py-2.5 px-3.5 text-right whitespace-nowrap">Total Amount</th>
-                <th className="py-2.5 px-3.5 text-right whitespace-nowrap">Amount Paid</th>
-                <th className="py-2.5 px-3.5 text-right whitespace-nowrap">Balance</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Payment Status</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Reservation Status</th>
-                <th className="py-2.5 px-3.5 whitespace-nowrap">Date Booked</th>
-                <th className="py-2.5 px-3.5 text-right whitespace-nowrap">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {filteredDashboardReservations.map((res) => {
-                const {
-                  totalAmount,
-                  expectedPayoutNgn,
-                  otaPaidAmount: _otaPaidAmount,
-                  hotelPaidAmount,
-                  amountPaid,
-                  balance,
-                  paymentStatus,
-                  sourceCurrency,
-                  sourceNightlyRate,
-                  sourceTotalAmount,
-                  otaPaidSourceAmount,
-                } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
-                const isOtaSource = isOtaBookingChannel(res.channel);
-                const bookedDate = getReservationBookedDate(res);
-                const childCount = res.children ?? 0;
-                const sourceLabel = formatBookingSourceLabel(res.channel);
-                const statusLabel = RESERVATION_STATUS_LABELS[res.status] || res.status;
-                const roomDisplay = getReservationRoomDisplay(res, rooms);
-
-                const paymentStatusClass =
-                  paymentStatus === 'Paid'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : paymentStatus === 'Partial'
-                      ? 'bg-amber-50 text-amber-800 border-amber-200'
-                      : 'bg-rose-50 text-rose-700 border-rose-200';
-
-                const reservationStatusClass =
-                  res.status === 'checked_in'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : res.status === 'confirmed'
-                      ? 'bg-blue-50 text-blue-700 border-blue-200'
-                      : res.status === 'pending'
-                        ? 'bg-amber-50 text-amber-800 border-amber-200'
-                        : res.status === 'checked_out'
-                          ? 'bg-slate-100 text-slate-700 border-slate-200'
-                          : res.status === 'no_show'
-                            ? 'bg-orange-50 text-orange-800 border-orange-200'
-                            : 'bg-rose-50 text-rose-700 border-rose-200';
-
-                const canCheckInOrCancel = res.status === 'confirmed' || res.status === 'pending';
-
-                return (
-                  <tr
-                    key={res.id}
-                    onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
-                    className="hover:bg-slate-50/80 cursor-pointer transition-colors"
-                  >
-                    <td className="py-3 px-3.5 whitespace-nowrap">
-                      <p className="font-semibold text-slate-900">{res.guestName}</p>
-                      <p className="font-mono-tabular text-[11px] text-slate-500">
-                        {res.bookingRef}
-                        {res.guestPhone ? ` · ${res.guestPhone}` : ''}
-                      </p>
-                    </td>
-
-                    <td
-                      className="py-3 px-3.5 whitespace-nowrap"
-                      onClick={(e) => {
-                        if (!roomDisplay.isAssigned) e.stopPropagation();
-                      }}
-                    >
-                      {roomDisplay.isAssigned ? (
-                        <span className="font-mono-tabular font-bold text-emerald-700">
-                          {roomDisplay.roomNumberLabel}
-                        </span>
-                      ) : (
-                        <div className="space-y-0.5">
-                          <span className="block text-[11px] font-semibold text-amber-700">
-                            Unassigned
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onOpenReservationFolio(res.id, 'reservations', 'edit')}
-                            className="text-[11px] font-semibold text-[#1c46be] hover:underline cursor-pointer"
-                          >
-                            Edit to assign
-                          </button>
-                        </div>
-                      )}
-                    </td>
-
-                    <td className="py-3 px-3.5 text-slate-700 whitespace-nowrap">
-                      {roomDisplay.roomTypeLabel}
-                    </td>
-
-                    <td className="py-3 px-3.5 font-mono-tabular text-slate-800 whitespace-nowrap">
-                      {res.checkInDate}
-                    </td>
-
-                    <td className="py-3 px-3.5 font-mono-tabular text-slate-800 whitespace-nowrap">
-                      <span>{res.checkOutDate}</span>
-                      {(res.checkOutTime || (res.lateCheckoutFeeNgn || 0) > 0) && (
-                        <span className="block text-[10px] font-semibold text-amber-700">
-                          {res.checkOutTime ? `Out ${res.checkOutTime}` : 'Late Out'}
-                          {(res.lateCheckoutFeeNgn || 0) > 0
-                            ? ` · +${formatNgn(res.lateCheckoutFeeNgn || 0)}`
-                            : ''}
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="py-3 px-3.5 text-center font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
-                      {res.nights}
-                    </td>
-
-                    <td className="py-3 px-3.5 whitespace-nowrap">
-                      <p className="font-mono-tabular font-medium text-slate-800">
-                        {res.adults}A / {childCount}C
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {res.adults} {res.adults === 1 ? 'Adult' : 'Adults'} · {childCount}{' '}
-                        {childCount === 1 ? 'Child' : 'Children'}
-                      </p>
-                    </td>
-
-                    <td className="py-3 px-3.5 text-slate-700 font-medium whitespace-nowrap">
-                      {sourceLabel}
-                    </td>
-
-                    <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                      {isOtaSource && sourceCurrency !== 'NGN' && sourceTotalAmount > 0 ? (
-                        <>
-                          <span className="block text-blue-800">
-                            {formatChannelCurrency(sourceTotalAmount, sourceCurrency)}{' '}
-                            {sourceCurrency}
-                          </span>
-                          <span className="block text-[10px] font-medium text-slate-500">
-                            {sourceNightlyRate > 0
-                              ? `${formatChannelCurrency(sourceNightlyRate, sourceCurrency)}/nt · `
-                              : ''}
-                            Exp. Payout: {formatNgn(expectedPayoutNgn)}
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="block">{formatNgn(totalAmount)}</span>
-                          {isOtaSource && (
-                            <span className="block text-[10px] font-medium text-slate-500">
-                              Exp. Payout: {formatNgn(expectedPayoutNgn)}
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </td>
-
-                    <td className="py-3 px-3.5 text-right font-mono-tabular font-medium text-emerald-700 whitespace-nowrap">
-                      {isOtaSource ? (
-                        <>
-                          <span className="block text-[11px] font-semibold text-blue-700">
-                            Paid OTA:{' '}
-                            {formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)}{' '}
-                            {sourceCurrency}
-                          </span>
-                          <span className="block text-[10px] text-emerald-700">
-                            Direct Property: {formatNgn(hotelPaidAmount)}
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="block font-semibold">{formatNgn(amountPaid)}</span>
-                          <span className="block text-[10px] text-slate-500">
-                            Direct Property: {formatNgn(hotelPaidAmount)}
-                          </span>
-                        </>
-                      )}
-                    </td>
-
-                    <td
-                      className={`py-3 px-3.5 text-right font-mono-tabular font-semibold whitespace-nowrap ${
-                        balance > 0 ? 'text-rose-700' : 'text-slate-600'
-                      }`}
-                    >
-                      <span className="block">{formatNgn(balance)}</span>
-                      <span className="block text-[10px] font-normal text-slate-500">
-                        {balance > 0 ? 'Property bal due' : '₦0 prop bal'}
-                      </span>
-                    </td>
-
-                    <td className="py-3 px-3.5 whitespace-nowrap">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-md border text-[11px] font-semibold ${paymentStatusClass}`}
-                      >
-                        {paymentStatus}
-                      </span>
-                    </td>
-
-                    <td className="py-3 px-3.5 whitespace-nowrap">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-md border text-[11px] font-semibold ${reservationStatusClass}`}
-                      >
-                        {statusLabel}
-                      </span>
-                      {res.status === 'cancelled' && res.cancellationType && (
-                        <span className="block text-[10px] font-medium text-rose-700 mt-0.5">
-                          {res.cancellationType === 'paid'
-                            ? `Fee: ${formatNgn(res.cancellationFeeNgn || 0)}`
-                            : 'Free Cancellation'}
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="py-3 px-3.5 font-mono-tabular text-slate-600 whitespace-nowrap">
-                      {bookedDate}
-                    </td>
-
-                    <td
-                      className="py-3 px-3.5 text-right whitespace-nowrap"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="inline-flex items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
-                          className="px-2.5 py-1 text-[11px] font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-md whitespace-nowrap shrink-0 cursor-pointer"
-                        >
-                          View
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onOpenReservationFolio(res.id, 'reservations', 'edit')}
-                          className="px-2.5 py-1 text-[11px] font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-md whitespace-nowrap shrink-0 cursor-pointer"
-                        >
-                          Edit
-                        </button>
-                        {canCheckInOrCancel && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => setCheckInTarget(res)}
-                              className="px-2.5 py-1 text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md whitespace-nowrap shrink-0 cursor-pointer"
-                            >
-                              Check-in
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busyResId === res.id}
-                              onClick={() => openCancelDialog(res)}
-                              className="px-2.5 py-1 text-[11px] font-medium text-rose-700 border border-rose-200 bg-white hover:bg-rose-50 rounded-md whitespace-nowrap shrink-0 cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        )}
-                        {canManageRooms && confirmDeleteResId !== res.id && (
-                          <button
-                            type="button"
-                            disabled={busyResId === res.id}
-                            onClick={() => setConfirmDeleteResId(res.id)}
-                            title="Delete reservation record"
-                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-rose-700 border border-rose-200 bg-rose-50 hover:bg-rose-100 rounded-md whitespace-nowrap shrink-0 cursor-pointer"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>Delete</span>
-                          </button>
-                        )}
-                        {canManageRooms && confirmDeleteResId === res.id && (
-                          <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-md px-1.5 py-0.5">
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteResId(null)}
-                              className="px-1.5 py-0.5 text-[10px] text-slate-600 cursor-pointer"
-                            >
-                              No
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busyResId === res.id}
-                              onClick={() => void handleDeleteReservation(res)}
-                              className="px-2 py-0.5 text-[10px] font-semibold bg-rose-600 text-white rounded cursor-pointer"
-                            >
-                              {busyResId === res.id ? '...' : 'Confirm'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {filteredDashboardReservations.length === 0 && (
-                <tr>
-                  <td colSpan={15} className="py-10 text-center text-xs text-slate-500">
-                    No reservations match the selected filters.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Departmental Operations Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <ChefHat className="w-4 h-4 text-slate-600" />
-              <h3 className="font-display text-sm font-extrabold text-[#061539]">
-                Kitchen Dispatch
-              </h3>
-            </div>
             <button
               type="button"
-              onClick={() => onNavigate('pos_kitchen')}
-              className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+              onClick={() => onNavigate('in_house')}
+              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              Open KDS
+              <LogOut className="w-6 h-6 text-[#0b5d34]" />
+              <span className="text-xs font-semibold leading-tight">Check Out</span>
             </button>
-          </div>
-          <div className="space-y-1.5">
-            {openKitchen.slice(0, 3).map((ord) => (
-              <div
-                key={ord.id}
-                className="flex items-center justify-between text-xs py-1.5 border-t border-slate-100"
-              >
-                <span className="text-slate-700 truncate pr-2">
-                  {ord.orderNumber} · {ord.tableOrRoom}
-                </span>
-                <span className="font-medium text-amber-700 capitalize shrink-0">
-                  {ord.kitchenStatus}
-                </span>
-              </div>
-            ))}
-            {openKitchen.length === 0 && (
-              <p className="text-xs text-slate-500 pt-1">All kitchen tickets served.</p>
-            )}
-          </div>
-        </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Wrench className="w-4 h-4 text-[#061539]" />
-              <h3 className="font-display text-sm font-extrabold text-[#061539]">
-                Engineering &amp; Housekeeping
-              </h3>
-            </div>
             <button
               type="button"
-              onClick={() => onNavigate('maintenance')}
-              className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
+              onClick={() => onNavigate('accounting')}
+              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              View Tasks
-            </button>
-          </div>
-          <div className="space-y-1.5">
-            {openMaintenance.slice(0, 2).map((t) => (
-              <p key={t.id} className="text-xs text-slate-600 truncate">
-                {t.locationLabel} · {t.issueTitle}
-              </p>
-            ))}
-            <button
-              type="button"
-              onClick={() => onNavigate('housekeeping')}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 hover:text-emerald-700 pt-1 cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Open Housekeeping Dispatch</span>
+              <CreditCard className="w-6 h-6 text-[#0b5d34]" />
+              <span className="text-xs font-semibold leading-tight">Record Payment</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* User Management & Team Access Section (placed right before footer) */}
-      {canManageRooms && (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-5 h-5 text-emerald-700" />
-            </div>
-            <div>
-              <h2 className="font-display text-sm font-extrabold text-[#061539]">
-                User Management &amp; Team Access
+      {/* 4. Bottom Row: Recent Reservations Table + Occupancy Trend Line Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Recent Reservations */}
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ListFilter className="w-4 h-4 text-[#0b5d34]" />
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Recent Reservations
               </h2>
-              <p className="text-xs text-slate-600 mt-0.5">
-                Create user accounts, assign or revoke roles &amp; module privileges, and inspect staff records &amp; performance.
-              </p>
-              <div className="flex flex-wrap items-center gap-3 mt-2 text-xs font-mono-tabular">
-                <span className="px-2 py-0.5 rounded bg-slate-100 text-[#061539] font-bold">
-                  Total Accounts: {userAccounts.length}
-                </span>
-                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 font-bold">
-                  Active Assigned: {activeAccountsCount}
-                </span>
-                <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-900 font-bold">
-                  Unassigned / Revoked: {unassignedAccountsCount}
-                </span>
-              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('reservations')}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+            >
+              <span>View All</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => onNavigate('user_management')}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-[#061539] hover:bg-[#0c2b70] text-white rounded-lg cursor-pointer"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Manage Users &amp; Roles</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('staff')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold border border-slate-300 bg-white hover:bg-slate-50 text-[#061539] rounded-lg cursor-pointer"
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Staff Roster &amp; Performance</span>
-            </button>
-          </div>
+          {recentReservations.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500">
+              No active reservations yet. Click <strong>New Reservation</strong> to create one.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-semibold text-slate-500">
+                    <th className="py-3 px-5">Guest Name</th>
+                    <th className="py-3 px-3">Room</th>
+                    <th className="py-3 px-3">Check-in</th>
+                    <th className="py-3 px-3">Check-out</th>
+                    <th className="py-3 px-5 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {recentReservations.map((res) => {
+                    const roomDisp = getReservationRoomDisplay(res, rooms);
+                    const badge = getReservationStatusBadge(res.status);
+                    return (
+                      <tr
+                        key={res.id}
+                        onClick={() => onOpenReservationFolio(res.id, 'reservations')}
+                        className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                      >
+                        <td className="py-3 px-5 font-semibold text-slate-900 whitespace-nowrap">
+                          {res.guestName}
+                        </td>
+                        <td className="py-3 px-3 font-mono-tabular text-slate-700 whitespace-nowrap">
+                          {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'}
+                        </td>
+                        <td className="py-3 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {formatShortDate(res.checkInDate)}
+                        </td>
+                        <td className="py-3 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {formatShortDate(res.checkOutDate)}
+                        </td>
+                        <td className="py-3 px-5 text-right whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${badge.className}`}
+                          >
+                            {badge.label}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
 
-      {/* Simple Dashboard Footer */}
-      <footer className="pt-4 pb-2 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
-        <p className="font-bold text-[#061539]">
-          © {new Date().getFullYear()} {property.name}. All rights reserved.
-        </p>
-        <p className="font-medium text-slate-500">
-          Powered by <span className="font-bold text-[#061539]">PCH PMS</span>
-        </p>
-      </footer>
-
-      {/* Cancel / No-Show Confirmation Modal */}
-      {cancelTarget && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-xl text-xs">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="font-display text-base font-bold text-slate-900">
-                  Cancel or Mark No-Show
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {cancelTarget.bookingRef} · {cancelTarget.guestName} ({cancelTarget.roomNumber || 'Unassigned'})
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setCancelTarget(null)}
-                className="text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+        {/* Occupancy Trend Area Chart */}
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-[#0b5d34]" />
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Occupancy Trend
+              </h2>
             </div>
+            <span className="px-2.5 py-1 rounded-lg bg-[#0b5d34] text-white font-mono-tabular text-xs font-bold">
+              {metrics.occupancyRate}%
+            </span>
+          </div>
 
-            <p className="text-slate-600 leading-relaxed">
-              Select free cancellation or apply a cancellation fee before releasing{' '}
-              <span className="font-mono-tabular font-semibold text-slate-800">
-                {cancelTarget.roomNumber || 'the room hold'}
-              </span>
-              .
-            </p>
+          <div className="w-full">
+            <svg
+              viewBox={`0 0 ${trendSvg.W} ${trendSvg.H}`}
+              className="w-full h-auto overflow-visible"
+              role="img"
+              aria-label="7-day occupancy trend chart"
+            >
+              <defs>
+                <linearGradient id="occAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#169a57" stopOpacity="0.28" />
+                  <stop offset="100%" stopColor="#169a57" stopOpacity="0.02" />
+                </linearGradient>
+              </defs>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={() => setCancelMode('free')}
-                className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
-                  cancelMode === 'free'
-                    ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <span className="block font-bold">Free Cancellation</span>
-                <span className="block text-[11px] opacity-80 mt-0.5">
-                  ₦0 cancellation fee · Zero folio charge
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setCancelMode('paid')}
-                className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
-                  cancelMode === 'paid'
-                    ? 'border-rose-600 bg-rose-50 text-rose-900'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <span className="block font-bold">Cancellation with Cost</span>
-                <span className="block text-[11px] opacity-80 mt-0.5">
-                  Apply cancellation fee in ₦ to reservation bill
-                </span>
-              </button>
-            </div>
-
-            {cancelMode === 'paid' && (
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">
-                      Cancellation Cost (₦ NGN) *
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={500}
-                      value={cancelFeeNgn}
-                      onChange={(e) => setCancelFeeNgn(Math.max(0, Number(e.target.value)))}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 bg-white font-mono-tabular font-semibold"
+              {[100, 75, 50, 25, 0].map((val) => {
+                const y = trendSvg.padT + trendSvg.plotH - (val / 100) * trendSvg.plotH;
+                return (
+                  <g key={val}>
+                    <line
+                      x1={trendSvg.padL}
+                      y1={y}
+                      x2={trendSvg.W - 14}
+                      y2={y}
+                      stroke="#e2e8f0"
+                      strokeWidth="1"
                     />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">
-                      Payment Method
-                    </label>
-                    <select
-                      value={cancelPayMethod}
-                      onChange={(e) =>
-                        setCancelPayMethod(e.target.value as ReservationRecord['paymentMethod'])
-                      }
-                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 bg-white"
+                    <text
+                      x={trendSvg.padL - 6}
+                      y={y + 3}
+                      textAnchor="end"
+                      className="fill-slate-400 text-[10px] font-mono-tabular"
                     >
-                      <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="Card POS">Card POS</option>
-                      <option value="Cash NGN">Cash NGN</option>
-                      <option value="Corporate Invoice">Corporate Invoice</option>
-                      <option value="Online Gateway">Online Gateway</option>
-                    </select>
-                  </div>
-                </div>
-                <label className="inline-flex items-center gap-2 font-medium text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={collectCancelFeeNow}
-                    onChange={(e) => setCollectCancelFeeNow(e.target.checked)}
-                    className="rounded border-slate-300 text-emerald-600"
-                  />
-                  <span>Collect cancellation fee now &amp; post to Revenue Ledger</span>
-                </label>
-              </div>
-            )}
+                      {val}%
+                    </text>
+                  </g>
+                );
+              })}
 
-            <div>
-              <label className="block font-medium text-slate-700 mb-1">
-                Cancellation Reason / Note (Optional)
-              </label>
-              <input
-                type="text"
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-1.5"
-              />
-            </div>
+              {trendSvg.areaPath && <path d={trendSvg.areaPath} fill="url(#occAreaGrad)" />}
+              {trendSvg.linePath && (
+                <path
+                  d={trendSvg.linePath}
+                  fill="none"
+                  stroke="#169a57"
+                  strokeWidth="2.5"
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+              )}
 
-            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setCancelTarget(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-700 border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer"
-              >
-                Keep Reservation
-              </button>
-              <button
-                type="button"
-                disabled={busyResId === cancelTarget.id}
-                onClick={() => void handleConfirmCancelOrNoShow('no_show')}
-                className="px-3.5 py-2 text-xs font-semibold text-orange-800 bg-orange-50 border border-orange-200 hover:bg-orange-100 rounded-lg disabled:opacity-50 cursor-pointer"
-              >
-                Mark No-show
-              </button>
-              <button
-                type="button"
-                disabled={busyResId === cancelTarget.id}
-                onClick={() => void handleConfirmCancelOrNoShow('cancelled')}
-                className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg disabled:opacity-50 cursor-pointer"
-              >
-                {busyResId === cancelTarget.id
-                  ? 'Updating...'
-                  : cancelMode === 'paid'
-                    ? `Cancel (${formatNgn(cancelFeeNgn)})`
-                    : 'Confirm Free Cancel'}
-              </button>
-            </div>
+              {trendSvg.coords.map((pt) => (
+                <g key={pt.iso}>
+                  <circle
+                    cx={pt.x}
+                    cy={pt.y}
+                    r="4"
+                    fill="#169a57"
+                    stroke="#ffffff"
+                    strokeWidth="2"
+                  >
+                    <title>{`${pt.iso}: ${pt.pct}% occupied`}</title>
+                  </circle>
+                  <text
+                    x={pt.x}
+                    y={trendSvg.H - 6}
+                    textAnchor="middle"
+                    className="fill-slate-500 text-[10px] font-medium"
+                  >
+                    {pt.label}
+                  </text>
+                </g>
+              ))}
+            </svg>
           </div>
         </div>
-      )}
-
-      {/* Mandatory Front-Desk Check-In Workflow Modal */}
-      {checkInTarget && (
-        <CheckInProcessModal
-          property={property}
-          reservation={checkInTarget}
-          room={rooms.find((r) => r.id === checkInTarget.roomId)}
-          rooms={rooms}
-          guest={
-            guests.find((g) => g.id === checkInTarget.guestId) ||
-            guests.find((g) => g.fullName.toLowerCase() === checkInTarget.guestName.toLowerCase())
-          }
-          actorRole={actorRole}
-          onClose={() => setCheckInTarget(null)}
-          onCompleted={(info) => {
-            onNotify?.(`Verified & checked in ${info.guestName} into ${info.roomNumber}`);
-            onGuestCheckedIn?.(info);
-          }}
-        />
-      )}
+      </div>
     </div>
   );
 };

@@ -3,13 +3,14 @@ import {
   Activity,
   AlertTriangle,
   Award,
-  Bell,
+  Building2,
   Calendar,
   Check,
   CheckCircle2,
   Clock,
   Copy,
   Eye,
+  EyeOff,
   FileText,
   KeyRound,
   Link2,
@@ -18,6 +19,7 @@ import {
   Pencil,
   Plus,
   Printer,
+  RefreshCw,
   Send,
   ShieldAlert,
   ShieldCheck,
@@ -58,10 +60,12 @@ import {
   formatNgn,
   getPortalUrl,
   getPropertyCodePrefix,
+  getPropertySystemId,
   HousekeepingTaskRecord,
   MaintenanceTicketRecord,
   NavSectionId,
   PayrollRunRecord,
+  PortalMode,
   PosOrderRecord,
   PROPERTY_PRIVILEGE_OPTIONS,
   PropertyRecord,
@@ -82,7 +86,12 @@ type StaffAdminTab = 'users' | 'roster' | 'performance';
 interface StaffHrPayrollViewProps {
   section: Extract<NavSectionId, 'staff' | 'shifts_attendance' | 'payroll'>;
   initialTab?: StaffAdminTab;
+  portalMode?: PortalMode;
   property: PropertyRecord;
+  properties?: PropertyRecord[];
+  onSelectProperty?: (propertyId: string) => void;
+  prefillLoginPropertyId?: string | null;
+  onConsumePrefillLoginPropertyId?: () => void;
   activeRole: StaffRole;
   staffMembers: StaffMemberRecord[];
   userAccounts: PropertyUserAccountRecord[];
@@ -114,10 +123,34 @@ function splitFullName(fullName: string): { firstName: string; lastName: string 
   };
 }
 
+function generateStrongPassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#';
+  let out = 'Pch@';
+  for (let i = 0; i < 8; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+function launchMailtoDraft(to: string, subject: string, body: string): void {
+  const href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const a = document.createElement('a');
+  a.href = href;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   section,
   initialTab,
+  portalMode,
   property,
+  properties = [],
+  onSelectProperty,
+  prefillLoginPropertyId,
+  onConsumePrefillLoginPropertyId,
   activeRole,
   staffMembers,
   userAccounts,
@@ -137,6 +170,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   onSendPasswordSetupEmail,
 }) => {
   const { cms } = useCms();
+  const isPchPlatformMode = portalMode === 'pch-admin';
   const isAdminManager = activeRole === 'property_admin' || activeRole === 'pch_admin';
   const [staffTab, setStaffTab] = useState<StaffAdminTab>(initialTab || 'users');
 
@@ -171,11 +205,48 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     ...ROLE_ALLOWED_SECTIONS.front_desk,
   ]);
   const [uPassword, setUPassword] = useState('');
+  const [showUPassword, setShowUPassword] = useState(false);
   const [uCreateStaff, setUCreateStaff] = useState(true);
   const [uBaseSalary, setUBaseSalary] = useState(150000);
   const [uAllowance, setUAllowance] = useState(35000);
   const [creatingUser, setCreatingUser] = useState(false);
   const [userActionError, setUserActionError] = useState<string | null>(null);
+
+  // PCH Platform Admin — Create Property Login state (never defaults to Richgates)
+  const [targetPropertyId, setTargetPropertyId] = useState<string>(prefillLoginPropertyId || '');
+  const [propAdminFirstName, setPropAdminFirstName] = useState('');
+  const [propAdminLastName, setPropAdminLastName] = useState('');
+  const [propAdminEmail, setPropAdminEmail] = useState('');
+  const [propAdminPhone, setPropAdminPhone] = useState('+234 ');
+  const [propAdminPassword, setPropAdminPassword] = useState('');
+  const [showPropAdminPassword, setShowPropAdminPassword] = useState(false);
+  const [creatingPropLogin, setCreatingPropLogin] = useState(false);
+  const [createdPropLoginSummary, setCreatedPropLoginSummary] = useState<{
+    propertyName: string;
+    portalUrl: string;
+    fullName: string;
+    email: string;
+    password: string;
+  } | null>(null);
+
+  // Property Admin — Newly Created User summary for immediate "Share Details via Email"
+  const [createdPropertyUserSummary, setCreatedPropertyUserSummary] = useState<{
+    fullName: string;
+    email: string;
+    roleLabel: string;
+    department: string;
+    portalUrl: string;
+    password: string;
+  } | null>(null);
+  const [sharingEmailBusy, setSharingEmailBusy] = useState(false);
+  const [shareEmailStatus, setShareEmailStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prefillLoginPropertyId) {
+      setTargetPropertyId(prefillLoginPropertyId);
+      onConsumePrefillLoginPropertyId?.();
+    }
+  }, [prefillLoginPropertyId, onConsumePrefillLoginPropertyId]);
 
   // Edit User Role & Privileges Modal
   const [editingAccount, setEditingAccount] = useState<PropertyUserAccountRecord | null>(null);
@@ -214,7 +285,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
 
-  // Send Notification & Login Link Modal state
+  // Share Login Details via Email Modal state (Property Admin)
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [copiedUserLinkId, setCopiedUserLinkId] = useState<string | null>(null);
   const [notifyAccTarget, setNotifyAccTarget] = useState<PropertyUserAccountRecord | null>(null);
@@ -277,33 +348,150 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     );
   };
 
+  const shareLoginDetailsViaEmail = async (params: {
+    to: string;
+    subject: string;
+    body: string;
+    propertyName: string;
+  }): Promise<{ delivered: boolean; message: string }> => {
+    try {
+      const resp = await fetch('/api/share-login-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: params.to,
+          subject: params.subject,
+          text: params.body,
+          propertyName: params.propertyName,
+        }),
+      });
+      if (resp.ok) {
+        const data = (await resp.json()) as { delivered?: boolean; reason?: string };
+        if (data.delivered) {
+          return {
+            delivered: true,
+            message: `Login details emailed directly to ${params.to}.`,
+          };
+        }
+      }
+    } catch {
+      // Fall through cleanly to pre-populated mailto draft
+    }
+
+    launchMailtoDraft(params.to, params.subject, params.body);
+    return {
+      delivered: false,
+      message: `Opened pre-filled email draft to ${params.to}. Click Send in your email client (or copy the details below).`,
+    };
+  };
+
+  const handleCreatePropertyAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserActionError(null);
+    setCreatedPropLoginSummary(null);
+
+    const chosenProp = properties.find((p) => p.id === targetPropertyId);
+    if (!chosenProp) {
+      setUserActionError('Please select a property before creating a Property Login.');
+      return;
+    }
+    if (!propAdminFirstName.trim() || !propAdminLastName.trim() || !propAdminEmail.trim()) {
+      setUserActionError('First name, last name, and admin email are required.');
+      return;
+    }
+    if (propAdminPassword.trim() && propAdminPassword.trim().length < 6) {
+      setUserActionError('Password must be at least 6 characters.');
+      return;
+    }
+
+    setCreatingPropLogin(true);
+    try {
+      const fullName = `${propAdminFirstName.trim()} ${propAdminLastName.trim()}`.trim();
+      const emailClean = propAdminEmail.trim().toLowerCase();
+      const passClean = propAdminPassword.trim();
+      const res = await createPropertyUserAccountWorkflow({
+        property: chosenProp,
+        firstName: propAdminFirstName.trim(),
+        lastName: propAdminLastName.trim(),
+        email: emailClean,
+        phone: propAdminPhone.trim(),
+        department: 'Management',
+        role: 'property_admin',
+        privileges: [...ROLE_ALLOWED_SECTIONS.property_admin],
+        password: passClean,
+        alsoCreateStaffRecord: false,
+        monthlyBaseSalaryNgn: 0,
+        monthlyAllowanceNgn: 0,
+        actorRole,
+      });
+
+      onSelectProperty?.(chosenProp.id);
+      const portalUrl = getPortalUrl('richgates-admin', chosenProp);
+      setCreatedPropLoginSummary({
+        propertyName: chosenProp.name,
+        portalUrl,
+        fullName,
+        email: emailClean,
+        password: passClean,
+      });
+      onNotify(
+        `Created Property Admin login for ${chosenProp.name} (${emailClean})${res.authNote ? ` · ${res.authNote}` : ''}`
+      );
+      setPropAdminFirstName('');
+      setPropAdminLastName('');
+      setPropAdminEmail('');
+      setPropAdminPhone('+234 ');
+      setPropAdminPassword('');
+    } catch (err) {
+      setUserActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreatingPropLogin(false);
+    }
+  };
+
   const handleCreateUserAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     setUserActionError(null);
+    setShareEmailStatus(null);
     if (!uFirstName.trim() || !uLastName.trim() || !uEmail.trim()) {
       setUserActionError('First name, last name, and work email are required.');
       return;
     }
     setCreatingUser(true);
     try {
+      const createdFullName = `${uFirstName.trim()} ${uLastName.trim()}`.trim();
+      const createdEmail = uEmail.trim().toLowerCase();
+      const createdPassword = uPassword.trim();
+      const createdRoleLabel = ASSIGNABLE_ROLE_LABELS[uRole];
+      const createdDept = uDepartment;
+      const portalUrl = uRole === 'property_admin' ? adminLoginUrl : staffLoginUrl;
+
       const res = await createPropertyUserAccountWorkflow({
         property,
         firstName: uFirstName,
         lastName: uLastName,
-        email: uEmail,
+        email: createdEmail,
         phone: uPhone,
         department: uDepartment,
         role: uRole,
         privileges: uPrivileges,
-        password: uPassword,
+        password: createdPassword,
         alsoCreateStaffRecord: uCreateStaff,
         monthlyBaseSalaryNgn: uBaseSalary,
         monthlyAllowanceNgn: uAllowance,
         actorRole,
       });
       onNotify(
-        `Saved user account for ${uFirstName.trim()} ${uLastName.trim()} (${ASSIGNABLE_ROLE_LABELS[uRole]})${res.authNote ? ` · ${res.authNote}` : ''}`
+        `Created user account for ${createdFullName} (${createdRoleLabel})${res.authNote ? ` · ${res.authNote}` : ''}`
       );
+      setCreatedPropertyUserSummary({
+        fullName: createdFullName,
+        email: createdEmail,
+        roleLabel: createdRoleLabel,
+        department: createdDept,
+        portalUrl,
+        password: createdPassword,
+      });
       setShowUserForm(false);
       setUFirstName('');
       setULastName('');
@@ -479,15 +667,15 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const staffLoginUrl = getPortalUrl('staff', property);
   const adminLoginUrl = getPortalUrl('richgates-admin', property);
 
-  const openNotifyAccModal = (acc: PropertyUserAccountRecord) => {
+  const openShareEmailModal = (acc: PropertyUserAccountRecord) => {
     const portalChoice: 'staff' | 'richgates-admin' =
       acc.role === 'property_admin' ? 'richgates-admin' : 'staff';
     const linkUrl = portalChoice === 'richgates-admin' ? adminLoginUrl : staffLoginUrl;
     setNotifyAccTarget(acc);
     setNotifyAccPortal(portalChoice);
-    setNotifyAccSubject(`Your ${property.name} Portal Login Link & Assigned Role`);
+    setNotifyAccSubject(`Your ${property.name} Login Details`);
     setNotifyAccBody(
-      `Hello ${acc.fullName},\n\nYour role at ${property.name} is: ${ASSIGNABLE_ROLE_LABELS[acc.role]}.\nSign in here:\n${linkUrl}\n\nWork Email: ${acc.email}`
+      `Hello ${acc.fullName},\n\nYour user login for ${property.name} is ready.\n\nRole: ${ASSIGNABLE_ROLE_LABELS[acc.role]}\nDepartment: ${acc.department}\nPortal URL: ${linkUrl}\nEmail: ${acc.email}\n\nPlease sign in with your work email and assigned password (or use the password setup link if sent separately).\n\nBest regards,\n${currentUserName || property.name}`
     );
     setNotifyAccFeedback(null);
   };
@@ -497,35 +685,83 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     if (!notifyAccTarget) return;
     const nextUrl = portal === 'richgates-admin' ? adminLoginUrl : staffLoginUrl;
     setNotifyAccBody(
-      `Hello ${notifyAccTarget.fullName},\n\nYour role at ${property.name} is: ${ASSIGNABLE_ROLE_LABELS[notifyAccTarget.role]}.\nSign in using the ${portal === 'richgates-admin' ? 'Property Admin (/admin)' : 'Staff Portal (/login)'} link below:\n${nextUrl}\n\nWork Email: ${notifyAccTarget.email}`
+      `Hello ${notifyAccTarget.fullName},\n\nYour user login for ${property.name} is ready.\n\nRole: ${ASSIGNABLE_ROLE_LABELS[notifyAccTarget.role]}\nDepartment: ${notifyAccTarget.department}\nPortal URL (${portal === 'richgates-admin' ? 'Property Admin /admin' : 'Staff Portal /login'}): ${nextUrl}\nEmail: ${notifyAccTarget.email}\n\nPlease sign in with your work email and assigned password.\n\nBest regards,\n${currentUserName || property.name}`
     );
   };
 
-  const handleSendAccLoginNotification = async (e: React.FormEvent) => {
+  const handleShareAccDetailsViaEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!notifyAccTarget) return;
     setNotifyAccBusy(true);
     setNotifyAccFeedback(null);
     try {
-      await sendPropertyMessageWorkflow({
-        property,
-        senderName: currentUserName || 'Property Admin',
-        senderRole: actorRole,
-        senderDepartment: 'Management',
-        recipientScope: 'direct_staff',
-        recipientEmails: [notifyAccTarget.email.trim().toLowerCase()],
-        recipientNames: [notifyAccTarget.fullName],
-        subject: notifyAccSubject.trim() || `${property.name} Login Link`,
-        body: notifyAccBody.trim(),
-        priority: 'Normal',
+      const subject = notifyAccSubject.trim() || `Your ${property.name} Login Details`;
+      const body = notifyAccBody.trim();
+      const result = await shareLoginDetailsViaEmail({
+        to: notifyAccTarget.email.trim(),
+        subject,
+        body,
+        propertyName: property.name,
       });
-      const msg = `Notification & login link sent to ${notifyAccTarget.fullName} (${notifyAccTarget.email}).`;
-      setNotifyAccFeedback(msg);
-      onNotify(msg);
+      // Also log an in-app copy silently so the employee has it on login too
+      try {
+        await sendPropertyMessageWorkflow({
+          property,
+          senderName: currentUserName || 'Property Admin',
+          senderRole: actorRole,
+          senderDepartment: 'Management',
+          recipientScope: 'direct_staff',
+          recipientEmails: [notifyAccTarget.email.trim().toLowerCase()],
+          recipientNames: [notifyAccTarget.fullName],
+          subject,
+          body,
+          priority: 'Normal',
+        });
+      } catch {
+        // Non-blocking
+      }
+      setNotifyAccFeedback(result.message);
+      onNotify(result.message);
     } catch (err) {
-      setNotifyAccFeedback(err instanceof Error ? err.message : 'Unable to send notification.');
+      setNotifyAccFeedback(err instanceof Error ? err.message : 'Unable to share email details.');
     } finally {
       setNotifyAccBusy(false);
+    }
+  };
+
+  const handleShareCreatedUserViaEmail = async () => {
+    if (!createdPropertyUserSummary) return;
+    setSharingEmailBusy(true);
+    setShareEmailStatus(null);
+    const subject = `Your ${property.name} Login Details`;
+    const body = [
+      `Hello ${createdPropertyUserSummary.fullName},`,
+      '',
+      `Your account for ${property.name} has been created.`,
+      '',
+      `Role: ${createdPropertyUserSummary.roleLabel}`,
+      `Department: ${createdPropertyUserSummary.department}`,
+      `Login Portal: ${createdPropertyUserSummary.portalUrl}`,
+      `Work Email: ${createdPropertyUserSummary.email}`,
+      createdPropertyUserSummary.password
+        ? `Temporary Password: ${createdPropertyUserSummary.password}`
+        : 'Password: Use the password setup email sent to your inbox to set your password.',
+      '',
+      `Best regards,`,
+      `${currentUserName || property.name}`,
+    ].join('\n');
+
+    try {
+      const result = await shareLoginDetailsViaEmail({
+        to: createdPropertyUserSummary.email,
+        subject,
+        body,
+        propertyName: property.name,
+      });
+      setShareEmailStatus(result.message);
+      onNotify(result.message);
+    } finally {
+      setSharingEmailBusy(false);
     }
   };
 
@@ -536,7 +772,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     try {
       await onSendPasswordSetupEmail(notifyAccTarget.email);
       setNotifyAccFeedback(
-        `Password setup email sent to ${notifyAccTarget.email}. They can set their password and open the login link.`
+        `Password setup email sent to ${notifyAccTarget.email}. They can set their password and sign in.`
       );
     } catch (err) {
       setNotifyAccFeedback(err instanceof Error ? err.message : 'Unable to send password setup email.');
@@ -934,6 +1170,324 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
     );
   }
 
+  // DEDICATED CLEAN MODERN "CREATE PROPERTY LOGIN" SCREEN FOR admin.pchpms.com
+  if (isPchPlatformMode && section === 'staff') {
+    const selectedProp = properties.find((p) => p.id === targetPropertyId) || null;
+    const propertyAdminAccounts = userAccounts.filter(
+      (a) => selectedProp && a.propertyId === selectedProp.id && a.role === 'property_admin'
+    );
+
+    return (
+      <div className="space-y-6">
+        {/* Clean Modern Header */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-[#0b5d34] text-white flex items-center justify-center shrink-0">
+              <KeyRound className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="font-display text-xl font-extrabold text-slate-900 tracking-tight">
+                Create Property Login
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-500 mt-0.5 max-w-2xl">
+                Provision a Property Admin login for any registered property. Each property receives full access to its entire dashboard, and its Property Admin manages internal staff roles.
+              </p>
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-semibold text-[#0b5d34] shrink-0">
+            <Building2 className="w-3.5 h-3.5" />
+            <span>{properties.length} Properties Registered</span>
+          </span>
+        </div>
+
+        {userActionError && (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-2">
+            <span>{userActionError}</span>
+            <button
+              type="button"
+              onClick={() => setUserActionError(null)}
+              className="text-rose-700 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {createdPropLoginSummary && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 space-y-3 text-xs shadow-xs">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2 text-emerald-900 font-bold text-sm">
+                <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
+                <span>Property Login Created for {createdPropLoginSummary.propertyName}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreatedPropLoginSummary(null)}
+                className="text-emerald-700 hover:text-emerald-950 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white border border-emerald-200/80 rounded-xl p-3.5">
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400">Property Admin</p>
+                <p className="font-semibold text-slate-900 mt-0.5">{createdPropLoginSummary.fullName}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400">Login Email</p>
+                <p className="font-mono-tabular font-semibold text-slate-900 mt-0.5 break-all">
+                  {createdPropLoginSummary.email}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400">Password</p>
+                <p className="font-mono-tabular font-semibold text-slate-900 mt-0.5">
+                  {createdPropLoginSummary.password || 'Password setup link required'}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase text-slate-400">Property Portal URL</p>
+                <p className="font-mono-tabular font-semibold text-[#0b5d34] mt-0.5 truncate">
+                  {createdPropLoginSummary.portalUrl}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const text = `Property: ${createdPropLoginSummary.propertyName}\nAdmin: ${createdPropLoginSummary.fullName}\nPortal URL: ${createdPropLoginSummary.portalUrl}\nEmail: ${createdPropLoginSummary.email}${
+                    createdPropLoginSummary.password ? `\nPassword: ${createdPropLoginSummary.password}` : ''
+                  }`;
+                  await navigator.clipboard.writeText(text);
+                  onNotify(`Copied login credentials for ${createdPropLoginSummary.propertyName}`);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#0b5d34] hover:bg-[#094b2a] text-white font-semibold cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy Property Credentials</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Clean Modern Create Property Login Form (No Assign Roles, No Module Privileges, No Send User Login) */}
+        <form
+          onSubmit={handleCreatePropertyAdminLogin}
+          className="bg-white border border-slate-200 rounded-2xl p-6 space-y-5 shadow-xs text-xs"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="md:col-span-2">
+              <label className="block font-semibold text-slate-800 mb-1.5">
+                Select Property *
+              </label>
+              <select
+                required
+                value={targetPropertyId}
+                onChange={(e) => {
+                  setTargetPropertyId(e.target.value);
+                  if (e.target.value) {
+                    onSelectProperty?.(e.target.value);
+                  }
+                }}
+                className="w-full h-11 border border-slate-200 rounded-xl px-3.5 bg-white text-sm font-medium text-slate-900 focus:outline-none focus:border-[#0b5d34] focus:ring-2 focus:ring-emerald-600/15"
+              >
+                <option value="">Choose a property...</option>
+                {properties.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({getPropertySystemId(p)} · {p.city}, {p.country})
+                  </option>
+                ))}
+              </select>
+              {selectedProp && (
+                <p className="text-[11px] text-slate-500 mt-1.5 flex items-center gap-1.5">
+                  <Link2 className="w-3.5 h-3.5 text-[#0b5d34]" />
+                  <span>
+                    Admin Dashboard URL:{' '}
+                    <strong className="font-mono-tabular text-slate-700">
+                      {getPortalUrl('richgates-admin', selectedProp)}
+                    </strong>
+                  </span>
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-800 mb-1.5">First Name *</label>
+              <input
+                required
+                type="text"
+                placeholder="e.g. Chidi"
+                value={propAdminFirstName}
+                onChange={(e) => setPropAdminFirstName(e.target.value)}
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-800 mb-1.5">Last Name *</label>
+              <input
+                required
+                type="text"
+                placeholder="e.g. Nwosu"
+                value={propAdminLastName}
+                onChange={(e) => setPropAdminLastName(e.target.value)}
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-800 mb-1.5">Admin Email *</label>
+              <input
+                required
+                type="email"
+                placeholder="admin@propertydomain.com"
+                value={propAdminEmail}
+                onChange={(e) => setPropAdminEmail(e.target.value)}
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-800 mb-1.5">Phone Number</label>
+              <input
+                type="text"
+                value={propAdminPhone}
+                onChange={(e) => setPropAdminPhone(e.target.value)}
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm font-mono-tabular text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="font-semibold text-slate-800">
+                  Sign-In Password (min 6 characters) *
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPropAdminPassword(generateStrongPassword());
+                    setShowPropAdminPassword(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Generate Password</span>
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  required
+                  minLength={6}
+                  type={showPropAdminPassword ? 'text' : 'password'}
+                  placeholder="Enter a secure password"
+                  value={propAdminPassword}
+                  onChange={(e) => setPropAdminPassword(e.target.value)}
+                  className="w-full h-10 border border-slate-200 rounded-xl pl-3.5 pr-10 text-sm font-mono-tabular text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPropAdminPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  aria-label="Toggle password visibility"
+                >
+                  {showPropAdminPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-100">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <ShieldCheck className="w-4 h-4 text-[#0b5d34] shrink-0" />
+              <span>
+                Full property dashboard access is granted automatically; the property admin assigns staff roles inside their workspace.
+              </span>
+            </div>
+            <button
+              type="submit"
+              disabled={creatingPropLogin || !targetPropertyId}
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-[#0b5d34] hover:bg-[#094b2a] disabled:opacity-50 text-white text-sm font-bold shadow-xs transition-colors cursor-pointer shrink-0"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>{creatingPropLogin ? 'Creating Login...' : 'Create Property Login'}</span>
+            </button>
+          </div>
+        </form>
+
+        {/* Existing Property Admin Logins for Selected Property */}
+        {selectedProp && (
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+            <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between gap-2">
+              <h2 className="font-display text-sm font-bold text-slate-900">
+                Existing Property Logins — {selectedProp.name} ({propertyAdminAccounts.length})
+              </h2>
+              <span className="text-xs text-slate-500 font-mono-tabular">
+                {getPropertySystemId(selectedProp)}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-4">Admin Name</th>
+                    <th className="py-3 px-4">Email</th>
+                    <th className="py-3 px-4">Access Scope</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {propertyAdminAccounts.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-500">
+                        No property admin login created for {selectedProp.name} yet. Use the form above to create one.
+                      </td>
+                    </tr>
+                  ) : (
+                    propertyAdminAccounts.map((acc) => (
+                      <tr key={acc.id} className="hover:bg-slate-50/80">
+                        <td className="py-3 px-4 font-semibold text-slate-900">{acc.fullName}</td>
+                        <td className="py-3 px-4 font-mono-tabular text-slate-600">{acc.email}</td>
+                        <td className="py-3 px-4">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#0b5d34] font-semibold text-[11px]">
+                            Full Property Dashboard
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                              acc.active
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-slate-100 text-slate-500'
+                            }`}
+                          >
+                            {acc.active ? 'Active' : 'Paused'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAccount(acc)}
+                            disabled={busyActionId === acc.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Remove</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {actionError && (
@@ -1201,9 +1755,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                     </p>
                   </div>
                   <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                    <p className="font-bold text-[#061539]">2. Send Notification &amp; Link</p>
+                    <p className="font-bold text-[#061539]">2. Share Details via Email</p>
                     <p className="text-slate-600">
-                      Click <strong>Notify &amp; Link</strong> beside any user to send an alert, copy their login link, or email a password setup link.
+                      After creating a user login, click <strong>Share Details via Email</strong> to email their portal link, role, and sign-in details directly.
                     </p>
                   </div>
                   <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
@@ -1284,6 +1838,108 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Post-Creation Share Details via Email Card */}
+              {createdPropertyUserSummary && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 space-y-3.5 text-xs shadow-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2 text-emerald-950 font-bold text-sm">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
+                      <span>
+                        User Login Created for {createdPropertyUserSummary.fullName} — Share Details via Email
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreatedPropertyUserSummary(null);
+                        setShareEmailStatus(null);
+                      }}
+                      className="text-emerald-700 hover:text-emerald-950 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white border border-emerald-200/80 rounded-xl p-3.5">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-slate-400">Role</p>
+                      <p className="font-semibold text-slate-900 mt-0.5">
+                        {createdPropertyUserSummary.roleLabel}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-slate-400">Email</p>
+                      <p className="font-mono-tabular font-semibold text-slate-900 mt-0.5 break-all">
+                        {createdPropertyUserSummary.email}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-slate-400">Password</p>
+                      <p className="font-mono-tabular font-semibold text-slate-900 mt-0.5">
+                        {createdPropertyUserSummary.password || 'Password setup link'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-slate-400">Portal URL</p>
+                      <p className="font-mono-tabular font-semibold text-[#0b5d34] mt-0.5 truncate">
+                        {createdPropertyUserSummary.portalUrl}
+                      </p>
+                    </div>
+                  </div>
+
+                  {shareEmailStatus && (
+                    <div className="px-3.5 py-2.5 rounded-lg bg-white border border-emerald-300 text-emerald-900 font-medium">
+                      {shareEmailStatus}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={sharingEmailBusy}
+                      onClick={handleShareCreatedUserViaEmail}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0b5d34] hover:bg-[#094b2a] disabled:opacity-50 text-white font-semibold cursor-pointer"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>{sharingEmailBusy ? 'Sharing via Email...' : 'Share Details via Email'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const txt = `Hello ${createdPropertyUserSummary.fullName},\n\nYour ${property.name} login details:\nRole: ${createdPropertyUserSummary.roleLabel}\nPortal URL: ${createdPropertyUserSummary.portalUrl}\nEmail: ${createdPropertyUserSummary.email}${
+                          createdPropertyUserSummary.password
+                            ? `\nPassword: ${createdPropertyUserSummary.password}`
+                            : ''
+                        }`;
+                        await navigator.clipboard.writeText(txt);
+                        onNotify(`Copied login details for ${createdPropertyUserSummary.fullName}`);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-emerald-300 bg-white hover:bg-emerald-100/50 text-emerald-950 font-semibold cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Details</span>
+                    </button>
+
+                    {onSendPasswordSetupEmail && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await onSendPasswordSetupEmail(createdPropertyUserSummary.email);
+                          setShareEmailStatus(
+                            `Password setup email sent to ${createdPropertyUserSummary.email}.`
+                          );
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold cursor-pointer"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Send Password Setup Link</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {showUserForm && (
                 <form
@@ -1381,18 +2037,40 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                       </select>
                     </div>
                     <div>
-                      <label className="block font-medium text-slate-700 mb-1">
-                        Sign-In Password (Optional, min 6 chars)
-                      </label>
-                      <input
-                        type="password"
-                        minLength={6}
-                        value={uPassword}
-                        onChange={(e) => setUPassword(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                      />
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="font-medium text-slate-700">
+                          Sign-In Password (Optional, min 6 chars)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUPassword(generateStrongPassword());
+                            setShowUPassword(true);
+                          }}
+                          className="text-[10px] font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+                        >
+                          Generate
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showUPassword ? 'text' : 'password'}
+                          minLength={6}
+                          value={uPassword}
+                          onChange={(e) => setUPassword(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg pl-3 pr-9 py-2 font-mono-tabular"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowUPassword((v) => !v)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                          aria-label="Toggle password visibility"
+                        >
+                          {showUPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                       <span className="text-[10px] text-slate-500 mt-0.5 block">
-                        Leave blank to send a password setup link to the user&apos;s email.
+                        You can share login details via email right after creating the user.
                       </span>
                     </div>
                     {uRole !== 'unassigned' && (
@@ -1444,7 +2122,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                           Module Privileges ({uPrivileges.length} selected)
                         </p>
                         <p className="text-[11px] text-slate-500">
-                          Controls which sections this user can open when signed into Richgates PMS.
+                          Controls which sections this user can open when signed into {property.name}.
                         </p>
                       </div>
                       {uRole !== 'unassigned' && (
@@ -1672,11 +2350,11 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                               <div className="inline-flex flex-wrap justify-end gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => openNotifyAccModal(acc)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#061539] font-semibold rounded cursor-pointer"
+                                  onClick={() => openShareEmailModal(acc)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#0b5d34] font-semibold rounded cursor-pointer"
                                 >
-                                  <Bell className="w-3 h-3 text-[#1c46be]" />
-                                  <span>Notify &amp; Link</span>
+                                  <Mail className="w-3 h-3 text-[#0b5d34]" />
+                                  <span>Share via Email</span>
                                 </button>
                                 <button
                                   type="button"
@@ -3372,20 +4050,20 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         );
       })()}
 
-      {/* Send Notification & Login Link Modal */}
+      {/* Share Login Details via Email Modal (Property Admin) */}
       {notifyAccTarget && (
         <div className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 overflow-y-auto">
           <form
-            onSubmit={handleSendAccLoginNotification}
-            className="bg-white border border-slate-200 rounded-xl max-w-xl w-full p-6 space-y-4 text-xs my-8 shadow-xl"
+            onSubmit={handleShareAccDetailsViaEmail}
+            className="bg-white border border-slate-200 rounded-2xl max-w-xl w-full p-6 space-y-4 text-xs my-8 shadow-xl"
           >
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Send Notification &amp; Login Link — {notifyAccTarget.fullName}
+                  Share Login Details via Email — {notifyAccTarget.fullName}
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  {notifyAccTarget.email} · {ASSIGNABLE_ROLE_LABELS[notifyAccTarget.role]}
+                  Recipient: <strong className="font-mono-tabular text-slate-700">{notifyAccTarget.email}</strong> · {ASSIGNABLE_ROLE_LABELS[notifyAccTarget.role]}
                 </p>
               </div>
               <button
@@ -3405,9 +4083,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 <button
                   type="button"
                   onClick={() => handleNotifyAccPortalSwitch('staff')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer ${
+                  className={`p-3 rounded-xl border text-left cursor-pointer ${
                     notifyAccPortal === 'staff'
-                      ? 'border-[#061539] bg-blue-50 text-[#061539]'
+                      ? 'border-[#0b5d34] bg-emerald-50 text-[#0b5d34]'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -3417,9 +4095,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 <button
                   type="button"
                   onClick={() => handleNotifyAccPortalSwitch('richgates-admin')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer ${
+                  className={`p-3 rounded-xl border text-left cursor-pointer ${
                     notifyAccPortal === 'richgates-admin'
-                      ? 'border-[#061539] bg-blue-50 text-[#061539]'
+                      ? 'border-[#0b5d34] bg-emerald-50 text-[#0b5d34]'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -3431,7 +4109,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
             <div>
               <label className="block font-semibold text-slate-700 mb-1">
-                Notification Subject
+                Email Subject
               </label>
               <input
                 type="text"
@@ -3444,10 +4122,10 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
             <div>
               <label className="block font-semibold text-slate-700 mb-1">
-                Message &amp; Login Link
+                Email Body &amp; Login Details
               </label>
               <textarea
-                rows={5}
+                rows={7}
                 required
                 value={notifyAccBody}
                 onChange={(e) => setNotifyAccBody(e.target.value)}
@@ -3462,31 +4140,19 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
               </div>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={async () => {
-                    const urlToCopy =
-                      notifyAccPortal === 'richgates-admin' ? adminLoginUrl : staffLoginUrl;
-                    await navigator.clipboard.writeText(urlToCopy);
-                    onNotify(`Copied login link: ${urlToCopy}`);
+                    await navigator.clipboard.writeText(`${notifyAccSubject}\n\n${notifyAccBody}`);
+                    onNotify(`Copied email details for ${notifyAccTarget.fullName}`);
                   }}
                   className="inline-flex items-center gap-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-semibold cursor-pointer"
                 >
                   <Copy className="w-3.5 h-3.5" />
-                  <span>Copy Link</span>
+                  <span>Copy Email</span>
                 </button>
-
-                <a
-                  href={`mailto:${encodeURIComponent(notifyAccTarget.email)}?subject=${encodeURIComponent(
-                    notifyAccSubject
-                  )}&body=${encodeURIComponent(notifyAccBody)}`}
-                  className="inline-flex items-center gap-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-semibold"
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  <span>Email Draft</span>
-                </a>
 
                 {onSendPasswordSetupEmail && (
                   <button
@@ -3512,10 +4178,10 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 <button
                   type="submit"
                   disabled={notifyAccBusy}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0b5d34] hover:bg-[#094b2a] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>{notifyAccBusy ? 'Sending...' : 'Send Notification'}</span>
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>{notifyAccBusy ? 'Sharing...' : 'Share Details via Email'}</span>
                 </button>
               </div>
             </div>

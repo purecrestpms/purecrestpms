@@ -33,6 +33,7 @@ import {
 } from '../types/pms';
 import {
   checkRoomDateRangeAvailability,
+  formatRoomAvailabilityTag,
   isActiveBlockingReservation,
   matchesRoomRecord,
 } from '../utils/availability';
@@ -1159,15 +1160,9 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         reservations,
                         blockedDates,
                       });
-                      const tag = avail.available
-                        ? 'Available'
-                        : avail.status === 'out_of_order'
-                          ? 'Out of Order'
-                          : avail.status === 'blocked'
-                            ? 'Blocked'
-                            : 'Reserved';
+                      const tag = formatRoomAvailabilityTag(avail);
                       return (
-                        <option key={r.id} value={r.id}>
+                        <option key={r.id} value={r.id} disabled={!avail.available}>
                           {r.roomNumber} · {r.roomType} ({formatNgn(r.nightlyRateNgn)}/nt) — {tag}
                         </option>
                       );
@@ -1182,6 +1177,33 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     setBookCheckIn(nextIn);
                     setBookCheckOut(nextOut);
                     setConflictError(null);
+                    const currentRm = rooms.find((r) => r.id === targetRoomId);
+                    if (
+                      currentRm &&
+                      !checkRoomDateRangeAvailability({
+                        room: currentRm,
+                        checkInDate: nextIn,
+                        checkOutDate: nextOut,
+                        reservations,
+                        blockedDates,
+                      }).available
+                    ) {
+                      const fallbackOpen = sortedRooms.find(
+                        (cand) =>
+                          cand.roomType === currentRm.roomType &&
+                          checkRoomDateRangeAvailability({
+                            room: cand,
+                            checkInDate: nextIn,
+                            checkOutDate: nextOut,
+                            reservations,
+                            blockedDates,
+                          }).available
+                      );
+                      if (fallbackOpen) {
+                        setTargetRoomId(fallbackOpen.id);
+                        setDepositNgn(fallbackOpen.nightlyRateNgn);
+                      }
+                    }
                   }}
                   room={rooms.find((r) => r.id === targetRoomId)}
                   rooms={sortedRooms}
