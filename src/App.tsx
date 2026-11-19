@@ -281,6 +281,9 @@ function detectInitialSection(): NavSectionId {
 function formatAuthErrorMessage(err: unknown): string {
   const code = (err as { code?: string })?.code || '';
   const raw = err instanceof Error ? err.message : String(err);
+  if (raw.toLowerCase().includes('redirect_uri_mismatch')) {
+    return 'Google Sign-In redirect URL mismatch. Please refresh the page and try again, or sign in with your email and password.';
+  }
   if (
     code === 'auth/unauthorized-domain' ||
     code === 'auth/unauthorized-continue-uri' ||
@@ -289,7 +292,7 @@ function formatAuthErrorMessage(err: unknown): string {
     raw.includes('auth/unauthorized-continue-uri')
   ) {
     const host = typeof window !== 'undefined' ? window.location.hostname : 'pchpms.com';
-    return `Domain "${host}" / "pchpms.com" must be added under Authentication → Settings → Authorized domains.`;
+    return `Domain "${host}" must be added under Authentication → Settings → Authorized domains.`;
   }
   if (code === 'auth/operation-not-allowed') {
     return 'Email and password sign-in is not currently enabled. Please sign in with Google or contact your administrator.';

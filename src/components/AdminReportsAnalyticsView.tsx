@@ -1,15 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import {
-  BarChart3,
+  ArrowRight,
   BedDouble,
-  Building2,
   Calendar,
+  CalendarCheck2,
+  CheckCircle2,
   Download,
   FileSpreadsheet,
-  FileText,
-  Layers,
-  Package,
-  PieChart as PieChartIcon,
+  Info,
+  ListChecks,
   Printer,
   Search,
   ShieldAlert,
@@ -18,46 +17,47 @@ import {
   Users,
   UtensilsCrossed,
   Wallet,
-  X,
+  XCircle,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
-import { useCms } from '../context/CmsContext';
 import {
   AttendanceRecord,
   BlockedDateRecord,
   formatBookingSourceLabel,
-  formatChannelCurrency,
   formatNgn,
+  formatUsd,
   getPropertySystemId,
-  getReservationBookedDate,
   getReservationPaymentSummary,
   getReservationRoomDisplay,
-  getRoomSection,
   GuestRecord,
   HousekeepingTaskRecord,
   InventoryItemRecord,
   isOtaBookingChannel,
   LedgerEntryRecord,
   MaintenanceTicketRecord,
-  matchesBookingSourceFilter,
   NavSectionId,
   OtaIntegrationRecord,
   PayrollRunRecord,
   PosOrderRecord,
   PropertyRecord,
   PurchaseOrderRecord,
-  ReservationRecord,
   RESERVATION_STATUS_LABELS,
+  ReservationRecord,
   ReservationStatus,
-  RICHGATES_PROPERTY_INFO,
   RoomRecord,
   ShiftScheduleRecord,
   sortRoomsByNumber,
   StaffMemberRecord,
   StaffRole,
 } from '../types/pms';
+import {
+  BookingsBySourcePieChart,
+  buildBookingsBySource,
+  buildMonthlyBookingTrend,
+  MonthlyTrendBarChart,
+} from './BookingAnalyticsCharts';
 
 interface AdminReportsAnalyticsViewProps {
   property: PropertyRecord;
@@ -81,194 +81,124 @@ interface AdminReportsAnalyticsViewProps {
   onNotify: (msg: string) => void;
 }
 
-type DatePreset =
-  | 'today'
-  | 'yesterday'
-  | 'single_day'
-  | 'this_week'
-  | 'last_7'
+type PeriodPreset =
   | 'this_month'
-  | 'last_month'
+  | 'today'
+  | 'last_7'
   | 'last_30'
+  | 'last_month'
+  | 'last_6_months'
   | 'this_year'
   | 'all_time'
   | 'custom';
-type ReportTab =
-  | 'overview'
-  | 'period_reports'
-  | 'daily_bookings'
-  | 'pending_payments'
-  | 'pnl'
-  | 'rooms'
-  | 'sources'
-  | 'pos_dept'
-  | 'inventory_staff';
 
-const CHART_PALETTE = [
-  '#1c46be',
-  '#059669',
-  '#d97706',
-  '#7c3aed',
-  '#e11d48',
-  '#0891b2',
-  '#4f46e5',
-  '#64748b',
-];
+type ReportTab = 'bookings' | 'financials' | 'rooms';
 
-function addDaysIso(isoDate: string, deltaDays: number): string {
-  const [y, m, d] = isoDate.split('-').map(Number);
-  const dt = new Date(Date.UTC(y || 2026, (m || 1) - 1, (d || 1) + deltaDays));
-  return dt.toISOString().slice(0, 10);
+function isoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
-function diffDaysInclusive(startIso: string, endIso: string): number {
-  const s = Date.parse(`${startIso}T00:00:00Z`);
-  const e = Date.parse(`${endIso}T00:00:00Z`);
-  if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return 1;
-  return Math.max(1, Math.round((e - s) / 86400000) + 1);
+function addDaysIso(baseIso: string, delta: number): string {
+  const d = new Date(`${baseIso}T00:00:00`);
+  d.setDate(d.getDate() + delta);
+  return isoDate(d);
 }
 
-function extractCreatedIso(createdAt?: { toDate?: () => Date } | string, fallback?: string): string {
-  if (createdAt && typeof createdAt === 'object' && typeof createdAt.toDate === 'function') {
-    try {
-      return createdAt.toDate().toISOString().slice(0, 10);
-    } catch {
-      // ignore
-    }
-  }
-  if (typeof createdAt === 'string' && createdAt.length >= 10) {
-    return createdAt.slice(0, 10);
-  }
-  return fallback || new Date().toISOString().slice(0, 10);
+function daysBetweenInclusive(startIso: string, endIso: string): number {
+  const s = new Date(`${startIso}T00:00:00`).getTime();
+  const e = new Date(`${endIso}T00:00:00`).getTime();
+  if (Number.isNaN(s) || Number.isNaN(e) || e < s) return 1;
+  return Math.max(1, Math.round((e - s) / 86_400_000) + 1);
 }
 
-function countOverlapNights(
-  resCheckIn: string,
-  resCheckOut: string,
-  periodStart: string,
-  periodEnd: string
-): number {
-  const rStart = Date.parse(`${resCheckIn}T00:00:00Z`);
-  const rEnd = Date.parse(`${resCheckOut}T00:00:00Z`);
-  const pStart = Date.parse(`${periodStart}T00:00:00Z`);
-  const pEndExcl = Date.parse(`${addDaysIso(periodEnd, 1)}T00:00:00Z`);
-  if (!Number.isFinite(rStart) || !Number.isFinite(rEnd) || rEnd <= rStart) return 0;
-  const overlapStart = Math.max(rStart, pStart);
-  const overlapEnd = Math.min(rEnd, pEndExcl);
-  if (overlapEnd <= overlapStart) return 0;
-  return Math.round((overlapEnd - overlapStart) / 86400000);
+function computeNights(checkIn: string, checkOut: string): number {
+  const s = new Date(`${checkIn}T00:00:00`).getTime();
+  const e = new Date(`${checkOut}T00:00:00`).getTime();
+  if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 1;
+  return Math.max(1, Math.round((e - s) / 86_400_000));
 }
 
-function formatPdfNgn(amount: number): string {
-  return `NGN ${Math.round(amount).toLocaleString('en-US')}`;
+function formatReadableDate(dateStr?: string): string {
+  if (!dateStr) return '—';
+  const d = new Date(`${dateStr.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
 }
 
-function formatCompactNgn(amount: number): string {
-  const abs = Math.abs(amount);
-  if (abs >= 1_000_000) return `₦${(amount / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `₦${Math.round(amount / 1_000)}k`;
-  return `₦${Math.round(amount)}`;
-}
-
-function getMondayIso(isoDate: string): string {
-  const [y, m, d] = isoDate.split('-').map(Number);
-  const dt = new Date(Date.UTC(y || 2026, (m || 1) - 1, d || 1));
-  const day = dt.getUTCDay(); // 0=Sun..6=Sat
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  dt.setUTCDate(dt.getUTCDate() + diffToMonday);
-  return dt.toISOString().slice(0, 10);
-}
-
-function formatShortDate(isoDate: string): string {
-  const dt = new Date(`${isoDate}T00:00:00Z`);
-  if (!Number.isFinite(dt.getTime())) return isoDate;
-  return dt.toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
-}
-
-function formatMonthLabel(ym: string): string {
-  const [y, m] = ym.split('-').map(Number);
-  const dt = new Date(Date.UTC(y || 2026, (m || 1) - 1, 1));
-  return dt.toLocaleDateString('en-GB', {
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-}
-
-function getLastDayOfMonthIso(year: number, monthIndex0: number): string {
-  return new Date(Date.UTC(year, monthIndex0 + 1, 0)).toISOString().slice(0, 10);
-}
-
-function buildMonthlyBuckets(
-  startIso: string,
-  endIso: string
-): Array<{ key: string; label: string; startDate: string; endDate: string }> {
-  const buckets: Array<{ key: string; label: string; startDate: string; endDate: string }> = [];
-  let [curY, curM] = startIso.slice(0, 7).split('-').map(Number);
-  const [endY, endM] = endIso.slice(0, 7).split('-').map(Number);
-  let guard = 0;
-  while ((curY < endY || (curY === endY && curM <= endM)) && guard < 120) {
-    guard += 1;
-    const ym = `${String(curY).padStart(4, '0')}-${String(curM).padStart(2, '0')}`;
-    const mStart = `${ym}-01`;
-    const mEnd = getLastDayOfMonthIso(curY, curM - 1);
-    buckets.push({
-      key: ym,
-      label: formatMonthLabel(ym),
-      startDate: mStart < startIso ? startIso : mStart,
-      endDate: mEnd > endIso ? endIso : mEnd,
-    });
-    curM += 1;
-    if (curM > 12) {
-      curM = 1;
-      curY += 1;
-    }
-  }
-  return buckets;
-}
-
-function buildWeeklyBuckets(
-  startIso: string,
-  endIso: string
-): Array<{ key: string; label: string; startDate: string; endDate: string }> {
-  const buckets: Array<{ key: string; label: string; startDate: string; endDate: string }> = [];
-  let weekMonday = getMondayIso(startIso);
-  let guard = 0;
-  while (weekMonday <= endIso && guard < 260) {
-    guard += 1;
-    const weekSunday = addDaysIso(weekMonday, 6);
-    const clampedStart = weekMonday < startIso ? startIso : weekMonday;
-    const clampedEnd = weekSunday > endIso ? endIso : weekSunday;
-    buckets.push({
-      key: weekMonday,
-      label: `${formatShortDate(clampedStart)} – ${formatShortDate(clampedEnd)}`,
-      startDate: clampedStart,
-      endDate: clampedEnd,
-    });
-    weekMonday = addDaysIso(weekMonday, 7);
-  }
-  return buckets;
-}
-
-function computeDelta(current: number, previous: number | null): {
-  label: string;
-  positive: boolean | null;
-} {
-  if (previous === null) return { label: 'All-time scope', positive: null };
-  if (previous === 0) {
-    if (current === 0) return { label: '0% vs prior', positive: null };
-    return { label: 'New activity vs ₦0 prior', positive: current > 0 };
-  }
-  const pct = ((current - previous) / Math.abs(previous)) * 100;
-  const sign = pct > 0 ? '+' : '';
+function formatPctDelta(current: number, previous: number): { text: string; positive: boolean | null } {
+  if (previous <= 0 && current <= 0) return { text: '0% vs prior period', positive: null };
+  if (previous <= 0 && current > 0) return { text: '+100% vs prior period', positive: true };
+  const pct = Math.round(((current - previous) / previous) * 100);
+  if (pct === 0) return { text: '0% vs prior period', positive: null };
   return {
-    label: `${sign}${pct.toFixed(1)}% vs prior`,
-    positive: pct >= 0,
+    text: `${pct > 0 ? '+' : ''}${pct}% vs prior period`,
+    positive: pct > 0,
   };
+}
+
+function resolvePeriodRange(preset: PeriodPreset, customStart: string, customEnd: string): {
+  start: string;
+  end: string;
+  prevStart: string;
+  prevEnd: string;
+  label: string;
+} {
+  const now = new Date();
+  const today = isoDate(now);
+  const y = now.getFullYear();
+  const m = now.getMonth();
+
+  let start = isoDate(new Date(y, m, 1));
+  let end = isoDate(new Date(y, m + 1, 0));
+  let label = 'This Month';
+
+  if (preset === 'today') {
+    start = today;
+    end = today;
+    label = 'Today';
+  } else if (preset === 'last_7') {
+    start = addDaysIso(today, -6);
+    end = today;
+    label = 'Last 7 Days';
+  } else if (preset === 'last_30') {
+    start = addDaysIso(today, -29);
+    end = today;
+    label = 'Last 30 Days';
+  } else if (preset === 'last_month') {
+    start = isoDate(new Date(y, m - 1, 1));
+    end = isoDate(new Date(y, m, 0));
+    label = 'Last Month';
+  } else if (preset === 'last_6_months') {
+    start = isoDate(new Date(y, m - 5, 1));
+    end = today;
+    label = 'Last 6 Months';
+  } else if (preset === 'this_year') {
+    start = `${y}-01-01`;
+    end = `${y}-12-31`;
+    label = `This Year (${y})`;
+  } else if (preset === 'all_time') {
+    start = '2020-01-01';
+    end = '2035-12-31';
+    label = 'All Time';
+  } else if (preset === 'custom') {
+    start = customStart || today;
+    end = customEnd && customEnd >= start ? customEnd : start;
+    label = `${formatReadableDate(start)} – ${formatReadableDate(end)}`;
+  }
+
+  const spanDays = daysBetweenInclusive(start, end);
+  const prevEnd = addDaysIso(start, -1);
+  const prevStart = addDaysIso(prevEnd, -(spanDays - 1));
+
+  return { start, end, prevStart, prevEnd, label };
+}
+
+function getReservationEffectiveRevenueNgn(r: ReservationRecord, fxRate?: number): number {
+  const pay = getReservationPaymentSummary(r, fxRate);
+  return isOtaBookingChannel(r.channel) ? pay.expectedPayoutNgn : pay.totalAmount;
 }
 
 export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps> = ({
@@ -276,2262 +206,876 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
   activeRole,
   rooms,
   reservations,
-  blockedDates,
   guests,
   ledgerEntries,
   posOrders,
-  inventoryItems,
-  purchaseOrders,
   staffMembers,
-  shifts,
-  attendance,
-  payrollRuns,
   housekeepingTasks,
   maintenanceTickets,
-  otaChannels,
   onNavigate,
   onNotify,
 }) => {
-  const { cms } = useCms();
-  const isAuthorizedAdmin = activeRole === 'pch_admin' || activeRole === 'property_admin';
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = useMemo(() => isoDate(new Date()), []);
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('this_month');
+  const [customStart, setCustomStart] = useState(() => isoDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
+  const [customEnd, setCustomEnd] = useState(() => todayIso);
+  const [activeTab, setActiveTab] = useState<ReportTab>('bookings');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | ReservationStatus>('all');
+  const [sourceFilter, setSourceFilter] = useState<string>('ALL');
 
-  const [preset, setPreset] = useState<DatePreset>('this_month');
-  const [singleDay, setSingleDay] = useState(todayIso);
-  const [customStart, setCustomStart] = useState(`${todayIso.slice(0, 8)}01`);
-  const [customEnd, setCustomEnd] = useState(todayIso);
-  const [compareEnabled, setCompareEnabled] = useState(true);
-  const [activeTab, setActiveTab] = useState<ReportTab>('overview');
+  const canAccess = activeRole === 'pch_admin' || activeRole === 'property_admin';
 
-  // Management Search & Quick Filters for Reports & Daily Room Bookings
-  const [reportSearch, setReportSearch] = useState('');
-  const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | ReservationStatus>('all');
-  const [bookingSourceFilter, setBookingSourceFilter] = useState<string>('ALL');
-  const [bookingRoomFilter, setBookingRoomFilter] = useState<string>('ALL');
+  const period = useMemo(
+    () => resolvePeriodRange(periodPreset, customStart, customEnd),
+    [periodPreset, customStart, customEnd]
+  );
 
-  // Interactive chart toggles & hover states
-  const [lineMode, setLineMode] = useState<'financial' | 'settlement' | 'hospitality'>('financial');
-  const [trendGranularity, setTrendGranularity] = useState<'daily' | 'weekly' | 'monthly'>('daily');
-  const [periodReportMode, setPeriodReportMode] = useState<'monthly' | 'weekly'>('monthly');
-  const [hoveredDayIndex, setHoveredDayIndex] = useState<number | null>(null);
-  const [barMode, setBarMode] = useState<'category' | 'rooms'>('category');
-  const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
-  const [pieMode, setPieMode] = useState<'sources' | 'expenses' | 'inventory'>('sources');
-  const [selectedPieIndex, setSelectedPieIndex] = useState<number | null>(null);
-
-  // Determine exact active date range & equal-length prior comparison window
-  const dateWindow = useMemo(() => {
-    if (preset === 'today') {
-      return {
-        start: todayIso,
-        end: todayIso,
-        prevStart: addDaysIso(todayIso, -1),
-        prevEnd: addDaysIso(todayIso, -1),
-        label: `Today (${todayIso})`,
-      };
-    }
-    if (preset === 'yesterday') {
-      const yIso = addDaysIso(todayIso, -1);
-      return {
-        start: yIso,
-        end: yIso,
-        prevStart: addDaysIso(yIso, -1),
-        prevEnd: addDaysIso(yIso, -1),
-        label: `Yesterday (${yIso})`,
-      };
-    }
-    if (preset === 'single_day') {
-      const target = singleDay || todayIso;
-      return {
-        start: target,
-        end: target,
-        prevStart: addDaysIso(target, -1),
-        prevEnd: addDaysIso(target, -1),
-        label: `Single Day (${target})`,
-      };
-    }
-    if (preset === 'this_week') {
-      const start = getMondayIso(todayIso);
-      const days = diffDaysInclusive(start, todayIso);
-      return {
-        start,
-        end: todayIso,
-        prevStart: addDaysIso(start, -days),
-        prevEnd: addDaysIso(start, -1),
-        label: `This Week (${start} to ${todayIso})`,
-      };
-    }
-    if (preset === 'last_7') {
-      const start = addDaysIso(todayIso, -6);
-      return {
-        start,
-        end: todayIso,
-        prevStart: addDaysIso(start, -7),
-        prevEnd: addDaysIso(start, -1),
-        label: `Last 7 Days (${start} to ${todayIso})`,
-      };
-    }
-    if (preset === 'last_30') {
-      const start = addDaysIso(todayIso, -29);
-      return {
-        start,
-        end: todayIso,
-        prevStart: addDaysIso(start, -30),
-        prevEnd: addDaysIso(start, -1),
-        label: `Last 30 Days (${start} to ${todayIso})`,
-      };
-    }
-    if (preset === 'this_month') {
-      const start = `${todayIso.slice(0, 8)}01`;
-      const days = diffDaysInclusive(start, todayIso);
-      return {
-        start,
-        end: todayIso,
-        prevStart: addDaysIso(start, -days),
-        prevEnd: addDaysIso(start, -1),
-        label: `This Month (${start} to ${todayIso})`,
-      };
-    }
-    if (preset === 'last_month') {
-      const [y, m] = todayIso.slice(0, 7).split('-').map(Number);
-      const prevY = m === 1 ? y - 1 : y;
-      const prevM = m === 1 ? 12 : m - 1;
-      const ym = `${String(prevY).padStart(4, '0')}-${String(prevM).padStart(2, '0')}`;
-      const start = `${ym}-01`;
-      const end = getLastDayOfMonthIso(prevY, prevM - 1);
-      const days = diffDaysInclusive(start, end);
-      return {
-        start,
-        end,
-        prevStart: addDaysIso(start, -days),
-        prevEnd: addDaysIso(start, -1),
-        label: `Last Month (${formatMonthLabel(ym)})`,
-      };
-    }
-    if (preset === 'this_year') {
-      const start = `${todayIso.slice(0, 4)}-01-01`;
-      const days = diffDaysInclusive(start, todayIso);
-      return {
-        start,
-        end: todayIso,
-        prevStart: addDaysIso(start, -days),
-        prevEnd: addDaysIso(start, -1),
-        label: `Year to Date (${todayIso.slice(0, 4)})`,
-      };
-    }
-    if (preset === 'custom') {
-      const safeStart = customStart || todayIso;
-      const safeEnd = customEnd >= safeStart ? customEnd : safeStart;
-      const days = diffDaysInclusive(safeStart, safeEnd);
-      return {
-        start: safeStart,
-        end: safeEnd,
-        prevStart: addDaysIso(safeStart, -days),
-        prevEnd: addDaysIso(safeStart, -1),
-        label: `${safeStart} to ${safeEnd}`,
-      };
-    }
-
-    // All Time: span across earliest and latest dates seen in live records
-    const allDates: string[] = [todayIso];
-    ledgerEntries.forEach((l) => l.entryDate && allDates.push(l.entryDate));
-    reservations.forEach((r) => {
-      if (r.checkInDate) allDates.push(r.checkInDate);
-      if (r.checkOutDate) allDates.push(r.checkOutDate);
-    });
-    posOrders.forEach((p) => {
-      const d = p.orderDate || extractCreatedIso(p.createdAt, todayIso);
-      if (d) allDates.push(d);
-    });
-    allDates.sort();
+  // Filter reservations for active period and comparison period
+  const { periodReservations, priorReservations } = useMemo(() => {
+    const inWindow = (r: ReservationRecord, start: string, end: string) => {
+      if (periodPreset === 'all_time') return true;
+      const fallbackDate =
+        typeof r.createdAt === 'string'
+          ? r.createdAt
+          : r.createdAt?.toDate?.()?.toISOString() || '';
+      const d = (r.checkInDate || fallbackDate).slice(0, 10);
+      return d >= start && d <= end;
+    };
     return {
-      start: allDates[0] || todayIso,
-      end: allDates[allDates.length - 1] || todayIso,
-      prevStart: null as string | null,
-      prevEnd: null as string | null,
-      label: `All Time (${allDates[0] || todayIso} to ${allDates[allDates.length - 1] || todayIso})`,
+      periodReservations: reservations.filter((r) => inWindow(r, period.start, period.end)),
+      priorReservations:
+        periodPreset === 'all_time'
+          ? []
+          : reservations.filter((r) => inWindow(r, period.prevStart, period.prevEnd)),
     };
-  }, [preset, singleDay, customStart, customEnd, todayIso, ledgerEntries, reservations, posOrders]);
+  }, [reservations, period, periodPreset]);
 
-  const periodDays = useMemo(
-    () => diffDaysInclusive(dateWindow.start, dateWindow.end),
-    [dateWindow.start, dateWindow.end]
-  );
+  // Core KPI Summary
+  const kpis = useMemo(() => {
+    const totalBookings = periodReservations.length;
+    const priorTotalBookings = priorReservations.length;
 
-  // Core metric calculator for any [start, end] date window — single source of truth for current & prior period
-  const computeWindowSnapshot = useMemo(() => {
-    const sortedRooms = sortRoomsByNumber(rooms);
-    const totalRooms = sortedRooms.length;
-    const commissionMap = new Map<string, number>();
-    otaChannels.forEach((ch) => {
-      commissionMap.set(formatBookingSourceLabel(ch.channelName), ch.commissionPct);
-    });
+    const confirmedBookings = periodReservations.filter(
+      (r) => r.status === 'confirmed' || r.status === 'checked_in' || r.status === 'checked_out'
+    ).length;
+    const priorConfirmedBookings = priorReservations.filter(
+      (r) => r.status === 'confirmed' || r.status === 'checked_in' || r.status === 'checked_out'
+    ).length;
 
-    return (startIso: string, endIso: string) => {
-      const days = diffDaysInclusive(startIso, endIso);
-      const inRange = (d: string) => d >= startIso && d <= endIso;
+    const cancelledBookings = periodReservations.filter(
+      (r) => r.status === 'cancelled' || r.status === 'no_show'
+    ).length;
+    const priorCancelledBookings = priorReservations.filter(
+      (r) => r.status === 'cancelled' || r.status === 'no_show'
+    ).length;
 
-      // 1. Ledger Entries in Period
-      const periodLedger = ledgerEntries.filter((e) => inRange(e.entryDate));
-      const revenueEntries = periodLedger.filter((e) => e.entryType === 'revenue');
-      const expenseEntries = periodLedger.filter((e) => e.entryType === 'expense');
-
-      const totalRevenueNgn = revenueEntries.reduce((s, e) => s + (e.amountNgn || 0), 0);
-      const totalExpensesNgn = expenseEntries.reduce((s, e) => s + (e.amountNgn || 0), 0);
-      const totalVatNgn = periodLedger.reduce((s, e) => s + (e.vatNgn || 0), 0);
-      const netProfitNgn = totalRevenueNgn - totalExpensesNgn;
-      const profitMarginPct =
-        totalRevenueNgn > 0 ? (netProfitNgn / totalRevenueNgn) * 100 : 0;
-
-      // Revenue & Expense Breakdown by Ledger Category
-      const ledgerCategories: LedgerEntryRecord['category'][] = [
-        'Room Accommodation',
-        'Restaurant & Bar',
-        'Procurement',
-        'Payroll',
-        'Utilities & Diesel',
-        'Maintenance',
-        'OTA Commission',
-        'Other',
-      ];
-      const pnlByCategory = ledgerCategories.map((cat) => {
-        const rev = revenueEntries
-          .filter((e) => e.category === cat)
-          .reduce((s, e) => s + (e.amountNgn || 0), 0);
-        const exp = expenseEntries
-          .filter((e) => e.category === cat)
-          .reduce((s, e) => s + (e.amountNgn || 0), 0);
-        return { category: cat, revenueNgn: rev, expenseNgn: exp, netNgn: rev - exp };
-      });
-
-      // 2. Reservations, Room Nights, Occupancy, ADR, RevPAR
-      const activeStayRes = reservations.filter(
-        (r) => r.status !== 'cancelled' && r.status !== 'no_show'
-      );
-
-      let occupiedRoomNights = 0;
-      let earnedRoomRevenueNgn = 0;
-      const roomNightRevenueByRoomId = new Map<
-        string,
-        { occupiedNights: number; roomRevenueNgn: number; staysCount: number }
-      >();
-
-      sortedRooms.forEach((rm) => {
-        roomNightRevenueByRoomId.set(rm.id, {
-          occupiedNights: 0,
-          roomRevenueNgn: 0,
-          staysCount: 0,
-        });
-      });
-
-      activeStayRes.forEach((res) => {
-        const overlap = countOverlapNights(res.checkInDate, res.checkOutDate, startIso, endIso);
-        if (overlap <= 0) return;
-        const rate =
-          res.nightlyRateNgn > 0
-            ? res.nightlyRateNgn
-            : res.nights > 0
-              ? Math.round(res.roomChargesNgn / res.nights)
-              : 0;
-        const earned = rate * overlap;
-        occupiedRoomNights += overlap;
-        earnedRoomRevenueNgn += earned;
-
-        if (res.roomId && roomNightRevenueByRoomId.has(res.roomId)) {
-          const prev = roomNightRevenueByRoomId.get(res.roomId)!;
-          roomNightRevenueByRoomId.set(res.roomId, {
-            occupiedNights: prev.occupiedNights + overlap,
-            roomRevenueNgn: prev.roomRevenueNgn + earned,
-            staysCount: prev.staysCount + 1,
-          });
-        }
-      });
-
-      const availableRoomNights = totalRooms * days;
-      const occupancyPct =
-        availableRoomNights > 0 ? Math.min(100, (occupiedRoomNights / availableRoomNights) * 100) : 0;
-      const adrNgn = occupiedRoomNights > 0 ? earnedRoomRevenueNgn / occupiedRoomNights : 0;
-      const revparNgn = availableRoomNights > 0 ? earnedRoomRevenueNgn / availableRoomNights : 0;
-
-      // Reservations created or checking-in during period
-      const periodReservations = reservations.filter((r) => {
-        const booked = getReservationBookedDate(r);
-        const stayOverlap = countOverlapNights(r.checkInDate, r.checkOutDate, startIso, endIso) > 0;
-        return inRange(booked) || inRange(r.checkInDate) || stayOverlap;
-      });
-
-      const activePeriodReservations = periodReservations.filter(
-        (r) => r.status !== 'cancelled' && r.status !== 'no_show'
-      );
-
-      const reservationTotalValueNgn = activePeriodReservations.reduce(
-        (s, r) => s + getReservationPaymentSummary(r).totalAmount,
-        0
-      );
-      const reservationCollectedNgn = periodReservations.reduce(
-        (s, r) => s + getReservationPaymentSummary(r).amountPaid,
-        0
-      );
-      const reservationBalanceNgn = periodReservations
-        .filter((r) => {
-          if (r.status === 'no_show') return false;
-          if (r.status === 'cancelled') return r.cancellationType === 'paid';
-          return true;
-        })
-        .reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0);
-
-      let fullyPaidCount = 0;
-      let fullyPaidNgn = 0;
-      let partialCount = 0;
-      let partialPaidNgn = 0;
-      let partialPendingNgn = 0;
-      let unpaidCount = 0;
-      let unpaidPendingNgn = 0;
-      let lateCheckoutFeesNgn = 0;
-      let cancelledCount = 0;
-      let cancelledFreeCount = 0;
-      let cancelledPaidCount = 0;
-      let cancelledFeesBilledNgn = 0;
-      let cancelledFeesPaidNgn = 0;
-
-      const pendingPaymentRows: Array<{
-        res: ReservationRecord;
-        totalAmount: number;
-        amountPaid: number;
-        balance: number;
-        paymentStatus: 'Unpaid' | 'Partial' | 'Paid';
-        bookedDate: string;
-        roomDisplay: ReturnType<typeof getReservationRoomDisplay>;
-        sourceLabel: string;
-      }> = [];
-
-      periodReservations.forEach((r) => {
-        const pay = getReservationPaymentSummary(r);
-        if (r.status === 'cancelled') {
-          cancelledCount += 1;
-          if (r.cancellationType === 'paid') {
-            cancelledPaidCount += 1;
-            cancelledFeesBilledNgn += pay.totalAmount;
-            cancelledFeesPaidNgn += pay.amountPaid;
-            if (pay.balance > 0) {
-              if (pay.paymentStatus === 'Partial') {
-                partialCount += 1;
-                partialPaidNgn += pay.amountPaid;
-                partialPendingNgn += pay.balance;
-              } else {
-                unpaidCount += 1;
-                unpaidPendingNgn += pay.balance;
-              }
-              pendingPaymentRows.push({
-                res: r,
-                ...pay,
-                bookedDate: getReservationBookedDate(r),
-                roomDisplay: getReservationRoomDisplay(r, rooms),
-                sourceLabel: formatBookingSourceLabel(r.channel),
-              });
-            }
-          } else {
-            cancelledFreeCount += 1;
-          }
-          return;
-        }
-        if (r.status === 'no_show') return;
-
-        lateCheckoutFeesNgn += Math.max(0, r.lateCheckoutFeeNgn || 0);
-        if (pay.paymentStatus === 'Paid') {
-          fullyPaidCount += 1;
-          fullyPaidNgn += pay.amountPaid;
-        } else if (pay.paymentStatus === 'Partial') {
-          partialCount += 1;
-          partialPaidNgn += pay.amountPaid;
-          partialPendingNgn += pay.balance;
-          pendingPaymentRows.push({
-            res: r,
-            ...pay,
-            bookedDate: getReservationBookedDate(r),
-            roomDisplay: getReservationRoomDisplay(r, rooms),
-            sourceLabel: formatBookingSourceLabel(r.channel),
-          });
-        } else {
-          unpaidCount += 1;
-          unpaidPendingNgn += pay.balance;
-          pendingPaymentRows.push({
-            res: r,
-            ...pay,
-            bookedDate: getReservationBookedDate(r),
-            roomDisplay: getReservationRoomDisplay(r, rooms),
-            sourceLabel: formatBookingSourceLabel(r.channel),
-          });
-        }
-      });
-
-      pendingPaymentRows.sort((a, b) => b.balance - a.balance || a.res.checkInDate.localeCompare(b.res.checkInDate));
-      const collectionDenom = reservationTotalValueNgn + cancelledFeesBilledNgn;
-      const collectionRatePct =
-        collectionDenom > 0
-          ? Math.min(100, (reservationCollectedNgn / collectionDenom) * 100)
-          : reservationCollectedNgn > 0
-            ? 100
-            : 0;
-
-      // 3. Booking Sources Analysis
-      const sourceAgg = new Map<
-        string,
-        {
-          source: string;
-          bookings: number;
-          nights: number;
-          totalValueNgn: number;
-          collectedNgn: number;
-          pendingNgn: number;
-          commissionPct: number;
-          estCommissionNgn: number;
-        }
-      >();
-
-      activePeriodReservations.forEach((r) => {
-        const source = formatBookingSourceLabel(r.channel);
-        const pay = getReservationPaymentSummary(r);
-        const pct = commissionMap.get(source) ?? 0;
-        const prev = sourceAgg.get(source) || {
-          source,
-          bookings: 0,
-          nights: 0,
-          totalValueNgn: 0,
-          collectedNgn: 0,
-          pendingNgn: 0,
-          commissionPct: pct,
-          estCommissionNgn: 0,
-        };
-        const commNgn = Math.round((pay.totalAmount * pct) / 100);
-        sourceAgg.set(source, {
-          source,
-          bookings: prev.bookings + 1,
-          nights: prev.nights + (r.nights || 1),
-          totalValueNgn: prev.totalValueNgn + pay.totalAmount,
-          collectedNgn: prev.collectedNgn + pay.amountPaid,
-          pendingNgn: prev.pendingNgn + pay.balance,
-          commissionPct: pct,
-          estCommissionNgn: prev.estCommissionNgn + commNgn,
-        });
-      });
-
-      const bookingSources = Array.from(sourceAgg.values()).sort(
-        (a, b) => b.totalValueNgn - a.totalValueNgn
-      );
-
-      // 4. POS Sales Analysis
-      const periodPosOrders = posOrders.filter((ord) => {
-        const d = ord.orderDate || extractCreatedIso(ord.createdAt, todayIso);
-        return inRange(d);
-      });
-      const posSubtotalNgn = periodPosOrders.reduce((s, o) => s + (o.subtotalNgn || 0), 0);
-      const posVatNgn = periodPosOrders.reduce((s, o) => s + (o.vatNgn || 0), 0);
-      const posTotalSalesNgn = periodPosOrders.reduce((s, o) => s + (o.totalNgn || 0), 0);
-      const posItemsSold = periodPosOrders.reduce((s, o) => s + (o.itemCount || 0), 0);
-
-      // 5. Departmental Breakdown (Serviced Apartments vs Hotel Rooms)
-      const servicedRooms = sortedRooms.filter((r) => getRoomSection(r) === 'Serviced Apartment');
-      const hotelRooms = sortedRooms.filter((r) => getRoomSection(r) === 'Hotel Rooms');
-
-      const calcSectionPerf = (label: string, sectionRooms: RoomRecord[]) => {
-        let occNights = 0;
-        let revNgn = 0;
-        sectionRooms.forEach((rm) => {
-          const stat = roomNightRevenueByRoomId.get(rm.id);
-          if (stat) {
-            occNights += stat.occupiedNights;
-            revNgn += stat.roomRevenueNgn;
-          }
-        });
-        const availNights = sectionRooms.length * days;
-        return {
-          department: label,
-          unitCount: sectionRooms.length,
-          availableNights: availNights,
-          occupiedNights: occNights,
-          occupancyPct: availNights > 0 ? (occNights / availNights) * 100 : 0,
-          revenueNgn: revNgn,
-          adrNgn: occNights > 0 ? revNgn / occNights : 0,
-          revparNgn: availNights > 0 ? revNgn / availNights : 0,
-        };
-      };
-
-      const sectionPerformance = [
-        calcSectionPerf('Serviced Apartment Section', servicedRooms),
-        calcSectionPerf('Hotel Rooms Section', hotelRooms),
-      ];
-
-      // 6. Room-by-Room Breakdown
-      const roomBreakdown = sortedRooms.map((rm) => {
-        const stat = roomNightRevenueByRoomId.get(rm.id) || {
-          occupiedNights: 0,
-          roomRevenueNgn: 0,
-          staysCount: 0,
-        };
-        const occPct = days > 0 ? Math.min(100, (stat.occupiedNights / days) * 100) : 0;
-        return {
-          room: rm,
-          section: getRoomSection(rm),
-          staysCount: stat.staysCount,
-          occupiedNights: stat.occupiedNights,
-          availableNights: days,
-          occupancyPct: occPct,
-          roomRevenueNgn: stat.roomRevenueNgn,
-          adrNgn: stat.occupiedNights > 0 ? stat.roomRevenueNgn / stat.occupiedNights : rm.nightlyRateNgn,
-          revparNgn: days > 0 ? stat.roomRevenueNgn / days : 0,
-        };
-      });
-
-      // 7. Shifts, Attendance & Payroll in Period
-      const periodShifts = shifts.filter((s) => inRange(s.shiftDate));
-      const periodAttendance = attendance.filter((a) => inRange(a.date));
-      const periodPayroll = payrollRuns.filter((pr) =>
-        pr.payDate ? inRange(pr.payDate) : true
-      );
-      const payrollCostNgn = periodPayroll.reduce((s, p) => s + (p.grossPayNgn || 0), 0);
-
-      // 8. Purchase Orders in Period
-      const periodPOs = purchaseOrders.filter((po) =>
-        po.expectedDate ? inRange(po.expectedDate) : true
-      );
-
-      // 9. Daily Time-Series (up to 31 points cleanly bucketed if range > 31 days)
-      const dailyPoints: Array<{
-        key: string;
-        date: string;
-        startDate: string;
-        endDate: string;
-        label: string;
-        revenueNgn: number;
-        expenseNgn: number;
-        netNgn: number;
-        paidCollectedNgn: number;
-        pendingUnpaidNgn: number;
-        occupancyPct: number;
-        revparNgn: number;
-      }> = [];
-
-      const maxSeriesDays = Math.min(days, 31);
-      const seriesStart = days > 31 ? addDaysIso(endIso, -30) : startIso;
-      for (let i = 0; i < maxSeriesDays; i += 1) {
-        const dIso = addDaysIso(seriesStart, i);
-        const revDay = revenueEntries
-          .filter((e) => e.entryDate === dIso)
-          .reduce((s, e) => s + (e.amountNgn || 0), 0);
-        const expDay = expenseEntries
-          .filter((e) => e.entryDate === dIso)
-          .reduce((s, e) => s + (e.amountNgn || 0), 0);
-
-        const dayCheckIns = reservations.filter((r) => {
-          if (r.status === 'no_show') return false;
-          if (r.status === 'cancelled' && r.cancellationType !== 'paid') return false;
-          return r.checkInDate === dIso;
-        });
-        const paidDay = dayCheckIns.reduce((s, r) => s + getReservationPaymentSummary(r).amountPaid, 0);
-        const pendingDay = dayCheckIns.reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0);
-
-        let occDay = 0;
-        let roomRevDay = 0;
-        activeStayRes.forEach((r) => {
-          const ov = countOverlapNights(r.checkInDate, r.checkOutDate, dIso, dIso);
-          if (ov > 0) {
-            occDay += 1;
-            const rt = r.nightlyRateNgn > 0 ? r.nightlyRateNgn : r.nights > 0 ? r.roomChargesNgn / r.nights : 0;
-            roomRevDay += rt;
-          }
-        });
-        const occPctDay = totalRooms > 0 ? Math.min(100, (occDay / totalRooms) * 100) : 0;
-        const revparDay = totalRooms > 0 ? roomRevDay / totalRooms : 0;
-
-        dailyPoints.push({
-          key: dIso,
-          date: dIso,
-          startDate: dIso,
-          endDate: dIso,
-          label: dIso.slice(5),
-          revenueNgn: revDay,
-          expenseNgn: expDay,
-          netNgn: revDay - expDay,
-          paidCollectedNgn: paidDay,
-          pendingUnpaidNgn: pendingDay,
-          occupancyPct: occPctDay,
-          revparNgn: revparDay,
-        });
-      }
-
-      // 10. Weekly & Monthly Period Revenue & Settlement Aggregations
-      const computeBucketStats = (
-        buckets: Array<{ key: string; label: string; startDate: string; endDate: string }>
-      ) =>
-        buckets.map((b) => {
-          const bDays = diffDaysInclusive(b.startDate, b.endDate);
-          const inB = (d: string) => d >= b.startDate && d <= b.endDate;
-          const bRev = revenueEntries.filter((e) => inB(e.entryDate)).reduce((s, e) => s + (e.amountNgn || 0), 0);
-          const bExp = expenseEntries.filter((e) => inB(e.entryDate)).reduce((s, e) => s + (e.amountNgn || 0), 0);
-          const bPos = posOrders
-            .filter((o) => inB(o.orderDate || extractCreatedIso(o.createdAt, todayIso)))
-            .reduce((s, o) => s + (o.totalNgn || 0), 0);
-
-          let bOccNights = 0;
-          let bEarnedRoom = 0;
-          activeStayRes.forEach((r) => {
-            const ov = countOverlapNights(r.checkInDate, r.checkOutDate, b.startDate, b.endDate);
-            if (ov > 0) {
-              const rt = r.nightlyRateNgn > 0 ? r.nightlyRateNgn : r.nights > 0 ? r.roomChargesNgn / r.nights : 0;
-              bOccNights += ov;
-              bEarnedRoom += rt * ov;
-            }
-          });
-          const bAvailNights = totalRooms * bDays;
-          const bOccPct = bAvailNights > 0 ? Math.min(100, (bOccNights / bAvailNights) * 100) : 0;
-
-          const bBookings = reservations.filter((r) => {
-            if (r.status === 'no_show') return false;
-            if (r.status === 'cancelled' && r.cancellationType !== 'paid') return false;
-            return inB(r.checkInDate);
-          });
-          const bGrossBilled = bBookings.reduce((s, r) => s + getReservationPaymentSummary(r).totalAmount, 0);
-          const bPaid = bBookings.reduce((s, r) => s + getReservationPaymentSummary(r).amountPaid, 0);
-          const bPending = bBookings.reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0);
-          const bUnpaidCount = bBookings.filter((r) => getReservationPaymentSummary(r).balance > 0).length;
-
-          return {
-            key: b.key,
-            date: b.startDate,
-            startDate: b.startDate,
-            endDate: b.endDate,
-            label: b.label,
-            daysCount: bDays,
-            bookingsCount: bBookings.length,
-            occupiedNights: bOccNights,
-            availableNights: bAvailNights,
-            occupancyPct: bOccPct,
-            earnedRoomRevenueNgn: bEarnedRoom,
-            posSalesNgn: bPos,
-            revenueNgn: bRev,
-            expenseNgn: bExp,
-            netNgn: bRev - bExp,
-            grossBilledNgn: bGrossBilled,
-            paidCollectedNgn: bPaid,
-            pendingUnpaidNgn: bPending,
-            unpaidCount: bUnpaidCount,
-            adrNgn: bOccNights > 0 ? bEarnedRoom / bOccNights : 0,
-            revparNgn: bAvailNights > 0 ? bEarnedRoom / bAvailNights : 0,
-          };
-        });
-
-      const weeklyBreakdown = computeBucketStats(buildWeeklyBuckets(startIso, endIso));
-      const monthlyBreakdown = computeBucketStats(buildMonthlyBuckets(startIso, endIso));
-
-      return {
-        days,
-        totalRevenueNgn,
-        totalExpensesNgn,
-        totalVatNgn,
-        netProfitNgn,
-        profitMarginPct,
-        pnlByCategory,
-        occupiedRoomNights,
-        availableRoomNights,
-        earnedRoomRevenueNgn,
-        occupancyPct,
-        adrNgn,
-        revparNgn,
-        periodReservations,
-        reservationTotalValueNgn,
-        reservationCollectedNgn,
-        reservationBalanceNgn,
-        fullyPaidCount,
-        fullyPaidNgn,
-        partialCount,
-        partialPaidNgn,
-        partialPendingNgn,
-        unpaidCount,
-        unpaidPendingNgn,
-        lateCheckoutFeesNgn,
-        cancelledCount,
-        cancelledFreeCount,
-        cancelledPaidCount,
-        cancelledFeesBilledNgn,
-        cancelledFeesPaidNgn,
-        collectionRatePct,
-        pendingPaymentRows,
-        bookingSources,
-        periodPosOrders,
-        posSubtotalNgn,
-        posVatNgn,
-        posTotalSalesNgn,
-        posItemsSold,
-        sectionPerformance,
-        roomBreakdown,
-        periodShifts,
-        periodAttendance,
-        periodPayroll,
-        payrollCostNgn,
-        periodPOs,
-        dailyPoints,
-        weeklyBreakdown,
-        monthlyBreakdown,
-      };
-    };
-  }, [
-    rooms,
-    otaChannels,
-    ledgerEntries,
-    reservations,
-    posOrders,
-    shifts,
-    attendance,
-    payrollRuns,
-    purchaseOrders,
-    todayIso,
-  ]);
-
-  const current = useMemo(
-    () => computeWindowSnapshot(dateWindow.start, dateWindow.end),
-    [computeWindowSnapshot, dateWindow.start, dateWindow.end]
-  );
-
-  const previous = useMemo(() => {
-    if (!compareEnabled || !dateWindow.prevStart || !dateWindow.prevEnd) return null;
-    return computeWindowSnapshot(dateWindow.prevStart, dateWindow.prevEnd);
-  }, [compareEnabled, computeWindowSnapshot, dateWindow.prevStart, dateWindow.prevEnd]);
-
-  // Live Stock Inventory Valuation (Current Asset Snapshot)
-  const inventoryMetrics = useMemo(() => {
-    const totalValuationNgn = inventoryItems.reduce(
-      (s, i) => s + (i.quantityOnHand || 0) * (i.unitCostNgn || 0),
+    const activeBookings = periodReservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show'
+    );
+    const totalNights = activeBookings.reduce(
+      (sum, r) => sum + (r.nights || computeNights(r.checkInDate, r.checkOutDate)),
       0
     );
-    const lowStockItems = inventoryItems.filter((i) => i.quantityOnHand <= i.reorderLevel);
-    const categories: InventoryItemRecord['category'][] = [
-      'Kitchen & Pantry',
-      'Bar & Beverage',
-      'Housekeeping Linen & Amenities',
-      'Engineering & Diesel',
-    ];
-    const byCategory = categories.map((cat) => {
-      const items = inventoryItems.filter((i) => i.category === cat);
-      return {
-        category: cat,
-        skuCount: items.length,
-        totalUnits: items.reduce((s, i) => s + (i.quantityOnHand || 0), 0),
-        valuationNgn: items.reduce(
-          (s, i) => s + (i.quantityOnHand || 0) * (i.unitCostNgn || 0),
-          0
-        ),
-        lowStockCount: items.filter((i) => i.quantityOnHand <= i.reorderLevel).length,
-      };
-    });
+    const avgStay = activeBookings.length > 0 ? totalNights / activeBookings.length : 0;
 
-    const totalPoCommittedNgn = purchaseOrders
-      .filter((p) => p.status !== 'cancelled')
-      .reduce((s, p) => s + (p.totalCostNgn || 0), 0);
-    const receivedPoNgn = purchaseOrders
-      .filter((p) => p.status === 'received')
-      .reduce((s, p) => s + (p.totalCostNgn || 0), 0);
-    const pendingPoNgn = purchaseOrders
-      .filter((p) => p.status === 'draft' || p.status === 'approved')
-      .reduce((s, p) => s + (p.totalCostNgn || 0), 0);
+    const totalBookingRevenueNgn = activeBookings.reduce(
+      (sum, r) => sum + getReservationEffectiveRevenueNgn(r, property.usdExchangeRateNgn),
+      0
+    );
+
+    const periodDays =
+      periodPreset === 'all_time' ? 30 : daysBetweenInclusive(period.start, period.end);
+    const capacityNights = Math.max(1, rooms.length * periodDays);
+    const occupancyPct = Math.min(100, Math.round((totalNights / capacityNights) * 100));
 
     return {
-      totalValuationNgn,
-      lowStockItems,
-      byCategory,
-      totalPoCommittedNgn,
-      receivedPoNgn,
-      pendingPoNgn,
+      totalBookings,
+      totalDelta: formatPctDelta(totalBookings, priorTotalBookings),
+      confirmedBookings,
+      confirmedDelta: formatPctDelta(confirmedBookings, priorConfirmedBookings),
+      cancelledBookings,
+      cancelledDelta: formatPctDelta(cancelledBookings, priorCancelledBookings),
+      avgStay,
+      totalNights,
+      occupancyPct,
+      totalBookingRevenueNgn,
     };
-  }, [inventoryItems, purchaseOrders]);
+  }, [periodReservations, priorReservations, property.usdExchangeRateNgn, rooms.length, period, periodPreset]);
 
-  // Housekeeping, Maintenance, POS Breakdown & Staff Performance
-  const opsMetrics = useMemo(() => {
-    const hkCompleted = housekeepingTasks.filter(
-      (t) => t.status === 'completed' || t.status === 'inspected'
-    ).length;
-    const hkRate =
-      housekeepingTasks.length > 0 ? (hkCompleted / housekeepingTasks.length) * 100 : 0;
+  // Visual Charts Data (6-Month Trend + Bookings by Source)
+  const monthlyTrend = useMemo(
+    () =>
+      buildMonthlyBookingTrend(
+        reservations,
+        property.usdExchangeRateNgn,
+        6,
+        periodPreset === 'all_time' ? todayIso : period.end
+      ),
+    [reservations, property.usdExchangeRateNgn, period.end, periodPreset, todayIso]
+  );
 
-    const mntResolved = maintenanceTickets.filter((t) => t.status === 'resolved').length;
-    const mntOpen = maintenanceTickets.filter((t) => t.status !== 'resolved').length;
-    const mntEstCostNgn = maintenanceTickets.reduce((s, t) => s + (t.estimatedCostNgn || 0), 0);
+  const sourceSlices = useMemo(
+    () => buildBookingsBySource(periodReservations, property.usdExchangeRateNgn),
+    [periodReservations, property.usdExchangeRateNgn]
+  );
 
-    const posByService = (['Dine-In', 'Room Service', 'Bar Lounge', 'Takeaway'] as const).map(
-      (svc) => {
-        const list = current.periodPosOrders.filter((o) => o.serviceType === svc);
-        return {
-          serviceType: svc,
-          orders: list.length,
-          items: list.reduce((s, o) => s + (o.itemCount || 0), 0),
-          totalNgn: list.reduce((s, o) => s + (o.totalNgn || 0), 0),
-        };
-      }
-    );
+  // Filtered Recent Bookings table rows
+  const filteredBookings = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return [...periodReservations]
+      .filter((r) => {
+        if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+        if (sourceFilter !== 'ALL' && formatBookingSourceLabel(r.channel) !== sourceFilter) {
+          return false;
+        }
+        if (!q) return true;
+        const roomDisp = getReservationRoomDisplay(r, rooms);
+        return (
+          r.guestName.toLowerCase().includes(q) ||
+          r.bookingRef.toLowerCase().includes(q) ||
+          roomDisp.roomNumberLabel.toLowerCase().includes(q) ||
+          formatBookingSourceLabel(r.channel).toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => (b.checkInDate || '').localeCompare(a.checkInDate || ''));
+  }, [periodReservations, rooms, searchQuery, statusFilter, sourceFilter]);
 
-    const posByMethod = (['Cash NGN', 'Card POS', 'Bank Transfer', 'Room Folio'] as const).map(
-      (method) => {
-        const list = current.periodPosOrders.filter((o) => o.paymentMethod === method);
-        return {
-          method,
-          orders: list.length,
-          totalNgn: list.reduce((s, o) => s + (o.totalNgn || 0), 0),
-        };
-      }
-    );
+  const availableSources = useMemo(() => {
+    const set = new Set<string>();
+    periodReservations.forEach((r) => set.add(formatBookingSourceLabel(r.channel)));
+    return Array.from(set).sort();
+  }, [periodReservations]);
 
-    const shiftsCompleted = current.periodShifts.filter((s) => s.status === 'completed').length;
-    const shiftCompletionPct =
-      current.periodShifts.length > 0 ? (shiftsCompleted / current.periodShifts.length) * 100 : 0;
+  // Financial Summary (P&L) for active period
+  const financials = useMemo(() => {
+    const inPeriod = (dateStr?: string) => {
+      if (periodPreset === 'all_time') return true;
+      const d = (dateStr || '').slice(0, 10);
+      return d >= period.start && d <= period.end;
+    };
 
-    const attPresent = current.periodAttendance.filter(
-      (a) => a.status === 'present' || a.status === 'clocked_out'
-    ).length;
-    const attLate = current.periodAttendance.filter((a) => a.status === 'late').length;
+    const periodLedger = ledgerEntries.filter((e) => inPeriod(e.entryDate));
+    const ledgerRevenue = periodLedger
+      .filter((e) => e.entryType === 'revenue')
+      .reduce((s, e) => s + e.amountNgn, 0);
+    const ledgerExpenses = periodLedger
+      .filter((e) => e.entryType === 'expense')
+      .reduce((s, e) => s + e.amountNgn, 0);
 
-    const staffScorecard = staffMembers.map((st) => {
-      const stShifts = current.periodShifts.filter((sh) => sh.staffId === st.id);
-      const stCompleted = stShifts.filter((sh) => sh.status === 'completed').length;
-      const stAtt = current.periodAttendance.filter((a) => a.staffId === st.id);
-      const stOnTime = stAtt.filter((a) => a.status === 'present' || a.status === 'clocked_out').length;
-      return {
-        staff: st,
-        monthlyCompNgn: (st.monthlyBaseSalaryNgn || 0) + (st.monthlyAllowanceNgn || 0),
-        shiftsAssigned: stShifts.length,
-        shiftsCompleted: stCompleted,
-        attendanceLogs: stAtt.length,
-        onTimeCount: stOnTime,
+    const periodPos = posOrders.filter((o) => inPeriod(o.orderDate));
+    const posRevenue = periodPos.reduce((s, o) => s + o.totalNgn, 0);
+
+    const totalRevenue = Math.max(ledgerRevenue, kpis.totalBookingRevenueNgn + posRevenue);
+    const netProfit = totalRevenue - ledgerExpenses;
+
+    // Group revenue & expense categories cleanly
+    const categoryTotals = new Map<string, { type: 'revenue' | 'expense'; category: string; amount: number; count: number }>();
+    periodLedger.forEach((e) => {
+      const key = `${e.entryType}:${e.category}`;
+      const cur = categoryTotals.get(key) || {
+        type: e.entryType,
+        category: e.category,
+        amount: 0,
+        count: 0,
       };
+      cur.amount += e.amountNgn;
+      cur.count += 1;
+      categoryTotals.set(key, cur);
     });
 
-    const totalMonthlySalaryBillNgn = staffMembers
-      .filter((s) => s.employmentStatus === 'active')
-      .reduce((s, st) => s + (st.monthlyBaseSalaryNgn || 0) + (st.monthlyAllowanceNgn || 0), 0);
+    const pendingFolios = periodReservations
+      .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
+      .map((r) => ({
+        reservation: r,
+        pay: getReservationPaymentSummary(r, property.usdExchangeRateNgn),
+      }))
+      .filter((item) => item.pay.balance > 0)
+      .sort((a, b) => b.pay.balance - a.pay.balance);
+
+    const totalOutstandingNgn = pendingFolios.reduce((s, item) => s + item.pay.balance, 0);
 
     return {
-      hkCompleted,
-      hkRate,
-      mntResolved,
-      mntOpen,
-      mntEstCostNgn,
-      posByService,
-      posByMethod,
-      shiftsCompleted,
-      shiftCompletionPct,
-      attPresent,
-      attLate,
-      staffScorecard,
-      totalMonthlySalaryBillNgn,
+      totalRevenue,
+      ledgerExpenses,
+      netProfit,
+      posRevenue,
+      posOrderCount: periodPos.length,
+      totalOutstandingNgn,
+      pendingFolios,
+      categories: Array.from(categoryTotals.values()).sort((a, b) => b.amount - a.amount),
     };
   }, [
-    housekeepingTasks,
-    maintenanceTickets,
-    current.periodPosOrders,
-    current.periodShifts,
-    current.periodAttendance,
-    staffMembers,
+    ledgerEntries,
+    posOrders,
+    periodReservations,
+    period,
+    periodPreset,
+    kpis.totalBookingRevenueNgn,
+    property.usdExchangeRateNgn,
   ]);
 
-  // Pie chart dataset based on interactive toggle
-  const pieSlices = useMemo(() => {
-    let raw: Array<{ label: string; value: number }> = [];
-    if (pieMode === 'sources') {
-      raw = current.bookingSources.map((s) => ({ label: s.source, value: s.totalValueNgn }));
-    } else if (pieMode === 'expenses') {
-      raw = current.pnlByCategory
-        .filter((c) => c.expenseNgn > 0)
-        .map((c) => ({ label: c.category, value: c.expenseNgn }));
-    } else {
-      raw = inventoryMetrics.byCategory
-        .filter((c) => c.valuationNgn > 0)
-        .map((c) => ({ label: c.category, value: c.valuationNgn }));
-    }
-    const total = raw.reduce((s, r) => s + r.value, 0);
-    let cumulative = 0;
-    return raw.map((r, idx) => {
-      const share = total > 0 ? r.value / total : 0;
-      const startAngle = cumulative * 2 * Math.PI - Math.PI / 2;
-      cumulative += share;
-      const endAngle = cumulative * 2 * Math.PI - Math.PI / 2;
+  // Room Performance rows
+  const roomPerformance = useMemo(() => {
+    const sorted = sortRoomsByNumber(rooms);
+    const periodDays =
+      periodPreset === 'all_time' ? 30 : daysBetweenInclusive(period.start, period.end);
+
+    return sorted.map((room) => {
+      const roomRes = periodReservations.filter(
+        (r) =>
+          (r.roomId === room.id || r.roomNumber === room.roomNumber) &&
+          r.status !== 'cancelled' &&
+          r.status !== 'no_show'
+      );
+      const nights = roomRes.reduce(
+        (s, r) => s + (r.nights || computeNights(r.checkInDate, r.checkOutDate)),
+        0
+      );
+      const revenueNgn = roomRes.reduce(
+        (s, r) => s + getReservationEffectiveRevenueNgn(r, property.usdExchangeRateNgn),
+        0
+      );
+      const occPct = Math.min(100, Math.round((nights / Math.max(1, periodDays)) * 100));
+      const adr = nights > 0 ? Math.round(revenueNgn / nights) : room.nightlyRateNgn;
+
       return {
-        ...r,
-        sharePct: share * 100,
-        startAngle,
-        endAngle,
-        color: CHART_PALETTE[idx % CHART_PALETTE.length],
-        total,
+        room,
+        bookings: roomRes.length,
+        nights,
+        revenueNgn,
+        occPct,
+        adr,
       };
     });
-  }, [pieMode, current.bookingSources, current.pnlByCategory, inventoryMetrics.byCategory]);
+  }, [rooms, periodReservations, period, periodPreset, property.usdExchangeRateNgn]);
 
-  // Bar chart dataset based on interactive toggle
-  const barData = useMemo(() => {
-    if (barMode === 'category') {
-      return current.pnlByCategory
-        .filter((c) => c.revenueNgn > 0 || c.expenseNgn > 0)
-        .map((c) => ({
-          label: c.category.replace('Restaurant & Bar', 'POS / F&B').replace('Room Accommodation', 'Rooms'),
-          fullLabel: c.category,
-          primary: c.revenueNgn,
-          secondary: c.expenseNgn,
-          primaryLabel: 'Revenue',
-          secondaryLabel: 'Expense',
-        }));
-    }
-    return current.roomBreakdown.map((rb) => ({
-      label: rb.room.roomNumber,
-      fullLabel: `${rb.room.roomNumber} (${rb.room.roomType})`,
-      primary: rb.roomRevenueNgn,
-      secondary: Math.round(rb.occupancyPct),
-      primaryLabel: 'Earned Revenue',
-      secondaryLabel: 'Occupancy %',
-    }));
-  }, [barMode, current.pnlByCategory, current.roomBreakdown]);
+  const generatedTimestamp = useMemo(
+    () =>
+      new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    []
+  );
 
-  const sortedRoomsList = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
-
-  // Searchable & Filterable Room Bookings Daily Report dataset
-  const dailyBookingsDataset = useMemo(() => {
-    const q = reportSearch.trim().toLowerCase();
-    const rows = current.periodReservations
-      .map((res) => {
-        const bookedDate = getReservationBookedDate(res);
-        const roomDisplay = getReservationRoomDisplay(res, rooms);
-        const payment = getReservationPaymentSummary(res);
-        const sourceLabel = formatBookingSourceLabel(res.channel);
-        return {
-          res,
-          bookedDate,
-          roomDisplay,
-          payment,
-          sourceLabel,
-        };
-      })
-      .filter(({ res, bookedDate, roomDisplay, payment, sourceLabel }) => {
-        if (bookingStatusFilter !== 'all' && res.status !== bookingStatusFilter) return false;
-        if (bookingSourceFilter !== 'ALL' && !matchesBookingSourceFilter(res.channel, bookingSourceFilter)) {
-          return false;
-        }
-        if (bookingRoomFilter !== 'ALL' && roomDisplay.roomNumberLabel !== bookingRoomFilter) {
-          return false;
-        }
-        if (q) {
-          const hay = [
-            res.bookingRef,
-            res.guestName,
-            res.guestPhone || '',
-            roomDisplay.roomNumberLabel,
-            roomDisplay.roomTypeLabel,
-            sourceLabel,
-            res.checkInDate,
-            res.checkOutDate,
-            bookedDate,
-            payment.paymentStatus,
-            RESERVATION_STATUS_LABELS[res.status] || res.status,
-          ]
-            .join(' ')
-            .toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
-      })
-      .sort(
-        (a, b) =>
-          b.bookedDate.localeCompare(a.bookedDate) ||
-          b.res.checkInDate.localeCompare(a.res.checkInDate) ||
-          a.res.guestName.localeCompare(b.res.guestName)
+  // Real PDF Export
+  const handleExportPdf = () => {
+    try {
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+      doc.setFillColor(12, 86, 44);
+      doc.rect(0, 0, doc.internal.pageSize.getWidth(), 64, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(16);
+      doc.text(`${property.name} — Booking & Management Report`, 36, 30);
+      doc.setFontSize(10);
+      doc.text(
+        `Period: ${period.label}  |  Property ID: ${getPropertySystemId(property)}  |  Generated: ${generatedTimestamp}`,
+        36,
+        48
       );
 
-    // Day-by-day rollup within active date window
-    const dateSet = new Set<string>();
-    if (periodDays <= 45) {
-      for (let i = 0; i < periodDays; i += 1) {
-        dateSet.add(addDaysIso(dateWindow.start, i));
-      }
-    } else {
-      rows.forEach(({ res, bookedDate }) => {
-        if (bookedDate >= dateWindow.start && bookedDate <= dateWindow.end) dateSet.add(bookedDate);
-        if (res.checkInDate >= dateWindow.start && res.checkInDate <= dateWindow.end) {
-          dateSet.add(res.checkInDate);
-        }
-        if (res.checkOutDate >= dateWindow.start && res.checkOutDate <= dateWindow.end) {
-          dateSet.add(res.checkOutDate);
-        }
+      doc.setTextColor(15, 23, 42);
+      autoTable(doc, {
+        startY: 82,
+        head: [['Total Bookings', 'Confirmed', 'Cancelled', 'Average Stay', 'Total Revenue (Bookings)', 'Net Profit']],
+        body: [
+          [
+            String(kpis.totalBookings),
+            String(kpis.confirmedBookings),
+            String(kpis.cancelledBookings),
+            `${kpis.avgStay.toFixed(1)} Nights`,
+            formatNgn(kpis.totalBookingRevenueNgn),
+            formatNgn(financials.netProfit),
+          ],
+        ],
+        theme: 'grid',
+        headStyles: { fillColor: [12, 86, 44], textColor: 255, fontSize: 9 },
+        bodyStyles: { fontSize: 10, fontStyle: 'bold' },
       });
+
+      const bookingRows = filteredBookings.map((r) => {
+        const roomDisp = getReservationRoomDisplay(r, rooms);
+        const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+        const nights = r.nights || computeNights(r.checkInDate, r.checkOutDate);
+        const amountStr =
+          pay.sourceCurrency === 'USD'
+            ? `${formatUsd(pay.sourceTotalAmount)} (${formatNgn(pay.expectedPayoutNgn)})`
+            : formatNgn(pay.totalAmount);
+        return [
+          r.bookingRef,
+          r.guestName,
+          roomDisp.roomNumberLabel,
+          formatBookingSourceLabel(r.channel),
+          formatReadableDate(r.checkInDate),
+          formatReadableDate(r.checkOutDate),
+          String(nights),
+          amountStr,
+          pay.paymentStatus,
+          RESERVATION_STATUS_LABELS[r.status] || r.status,
+        ];
+      });
+
+      autoTable(doc, {
+        startY: ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 140) + 18,
+        head: [
+          [
+            'Booking ID',
+            'Guest Name',
+            'Room',
+            'Source',
+            'Check-In',
+            'Check-Out',
+            'Nights',
+            'Amount',
+            'Payment',
+            'Status',
+          ],
+        ],
+        body: bookingRows.length > 0 ? bookingRows : [['—', 'No bookings in selected period', '', '', '', '', '', '', '', '']],
+        theme: 'striped',
+        headStyles: { fillColor: [6, 21, 57], textColor: 255, fontSize: 8.5 },
+        bodyStyles: { fontSize: 8.5 },
+      });
+
+      const fileSlug = `${property.code || 'PCH'}-booking-report-${todayIso}.pdf`;
+      doc.save(fileSlug);
+      onNotify(`Exported PDF report (${fileSlug})`);
+    } catch (err) {
+      onNotify(`PDF export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
+  };
 
-    const totalSuites = Math.max(1, sortedRoomsList.length);
-    const rollup = Array.from(dateSet)
-      .sort((a, b) => b.localeCompare(a))
-      .map((dateIso) => {
-        const bookedOnDay = rows.filter((x) => x.bookedDate === dateIso);
-        const arrivalsOnDay = rows.filter(
-          (x) => x.res.checkInDate === dateIso && x.res.status !== 'cancelled' && x.res.status !== 'no_show'
-        );
-        const departuresOnDay = rows.filter(
-          (x) => x.res.checkOutDate === dateIso && x.res.status !== 'cancelled' && x.res.status !== 'no_show'
-        );
-        const stayingOnDay = rows.filter(
-          (x) =>
-            x.res.status !== 'cancelled' &&
-            x.res.status !== 'no_show' &&
-            countOverlapNights(x.res.checkInDate, x.res.checkOutDate, dateIso, dateIso) > 0
-        );
+  // Real Multi-Sheet Excel Export
+  const handleExportExcel = () => {
+    try {
+      const wb = XLSX.utils.book_new();
 
-        const activeBookedOnDay = bookedOnDay.filter(
-          (x) => x.res.status !== 'cancelled' && x.res.status !== 'no_show'
-        );
-        const bookingValueNgn = activeBookedOnDay.reduce((s, x) => s + x.payment.totalAmount, 0);
-        const collectedNgn = bookedOnDay.reduce((s, x) => s + x.payment.amountPaid, 0);
-        const balanceNgn = activeBookedOnDay.reduce((s, x) => s + x.payment.balance, 0);
-
+      const bookingsSheetData = filteredBookings.map((r) => {
+        const roomDisp = getReservationRoomDisplay(r, rooms);
+        const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+        const nights = r.nights || computeNights(r.checkInDate, r.checkOutDate);
         return {
-          dateIso,
-          bookingsCreated: bookedOnDay.length,
-          arrivalsCount: arrivalsOnDay.length,
-          departuresCount: departuresOnDay.length,
-          occupiedSuites: stayingOnDay.length,
-          occupancyPct: sortedRoomsList.length > 0 ? Math.min(100, (stayingOnDay.length / totalSuites) * 100) : 0,
-          bookingValueNgn,
-          collectedNgn,
-          balanceNgn,
+          'Booking ID': r.bookingRef,
+          'Guest Name': r.guestName,
+          Room: roomDisp.roomNumberLabel,
+          'Room Type': roomDisp.roomTypeLabel,
+          Source: formatBookingSourceLabel(r.channel),
+          'Check-In': r.checkInDate,
+          'Check-Out': r.checkOutDate,
+          Nights: nights,
+          'Currency': pay.sourceCurrency,
+          'Amount (USD)': pay.sourceCurrency === 'USD' ? pay.sourceTotalAmount : '',
+          'Amount (NGN)': isOtaBookingChannel(r.channel) ? pay.expectedPayoutNgn : pay.totalAmount,
+          'Paid (NGN)': pay.amountPaid,
+          'Balance (NGN)': pay.balance,
+          'Payment Status': pay.paymentStatus,
+          'Booking Status': RESERVATION_STATUS_LABELS[r.status] || r.status,
         };
-      })
-      .filter((dayRow) => {
-        if (periodDays <= 7) return true;
-        return (
-          dayRow.bookingsCreated > 0 ||
-          dayRow.arrivalsCount > 0 ||
-          dayRow.departuresCount > 0 ||
-          dayRow.occupiedSuites > 0
-        );
       });
 
-    const activeRows = rows.filter(
-      (x) => x.res.status !== 'cancelled' && x.res.status !== 'no_show'
-    );
-    const totalNights = activeRows.reduce((s, x) => s + (x.res.nights || 1), 0);
-    const totalValueNgn = activeRows.reduce((s, x) => s + x.payment.totalAmount, 0);
-    const totalPaidNgn = rows.reduce((s, x) => s + x.payment.amountPaid, 0);
-    const totalBalanceNgn = activeRows.reduce((s, x) => s + x.payment.balance, 0);
-    const arrivalsInWindow = activeRows.filter(
-      (x) => x.res.checkInDate >= dateWindow.start && x.res.checkInDate <= dateWindow.end
-    ).length;
-    const departuresInWindow = activeRows.filter(
-      (x) => x.res.checkOutDate >= dateWindow.start && x.res.checkOutDate <= dateWindow.end
-    ).length;
-    const createdInWindow = rows.filter(
-      (x) => x.bookedDate >= dateWindow.start && x.bookedDate <= dateWindow.end
-    ).length;
+      const summarySheetData = [
+        { Metric: 'Property', Value: property.name },
+        { Metric: 'Report Period', Value: period.label },
+        { Metric: 'Total Bookings', Value: kpis.totalBookings },
+        { Metric: 'Confirmed Bookings', Value: kpis.confirmedBookings },
+        { Metric: 'Cancelled Bookings', Value: kpis.cancelledBookings },
+        { Metric: 'Average Stay (Nights)', Value: Number(kpis.avgStay.toFixed(1)) },
+        { Metric: 'Occupancy Rate (%)', Value: kpis.occupancyPct },
+        { Metric: 'Total Revenue (Bookings NGN)', Value: kpis.totalBookingRevenueNgn },
+        { Metric: 'Total Operating Revenue (NGN)', Value: financials.totalRevenue },
+        { Metric: 'Total Operating Expenses (NGN)', Value: financials.ledgerExpenses },
+        { Metric: 'Net Profit (NGN)', Value: financials.netProfit },
+        { Metric: 'Outstanding Balances (NGN)', Value: financials.totalOutstandingNgn },
+      ];
 
-    return {
-      rows,
-      rollup,
-      summary: {
-        totalRows: rows.length,
-        createdInWindow,
-        arrivalsInWindow,
-        departuresInWindow,
-        totalNights,
-        totalValueNgn,
-        totalPaidNgn,
-        totalBalanceNgn,
-      },
-    };
-  }, [
-    current.periodReservations,
-    rooms,
-    sortedRoomsList.length,
-    reportSearch,
-    bookingStatusFilter,
-    bookingSourceFilter,
-    bookingRoomFilter,
-    periodDays,
-    dateWindow.start,
-    dateWindow.end,
-  ]);
+      const roomsSheetData = roomPerformance.map((row) => ({
+        Room: row.room.roomNumber,
+        Type: row.room.roomType,
+        Status: row.room.occupancyStatus,
+        Bookings: row.bookings,
+        'Nights Sold': row.nights,
+        'Occupancy (%)': row.occPct,
+        'Revenue (NGN)': row.revenueNgn,
+        'ADR (NGN)': row.adr,
+      }));
 
-  const activeBookingFiltersCount =
-    (reportSearch.trim() ? 1 : 0) +
-    (bookingStatusFilter !== 'all' ? 1 : 0) +
-    (bookingSourceFilter !== 'ALL' ? 1 : 0) +
-    (bookingRoomFilter !== 'ALL' ? 1 : 0);
+      const sourcesSheetData = sourceSlices.map((s) => ({
+        Source: s.label,
+        Bookings: s.count,
+        'Share (%)': s.pct,
+        'Revenue (USD)': s.usdTotal,
+        'Revenue (NGN)': s.ngnTotal,
+      }));
 
-  const uniqueSourceOptions = useMemo(() => {
-    const set = new Set<string>(['Walk-in', 'Website', 'Booking.com', 'Airbnb', 'Expedia']);
-    reservations.forEach((r) => set.add(formatBookingSourceLabel(r.channel)));
-    return Array.from(set);
-  }, [reservations]);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summarySheetData), 'Summary');
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(bookingsSheetData.length > 0 ? bookingsSheetData : [{ Note: 'No bookings in period' }]),
+        'Bookings'
+      );
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(roomsSheetData), 'Rooms');
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(sourcesSheetData.length > 0 ? sourcesSheetData : [{ Note: 'No sources in period' }]),
+        'Booking Sources'
+      );
 
-  // Strict Admin Authorization Gate
-  if (!isAuthorizedAdmin) {
+      const fileSlug = `${property.code || 'PCH'}-booking-report-${todayIso}.xlsx`;
+      XLSX.writeFile(wb, fileSlug);
+      onNotify(`Exported Excel workbook (${fileSlug})`);
+    } catch (err) {
+      onNotify(`Excel export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
+  if (!canAccess) {
     return (
-      <div className="bg-white border border-rose-200 rounded-xl p-8 max-w-xl mx-auto text-center space-y-4">
-        <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center mx-auto">
+      <div className="bg-white border border-slate-200 rounded-xl p-10 text-center max-w-lg mx-auto my-8 space-y-3">
+        <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
           <ShieldAlert className="w-6 h-6" />
         </div>
-        <h2 className="font-display text-lg font-bold text-slate-900">
-          Administrator Authorization Required
+        <h2 className="font-display text-lg font-extrabold text-[#061539]">
+          Management Reports Restricted
         </h2>
-        <p className="text-xs text-slate-600 leading-relaxed">
-          All financial &amp; management analytics reports (P&amp;L, ADR, RevPAR, Inventory Valuation, and Staff Performance) are restricted exclusively to Property Administrators. Employees can view and print their operational Shift Daily Report instead.
+        <p className="text-xs text-slate-600">
+          Financial and booking analytics are available to Property Admins and PCH Super Admins only.
         </p>
-        {onNavigate && (
-          <button
-            type="button"
-            onClick={() => onNavigate('shift_daily_report')}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold rounded-lg cursor-pointer"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Open My Shift Daily Report</span>
-          </button>
-        )}
       </div>
     );
   }
 
-  // Export Multi-Sheet Excel (.xlsx)
-  const handleExportExcel = () => {
-    const wb = XLSX.utils.book_new();
-
-    const execRows = [
-      { Metric: 'Property', Value: property.name },
-      { Metric: 'Report Period', Value: dateWindow.label },
-      { Metric: 'Total Ledger Revenue (NGN)', Value: current.totalRevenueNgn },
-      { Metric: 'Total Ledger Expenses (NGN)', Value: current.totalExpensesNgn },
-      { Metric: 'Net Profit / Loss (NGN)', Value: current.netProfitNgn },
-      { Metric: 'Operating Margin (%)', Value: Number(current.profitMarginPct.toFixed(2)) },
-      { Metric: 'Booking Gross Value (NGN)', Value: current.reservationTotalValueNgn },
-      { Metric: 'Collected Booking Payments (NGN)', Value: current.reservationCollectedNgn },
-      { Metric: 'Not Paid / Pending Balance (NGN)', Value: current.reservationBalanceNgn },
-      { Metric: 'Not Paid Reservations Count', Value: current.unpaidCount },
-      { Metric: 'Partial Paid Reservations Count', Value: current.partialCount },
-      { Metric: 'Collection Rate (%)', Value: Number(current.collectionRatePct.toFixed(1)) },
-      { Metric: 'VAT Collected / Recorded (NGN)', Value: current.totalVatNgn },
-      { Metric: 'Room Occupancy (%)', Value: Number(current.occupancyPct.toFixed(2)) },
-      { Metric: 'Occupied Room Nights', Value: current.occupiedRoomNights },
-      { Metric: 'Available Room Nights', Value: current.availableRoomNights },
-      { Metric: 'Earned Room Revenue (NGN)', Value: current.earnedRoomRevenueNgn },
-      { Metric: 'ADR (NGN)', Value: Math.round(current.adrNgn) },
-      { Metric: 'RevPAR (NGN)', Value: Math.round(current.revparNgn) },
-      { Metric: 'Reservations in Period', Value: current.periodReservations.length },
-      { Metric: 'POS Sales Total (NGN)', Value: current.posTotalSalesNgn },
-      { Metric: 'Store Inventory Valuation (NGN)', Value: inventoryMetrics.totalValuationNgn },
-      { Metric: 'Active Staff Monthly Payroll (NGN)', Value: opsMetrics.totalMonthlySalaryBillNgn },
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(execRows), 'Executive Summary');
-
-    const monthlyRows = current.monthlyBreakdown.map((m) => ({
-      Month: m.label,
-      Start_Date: m.startDate,
-      End_Date: m.endDate,
-      Bookings: m.bookingsCount,
-      Occupied_Nights: m.occupiedNights,
-      Occupancy_Pct: Number(m.occupancyPct.toFixed(1)),
-      Earned_Room_Rev_NGN: m.earnedRoomRevenueNgn,
-      POS_Sales_NGN: m.posSalesNgn,
-      Ledger_Revenue_NGN: m.revenueNgn,
-      Expenses_NGN: m.expenseNgn,
-      Net_Profit_NGN: m.netNgn,
-      Paid_Collected_NGN: m.paidCollectedNgn,
-      Not_Paid_Pending_NGN: m.pendingUnpaidNgn,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(monthlyRows), 'Monthly Revenue');
-
-    const weeklyRows = current.weeklyBreakdown.map((w) => ({
-      Week_Window: w.label,
-      Start_Date: w.startDate,
-      End_Date: w.endDate,
-      Bookings: w.bookingsCount,
-      Occupied_Nights: w.occupiedNights,
-      Occupancy_Pct: Number(w.occupancyPct.toFixed(1)),
-      Earned_Room_Rev_NGN: w.earnedRoomRevenueNgn,
-      POS_Sales_NGN: w.posSalesNgn,
-      Ledger_Revenue_NGN: w.revenueNgn,
-      Expenses_NGN: w.expenseNgn,
-      Net_Profit_NGN: w.netNgn,
-      Paid_Collected_NGN: w.paidCollectedNgn,
-      Not_Paid_Pending_NGN: w.pendingUnpaidNgn,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(weeklyRows), 'Weekly Revenue');
-
-    const pendingRows = current.pendingPaymentRows.map((p) => ({
-      Booking_Ref: p.res.bookingRef,
-      Guest_Name: p.res.guestName,
-      Guest_Phone: p.res.guestPhone || '',
-      Room: p.roomDisplay.roomNumberLabel,
-      Check_In: p.res.checkInDate,
-      Check_Out: p.res.checkOutDate,
-      Source: p.sourceLabel,
-      Payment_State: p.paymentStatus === 'Unpaid' ? 'Not Paid' : 'Partial (Pending)',
-      Total_Billed_NGN: p.totalAmount,
-      Amount_Paid_NGN: p.amountPaid,
-      Pending_Balance_NGN: p.balance,
-      Reservation_Status: RESERVATION_STATUS_LABELS[p.res.status] || p.res.status,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pendingRows), 'Pending & Unpaid');
-
-    const dailySummaryRows = dailyBookingsDataset.rollup.map((d) => ({
-      Date: d.dateIso,
-      Bookings_Created: d.bookingsCreated,
-      Arrivals: d.arrivalsCount,
-      Departures: d.departuresCount,
-      Occupied_Rooms: d.occupiedSuites,
-      Occupancy_Pct: Number(d.occupancyPct.toFixed(1)),
-      Booked_Value_NGN: d.bookingValueNgn,
-      Paid_Collected_NGN: d.collectedNgn,
-      Not_Paid_Pending_NGN: d.balanceNgn,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dailySummaryRows), 'Daily Booking Summary');
-
-    const dailyDetailRows = dailyBookingsDataset.rows.map(({ res, bookedDate, roomDisplay, payment, sourceLabel }) => {
-      const isOta = isOtaBookingChannel(res.channel);
-      return {
-        Property_ID: getPropertySystemId(property),
-        Booked_Date: bookedDate,
-        Booking_Ref: res.bookingRef,
-        Guest_Name: res.guestName,
-        Guest_Phone: res.guestPhone || '',
-        Room_Number: roomDisplay.roomNumberLabel,
-        Room_Type: roomDisplay.roomTypeLabel,
-        Check_In: res.checkInDate,
-        Check_Out: res.checkOutDate,
-        Nights: res.nights,
-        Adults: res.adults,
-        Children: res.children || 0,
-        Booking_Source: sourceLabel,
-        Guest_Paid_OTA_Currency: isOta ? payment.sourceCurrency : 'NGN',
-        Guest_Paid_OTA_Amount: isOta ? payment.otaPaidSourceAmount : 0,
-        Guest_Paid_OTA_NGN: isOta ? payment.otaPaidAmount : 0,
-        Expected_Property_Payout_NGN: isOta ? payment.expectedPayoutNgn : payment.totalAmount,
-        Direct_Property_Paid_NGN: payment.hotelPaidAmount,
-        Total_Charges_NGN: payment.totalAmount,
-        Remaining_Property_Balance_NGN: payment.balance,
-        Payment_Status: payment.paymentStatus === 'Unpaid' ? 'Not Paid' : payment.paymentStatus,
-        Reservation_Status: RESERVATION_STATUS_LABELS[res.status] || res.status,
-      };
-    });
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dailyDetailRows), 'Daily Room Bookings');
-
-    const pnlRows = current.pnlByCategory.map((c) => ({
-      Category: c.category,
-      Revenue_NGN: c.revenueNgn,
-      Expense_NGN: c.expenseNgn,
-      Net_NGN: c.netNgn,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pnlRows), 'Profit and Loss');
-
-    const roomRows = current.roomBreakdown.map((r) => ({
-      Room: r.room.roomNumber,
-      Suite_Name: r.room.name,
-      Section: r.section,
-      Room_Type: r.room.roomType,
-      Rack_Rate_NGN: r.room.nightlyRateNgn,
-      Stays: r.staysCount,
-      Occupied_Nights: r.occupiedNights,
-      Available_Nights: r.availableNights,
-      Occupancy_Pct: Number(r.occupancyPct.toFixed(1)),
-      Earned_Revenue_NGN: r.roomRevenueNgn,
-      ADR_NGN: Math.round(r.adrNgn),
-      RevPAR_NGN: Math.round(r.revparNgn),
-      Live_Status: r.room.occupancyStatus,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(roomRows), 'Rooms ADR RevPAR');
-
-    const sourceRows = current.bookingSources.map((s) => ({
-      Booking_Source: s.source,
-      Bookings: s.bookings,
-      Room_Nights: s.nights,
-      Total_Booking_Value_NGN: s.totalValueNgn,
-      Collected_NGN: s.collectedNgn,
-      OTA_Commission_Pct: s.commissionPct,
-      Est_Commission_NGN: s.estCommissionNgn,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sourceRows), 'Booking Sources');
-
-    const deptRows = [
-      ...current.sectionPerformance.map((sp) => ({
-        Department: sp.department,
-        Units: sp.unitCount,
-        Occupied_Nights_Or_Orders: sp.occupiedNights,
-        Occupancy_Pct: Number(sp.occupancyPct.toFixed(1)),
-        Revenue_NGN: sp.revenueNgn,
-        ADR_NGN: Math.round(sp.adrNgn),
-        RevPAR_NGN: Math.round(sp.revparNgn),
-      })),
-      ...opsMetrics.posByService.map((ps) => ({
-        Department: `POS · ${ps.serviceType}`,
-        Units: ps.items,
-        Occupied_Nights_Or_Orders: ps.orders,
-        Occupancy_Pct: 0,
-        Revenue_NGN: ps.totalNgn,
-        ADR_NGN: ps.orders > 0 ? Math.round(ps.totalNgn / ps.orders) : 0,
-        RevPAR_NGN: 0,
-      })),
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(deptRows), 'POS & Departments');
-
-    const invRows = inventoryItems.map((i) => ({
-      SKU: i.sku,
-      Item_Name: i.name,
-      Category: i.category,
-      Qty_On_Hand: i.quantityOnHand,
-      Unit: i.unit,
-      Reorder_Level: i.reorderLevel,
-      Unit_Cost_NGN: i.unitCostNgn,
-      Stock_Value_NGN: i.quantityOnHand * i.unitCostNgn,
-      Supplier: i.supplierName,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(invRows), 'Inventory Costs');
-
-    const staffRows = opsMetrics.staffScorecard.map((s) => ({
-      Staff_Code: s.staff.staffCode,
-      Full_Name: s.staff.fullName,
-      Department: s.staff.department,
-      Role: s.staff.role,
-      Status: s.staff.employmentStatus,
-      Monthly_Comp_NGN: s.monthlyCompNgn,
-      Shifts_Assigned: s.shiftsAssigned,
-      Shifts_Completed: s.shiftsCompleted,
-      Attendance_Logs: s.attendanceLogs,
-      On_Time_Logs: s.onTimeCount,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(staffRows), 'Staff Performance');
-
-    XLSX.writeFile(wb, `${property.code}-Management-Report-${dateWindow.start}-to-${dateWindow.end}.xlsx`);
-    onNotify('Exported multi-sheet Excel (.xlsx) management analytics workbook');
-  };
-
-  // Export Executive PDF Report
-  const handleExportPdf = () => {
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const propAddress = property.address || RICHGATES_PROPERTY_INFO.address;
-    const propPhone = property.phone || RICHGATES_PROPERTY_INFO.phone;
-    const propEmail = property.email || RICHGATES_PROPERTY_INFO.email;
-
-    let startY = 14;
-    if (property.logoUrl && property.logoUrl.startsWith('data:image/')) {
-      try {
-        const format = property.logoUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-        doc.addImage(property.logoUrl, format, 14, 12, 16, 16);
-      } catch {
-        // ignore logo draw error
-      }
-    }
-
-    const textLeft = property.logoUrl && property.logoUrl.startsWith('data:image/') ? 34 : 14;
-    doc.setFontSize(15);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${property.name} — Management Reports & Analytics`, textLeft, 18);
-
-    doc.setFontSize(8.5);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`${getPropertySystemId(property)} · ${propAddress}`, textLeft, 23);
-    doc.text(`${propPhone} | ${propEmail} | Period: ${dateWindow.label}`, textLeft, 28);
-    startY = 35;
-
-    autoTable(doc, {
-      startY,
-      head: [['Executive Metric', 'Current Period', 'Operational Benchmark / Detail']],
-      body: [
-        ['Total Ledger Revenue', formatPdfNgn(current.totalRevenueNgn), `VAT Recorded: ${formatPdfNgn(current.totalVatNgn)}`],
-        ['Booking Collected (Paid)', formatPdfNgn(current.reservationCollectedNgn), `Collection Rate: ${current.collectionRatePct.toFixed(1)}% (${current.fullyPaidCount} Paid)`],
-        ['Not Paid / Pending Balance', formatPdfNgn(current.reservationBalanceNgn), `${current.unpaidCount} Not Paid · ${current.partialCount} Partial`],
-        ['Total Ledger Expenses', formatPdfNgn(current.totalExpensesNgn), `${current.pnlByCategory.filter((c) => c.expenseNgn > 0).length} active cost categories`],
-        ['Net Profit / Loss', formatPdfNgn(current.netProfitNgn), `Operating Margin: ${current.profitMarginPct.toFixed(1)}%`],
-        ['Room Occupancy', `${current.occupancyPct.toFixed(1)}%`, `${current.occupiedRoomNights} / ${current.availableRoomNights} available room-nights`],
-        ['ADR (Average Daily Rate)', formatPdfNgn(current.adrNgn), `Earned Room Rev: ${formatPdfNgn(current.earnedRoomRevenueNgn)}`],
-        ['RevPAR', formatPdfNgn(current.revparNgn), `${rooms.length} rooms x ${periodDays} day(s)`],
-        ['POS Sales', formatPdfNgn(current.posTotalSalesNgn), `${current.periodPosOrders.length} orders · ${current.posItemsSold} items`],
-        ['Store Inventory Value', formatPdfNgn(inventoryMetrics.totalValuationNgn), `${inventoryItems.length} SKUs (${inventoryMetrics.lowStockItems.length} low-stock alerts)`],
-      ],
-      styles: { fontSize: 8.5 },
-      headStyles: { fillColor: [15, 23, 42] },
-    });
-
-    const afterExec = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 110;
-    autoTable(doc, {
-      startY: afterExec + 8,
-      head: [['P&L Category', 'Revenue (NGN)', 'Expenses (NGN)', 'Net Impact (NGN)']],
-      body: current.pnlByCategory.map((c) => [
-        c.category,
-        formatPdfNgn(c.revenueNgn),
-        formatPdfNgn(c.expenseNgn),
-        formatPdfNgn(c.netNgn),
-      ]),
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [28, 70, 190] },
-    });
-
-    const afterPnl = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 180;
-    autoTable(doc, {
-      startY: afterPnl + 8,
-      head: [['Booking Source', 'Bookings', 'Nights', 'Booking Value', 'Collected', 'Est. Commission']],
-      body:
-        current.bookingSources.length > 0
-          ? current.bookingSources.map((s) => [
-              s.source,
-              String(s.bookings),
-              String(s.nights),
-              formatPdfNgn(s.totalValueNgn),
-              formatPdfNgn(s.collectedNgn),
-              formatPdfNgn(s.estCommissionNgn),
-            ])
-          : [['No reservations in selected period', '0', '0', 'NGN 0', 'NGN 0', 'NGN 0']],
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [5, 150, 105] },
-    });
-
-    doc.addPage();
-    autoTable(doc, {
-      startY: 16,
-      head: [['Room', 'Section', 'Room Type', 'Occupied Nights', 'Occupancy %', 'Earned Rev', 'ADR', 'RevPAR']],
-      body: current.roomBreakdown.map((r) => [
-        r.room.roomNumber,
-        r.section,
-        r.room.roomType,
-        `${r.occupiedNights}/${r.availableNights}`,
-        `${r.occupancyPct.toFixed(1)}%`,
-        formatPdfNgn(r.roomRevenueNgn),
-        formatPdfNgn(r.adrNgn),
-        formatPdfNgn(r.revparNgn),
-      ]),
-      styles: { fontSize: 7.5 },
-      headStyles: { fillColor: [15, 23, 42] },
-    });
-
-    doc.addPage();
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`Room Bookings Daily Report (${dateWindow.label})`, 14, 16);
-    autoTable(doc, {
-      startY: 20,
-      head: [['Booked', 'Ref', 'Guest Name', 'Room', 'Stay Dates', 'Nights', 'Source', 'Total', 'Paid', 'Status']],
-      body:
-        dailyBookingsDataset.rows.length > 0
-          ? dailyBookingsDataset.rows.map(({ res, bookedDate, roomDisplay, payment, sourceLabel }) => [
-              bookedDate,
-              res.bookingRef,
-              res.guestName,
-              roomDisplay.roomNumberLabel,
-              `${res.checkInDate} -> ${res.checkOutDate}`,
-              String(res.nights),
-              sourceLabel,
-              formatPdfNgn(payment.totalAmount),
-              formatPdfNgn(payment.amountPaid),
-              `${payment.paymentStatus} / ${RESERVATION_STATUS_LABELS[res.status] || res.status}`,
-            ])
-          : [['-', '-', 'No matching room bookings for selected dates/filters', '-', '-', '0', '-', 'NGN 0', 'NGN 0', '-']],
-      styles: { fontSize: 7 },
-      headStyles: { fillColor: [15, 23, 42] },
-    });
-
-    const afterDailyBookings =
-      (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 110;
-    autoTable(doc, {
-      startY: afterDailyBookings + 8,
-      head: [['Staff Member', 'Department', 'Monthly Comp', 'Shifts Completed', 'Attendance Logs']],
-      body: opsMetrics.staffScorecard.map((s) => [
-        s.staff.fullName,
-        s.staff.department,
-        formatPdfNgn(s.monthlyCompNgn),
-        `${s.shiftsCompleted}/${s.shiftsAssigned}`,
-        `${s.onTimeCount}/${s.attendanceLogs}`,
-      ]),
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [79, 70, 229] },
-    });
-
-    doc.save(`${property.code}-Management-Report-${dateWindow.start}.pdf`);
-    onNotify('Exported Management Analytics PDF report');
-  };
-
-  // Active Trend Series based on selected granularity (Daily / Weekly / Monthly)
-  const activeTrendSeries = useMemo(() => {
-    if (trendGranularity === 'monthly') return current.monthlyBreakdown;
-    if (trendGranularity === 'weekly') return current.weeklyBreakdown;
-    return current.dailyPoints;
-  }, [trendGranularity, current.monthlyBreakdown, current.weeklyBreakdown, current.dailyPoints]);
-
-  // Interactive Line Chart Geometry
-  const lineWidth = 640;
-  const lineHeight = 220;
-  const padL = 48;
-  const padR = 16;
-  const padT = 18;
-  const padB = 28;
-  const plotW = lineWidth - padL - padR;
-  const plotH = lineHeight - padT - padB;
-
-  const lineMaxVal = useMemo(() => {
-    if (lineMode === 'hospitality') return 100;
-    const maxFound = activeTrendSeries.reduce(
-      (m, pt) =>
-        Math.max(
-          m,
-          pt.revenueNgn,
-          pt.expenseNgn,
-          Math.abs(pt.netNgn),
-          pt.paidCollectedNgn,
-          pt.pendingUnpaidNgn
-        ),
-      10000
-    );
-    return maxFound * 1.15;
-  }, [lineMode, activeTrendSeries]);
-
-  const toLineX = (idx: number, count: number) =>
-    count <= 1 ? padL + plotW / 2 : padL + (idx / (count - 1)) * plotW;
-
-  const toLineY = (val: number, maxVal: number) =>
-    padT + plotH - (Math.max(0, Math.min(maxVal, val)) / (maxVal || 1)) * plotH;
-
-  const buildPath = (values: number[], maxVal: number) =>
-    values
-      .map((v, idx) => `${idx === 0 ? 'M' : 'L'} ${toLineX(idx, values.length).toFixed(1)} ${toLineY(v, maxVal).toFixed(1)}`)
-      .join(' ');
-
-  // Reservation Status Counts in period
-  const resStatusRows = useMemo(() => {
-    const statuses: ReservationRecord['status'][] = [
-      'confirmed',
-      'pending',
-      'checked_in',
-      'checked_out',
-      'cancelled',
-      'no_show',
-    ];
-    return statuses.map((st) => {
-      const list = current.periodReservations.filter((r) => r.status === st);
-      return {
-        status: st,
-        count: list.length,
-        nights: list.reduce((s, r) => s + (r.nights || 1), 0),
-        valueNgn: list.reduce((s, r) => s + getReservationPaymentSummary(r).totalAmount, 0),
-        paidNgn: list.reduce((s, r) => s + getReservationPaymentSummary(r).amountPaid, 0),
-        pendingNgn: list.reduce((s, r) => s + getReservationPaymentSummary(r).balance, 0),
-      };
-    });
-  }, [current.periodReservations]);
-
-  const activeDayPoint =
-    hoveredDayIndex !== null && activeTrendSeries[hoveredDayIndex]
-      ? activeTrendSeries[hoveredDayIndex]
-      : activeTrendSeries[activeTrendSeries.length - 1];
-
-  const activePieSlice =
-    selectedPieIndex !== null ? pieSlices[selectedPieIndex] : pieSlices[0];
-
-  const barMaxPrimary = useMemo(() => {
-    return barData.reduce((m, b) => Math.max(m, b.primary, barMode === 'category' ? b.secondary : 0), 10000) * 1.15;
-  }, [barData, barMode]);
-
-  const revDelta = computeDelta(current.totalRevenueNgn, previous ? previous.totalRevenueNgn : null);
-  const collectedDelta = computeDelta(
-    current.reservationCollectedNgn,
-    previous ? previous.reservationCollectedNgn : null
-  );
-  const pendingDelta = computeDelta(
-    current.reservationBalanceNgn,
-    previous ? previous.reservationBalanceNgn : null
-  );
-  const expDelta = computeDelta(current.totalExpensesNgn, previous ? previous.totalExpensesNgn : null);
-  const netDelta = computeDelta(current.netProfitNgn, previous ? previous.netProfitNgn : null);
-  const occDelta = computeDelta(current.occupancyPct, previous ? previous.occupancyPct : null);
-  const adrDelta = computeDelta(current.adrNgn, previous ? previous.adrNgn : null);
-  const revparDelta = computeDelta(current.revparNgn, previous ? previous.revparNgn : null);
-  const posDelta = computeDelta(current.posTotalSalesNgn, previous ? previous.posTotalSalesNgn : null);
-
   return (
-    <div className="space-y-6">
-      {/* Executive Header & Export Actions */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            {property.logoUrl ? (
-              <img
-                src={property.logoUrl}
-                alt={property.name}
-                referrerPolicy="no-referrer"
-                className="w-11 h-11 rounded-xl object-contain border border-slate-200 bg-white p-1 shrink-0"
-              />
-            ) : (
-              <div className="w-11 h-11 rounded-xl bg-slate-900 text-white flex items-center justify-center shrink-0">
-                <BarChart3 className="w-5 h-5" />
-              </div>
-            )}
-            <div>
-              <h1 className="font-display text-xl font-bold text-slate-900">
-                {cms.pages.reports.title || 'Admin Management Reports & Analytics'}
+    <div className="space-y-5">
+      {/* Clean Header Bar with Period Selector & Exports */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#0c562c] to-[#15803d] text-white flex items-center justify-center shrink-0 shadow-xs">
+              <TrendingUp className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-display text-xl sm:text-2xl font-extrabold text-[#061539] tracking-tight truncate">
+                Booking Report
               </h1>
-              <p className="text-xs text-slate-500 mt-0.5">
-                <span className="font-mono-tabular font-semibold text-slate-700">
-                  {getPropertySystemId(property)}
-                </span>{' '}
-                · Live database analytics ({dateWindow.label})
+              <p className="text-xs sm:text-sm text-slate-500">
+                View and analyse your property bookings — {property.name}
               </p>
             </div>
           </div>
 
-          <div className="no-print flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleExportExcel}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>Export Excel (.xlsx)</span>
-            </button>
+          {/* Right Controls: Period Dropdown + Export PDF + Export Excel + Print */}
+          <div className="flex flex-wrap items-center gap-2.5 print:hidden">
+            <div className="relative inline-flex items-center">
+              <Calendar className="w-4 h-4 text-slate-500 absolute left-3 pointer-events-none" />
+              <select
+                value={periodPreset}
+                onChange={(e) => setPeriodPreset(e.target.value as PeriodPreset)}
+                aria-label="Report period"
+                className="h-10 pl-9 pr-8 rounded-lg border border-slate-300 bg-white text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-600 cursor-pointer"
+              >
+                <option value="this_month">This Month</option>
+                <option value="today">Today</option>
+                <option value="last_7">Last 7 Days</option>
+                <option value="last_30">Last 30 Days</option>
+                <option value="last_month">Last Month</option>
+                <option value="last_6_months">Last 6 Months</option>
+                <option value="this_year">This Year</option>
+                <option value="all_time">All Time</option>
+                <option value="custom">Custom Range</option>
+              </select>
+            </div>
+
             <button
               type="button"
               onClick={handleExportPdf}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#1c46be] hover:bg-blue-800 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              className="h-10 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[#0c562c] hover:bg-[#094322] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
             >
-              <FileText className="w-3.5 h-3.5" />
+              <Download className="w-4 h-4" />
               <span>Export PDF</span>
             </button>
+
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="h-10 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[#15803d] hover:bg-[#166534] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Export Excel</span>
+            </button>
+
             <button
               type="button"
               onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              className="h-10 inline-flex items-center gap-1.5 px-3.5 rounded-lg border border-emerald-700/40 bg-white hover:bg-emerald-50 text-emerald-900 text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
             >
-              <Printer className="w-3.5 h-3.5" />
+              <Printer className="w-4 h-4" />
               <span>Print</span>
             </button>
           </div>
         </div>
 
-        {/* Date Filter Bar & Period Comparison Toggle */}
-        <div className="no-print flex flex-col gap-3 pt-3 border-t border-slate-100 text-xs">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {(
-                [
-                  { id: 'today', label: 'Today' },
-                  { id: 'yesterday', label: 'Yesterday' },
-                  { id: 'single_day', label: 'Pick Date' },
-                  { id: 'this_week', label: 'This Week' },
-                  { id: 'last_7', label: 'Last 7 Days' },
-                  { id: 'this_month', label: 'This Month' },
-                  { id: 'last_month', label: 'Last Month' },
-                  { id: 'last_30', label: 'Last 30 Days' },
-                  { id: 'this_year', label: 'This Year' },
-                  { id: 'all_time', label: 'All Time' },
-                  { id: 'custom', label: 'Date Range' },
-                ] as Array<{ id: DatePreset; label: string }>
-              ).map((btn) => (
-                <button
-                  key={btn.id}
-                  type="button"
-                  onClick={() => {
-                    setPreset(btn.id);
-                    if (btn.id === 'this_week' || btn.id === 'last_7') {
-                      setTrendGranularity('weekly');
-                      setPeriodReportMode('weekly');
-                    } else if (
-                      btn.id === 'this_month' ||
-                      btn.id === 'last_month' ||
-                      btn.id === 'this_year' ||
-                      btn.id === 'all_time'
-                    ) {
-                      setTrendGranularity('monthly');
-                      setPeriodReportMode('monthly');
-                    } else {
-                      setTrendGranularity('daily');
-                    }
-                    setHoveredDayIndex(null);
-                  }}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap cursor-pointer ${
-                    preset === btn.id
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  {btn.label}
-                </button>
-              ))}
+        {/* Inline Custom Date Pickers (only shown when Custom Range is active) */}
+        {periodPreset === 'custom' && (
+          <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-3 text-xs">
+            <span className="font-semibold text-slate-600">Custom Range:</span>
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="h-9 px-3 rounded-lg border border-slate-300 bg-white font-mono-tabular text-xs text-slate-800"
+            />
+            <span className="text-slate-400">to</span>
+            <input
+              type="date"
+              value={customEnd}
+              min={customStart}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="h-9 px-3 rounded-lg border border-slate-300 bg-white font-mono-tabular text-xs text-slate-800"
+            />
+          </div>
+        )}
+      </div>
 
-              {preset === 'single_day' && (
-                <div className="flex items-center gap-1.5 ml-1">
-                  <button
-                    type="button"
-                    onClick={() => setSingleDay((d) => addDaysIso(d || todayIso, -1))}
-                    className="px-2 py-1.5 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 font-semibold cursor-pointer"
-                    title="Previous day"
-                  >
-                    ‹
-                  </button>
-                  <input
-                    type="date"
-                    value={singleDay}
-                    onChange={(e) => setSingleDay(e.target.value || todayIso)}
-                    className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular bg-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setSingleDay((d) => addDaysIso(d || todayIso, 1))}
-                    className="px-2 py-1.5 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 font-semibold cursor-pointer"
-                    title="Next day"
-                  >
-                    ›
-                  </button>
-                </div>
+      {/* 4 Clean Soft-Tinted Summary KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* 1. Total Bookings */}
+        <div className="bg-emerald-50/80 border border-emerald-200/70 rounded-xl p-4 sm:p-5 flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+            <CalendarCheck2 className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-slate-700">Total Bookings</p>
+            <p className="font-mono-tabular text-3xl font-extrabold text-[#061539] leading-tight mt-1">
+              {kpis.totalBookings}
+            </p>
+            <p
+              className={`text-[11px] font-semibold mt-1 inline-flex items-center gap-1 ${
+                kpis.totalDelta.positive === false
+                  ? 'text-rose-700'
+                  : 'text-emerald-700'
+              }`}
+            >
+              {kpis.totalDelta.positive === false ? (
+                <TrendingDown className="w-3 h-3" />
+              ) : (
+                <TrendingUp className="w-3 h-3" />
               )}
+              <span>{kpis.totalDelta.text}</span>
+            </p>
+          </div>
+        </div>
 
-              {preset === 'custom' && (
-                <div className="flex flex-wrap items-center gap-1.5 ml-1">
-                  <input
-                    type="date"
-                    value={customStart}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setCustomStart(next);
-                      if (customEnd < next) setCustomEnd(next);
-                    }}
-                    className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular bg-white"
-                  />
-                  <span className="text-slate-400">to</span>
-                  <input
-                    type="date"
-                    min={customStart}
-                    value={customEnd}
-                    onChange={(e) =>
-                      setCustomEnd(e.target.value < customStart ? customStart : e.target.value)
-                    }
-                    className="border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono-tabular bg-white"
-                  />
-                </div>
+        {/* 2. Confirmed Bookings */}
+        <div className="bg-sky-50/80 border border-sky-200/70 rounded-xl p-4 sm:p-5 flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-slate-700">Confirmed Bookings</p>
+            <p className="font-mono-tabular text-3xl font-extrabold text-[#061539] leading-tight mt-1">
+              {kpis.confirmedBookings}
+            </p>
+            <p
+              className={`text-[11px] font-semibold mt-1 inline-flex items-center gap-1 ${
+                kpis.confirmedDelta.positive === false
+                  ? 'text-rose-700'
+                  : 'text-emerald-700'
+              }`}
+            >
+              {kpis.confirmedDelta.positive === false ? (
+                <TrendingDown className="w-3 h-3" />
+              ) : (
+                <TrendingUp className="w-3 h-3" />
               )}
+              <span>{kpis.confirmedDelta.text}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* 3. Cancelled Bookings */}
+        <div className="bg-rose-50/80 border border-rose-200/70 rounded-xl p-4 sm:p-5 flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-full bg-rose-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+            <XCircle className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-slate-700">Cancelled Bookings</p>
+            <p className="font-mono-tabular text-3xl font-extrabold text-[#061539] leading-tight mt-1">
+              {kpis.cancelledBookings}
+            </p>
+            <p className="text-[11px] font-semibold mt-1 inline-flex items-center gap-1 text-rose-700">
+              {kpis.cancelledDelta.positive === true ? (
+                <TrendingUp className="w-3 h-3" />
+              ) : (
+                <TrendingDown className="w-3 h-3" />
+              )}
+              <span>{kpis.cancelledDelta.text}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* 4. Average Stay */}
+        <div className="bg-violet-50/80 border border-violet-200/70 rounded-xl p-4 sm:p-5 flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-full bg-violet-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+            <BedDouble className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-slate-700">Average Stay</p>
+            <p className="font-mono-tabular text-3xl font-extrabold text-[#061539] leading-tight mt-1">
+              {kpis.avgStay.toFixed(1)}{' '}
+              <span className="text-sm font-semibold text-slate-600 font-sans">Nights</span>
+            </p>
+            <p className="text-[11px] font-semibold text-violet-800 mt-1">
+              {kpis.totalNights} room-nights · {kpis.occupancyPct}% occupancy
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 2 Side-by-Side Visual Charts: Booking Trends + Bookings by Source */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <div className="lg:col-span-7">
+          <MonthlyTrendBarChart
+            data={monthlyTrend}
+            defaultMetric="bookings"
+            allowMetricToggle
+            headerTone="emerald"
+          />
+        </div>
+        <div className="lg:col-span-5">
+          <BookingsBySourcePieChart
+            title="Bookings by Source"
+            slices={sourceSlices}
+            variant="pie"
+            headerTone="emerald"
+          />
+        </div>
+      </div>
+
+      {/* Simple 3-Tab Switcher */}
+      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="inline-flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setActiveTab('bookings')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+              activeTab === 'bookings'
+                ? 'bg-[#0c562c] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <ListChecks className="w-4 h-4" />
+            <span>Recent Bookings ({filteredBookings.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('financials')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+              activeTab === 'financials'
+                ? 'bg-[#0c562c] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <Wallet className="w-4 h-4" />
+            <span>Financial Summary</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('rooms')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+              activeTab === 'rooms'
+                ? 'bg-[#0c562c] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <BedDouble className="w-4 h-4" />
+            <span>Rooms &amp; Operations</span>
+          </button>
+        </div>
+
+        <span className="text-xs font-medium text-slate-500">
+          Showing period: <strong className="text-slate-800">{period.label}</strong>
+        </span>
+      </div>
+
+      {/* TAB 1: RECENT BOOKINGS TABLE (Matches Reference Layout) */}
+      {activeTab === 'bookings' && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+          {/* Dark Emerald Table Header Bar */}
+          <div className="bg-gradient-to-r from-[#0c562c] to-[#136f3b] px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-2 text-white">
+            <div className="flex items-center gap-2">
+              <ListChecks className="w-4 h-4 text-emerald-300" />
+              <h2 className="font-display text-sm font-bold tracking-tight">Recent Bookings</h2>
             </div>
-
-            <label className="inline-flex items-center gap-2 font-medium text-slate-700 cursor-pointer">
-              <input
-                type="checkbox"
-                disabled={preset === 'all_time'}
-                checked={compareEnabled && preset !== 'all_time'}
-                onChange={(e) => setCompareEnabled(e.target.checked)}
-                className="rounded border-slate-300 text-[#1c46be]"
-              />
-              <span>
-                Compare vs Previous {periodDays}-Day Period
-                {dateWindow.prevStart && compareEnabled && preset !== 'all_time'
-                  ? ` (${dateWindow.prevStart} → ${dateWindow.prevEnd})`
-                  : ''}
-              </span>
-            </label>
+            {onNavigate && (
+              <button
+                type="button"
+                onClick={() => onNavigate('reservations')}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-white/95 hover:text-white hover:underline cursor-pointer print:hidden"
+              >
+                <span>View All</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          {/* Easy Management Search & Booking Filters Bar */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-2.5">
-            <div className="md:col-span-5 relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          {/* Lightweight Search & Filter Row */}
+          <div className="px-4 sm:px-5 py-3 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center gap-2.5 print:hidden">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
-                value={reportSearch}
-                onChange={(e) => setReportSearch(e.target.value)}
-                placeholder="Search guest name, ref, suite (RM-1), room type, source, phone..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-[#1c46be]"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search guest name, booking ID, room, or source..."
+                className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-300 bg-white text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
               />
             </div>
 
-            <div className="md:col-span-2">
-              <select
-                value={bookingStatusFilter}
-                onChange={(e) => setBookingStatusFilter(e.target.value as 'all' | ReservationStatus)}
-                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700"
-              >
-                <option value="all">All Statuses</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="pending">Pending</option>
-                <option value="checked_in">Checked-in</option>
-                <option value="checked_out">Checked-out</option>
-                <option value="cancelled">Cancelled</option>
-                <option value="no_show">No-show</option>
-              </select>
-            </div>
-
-            <div className="md:col-span-2">
-              <select
-                value={bookingSourceFilter}
-                onChange={(e) => setBookingSourceFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700"
-              >
-                <option value="ALL">All Sources</option>
-                {uniqueSourceOptions.map((src) => (
-                  <option key={src} value={src}>
-                    {src}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="md:col-span-2">
-              <select
-                value={bookingRoomFilter}
-                onChange={(e) => setBookingRoomFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700"
-              >
-                <option value="ALL">All Rooms</option>
-                {sortedRoomsList.map((rm) => (
-                  <option key={rm.id} value={rm.roomNumber}>
-                    {rm.roomNumber} · {rm.roomType}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="md:col-span-1 flex items-center justify-end">
-              {activeBookingFiltersCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReportSearch('');
-                    setBookingStatusFilter('all');
-                    setBookingSourceFilter('ALL');
-                    setBookingRoomFilter('ALL');
-                  }}
-                  className="w-full inline-flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  <span>Reset</span>
-                </button>
-              ) : (
-                <span className="text-[11px] font-mono-tabular text-slate-500 px-1">
-                  {dailyBookingsDataset.rows.length} rows
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Sub-Report Navigation Tabs */}
-        <div className="no-print flex flex-wrap items-center gap-1.5 pt-2">
-          {(
-            [
-              { id: 'overview', label: 'Executive Overview & Charts' },
-              { id: 'period_reports', label: `Monthly & Weekly Revenue (${current.monthlyBreakdown.length}M / ${current.weeklyBreakdown.length}W)` },
-              { id: 'pending_payments', label: `Not Paid & Pending (${current.pendingPaymentRows.length})` },
-              { id: 'daily_bookings', label: `Daily Room Bookings (${dailyBookingsDataset.rows.length})` },
-              { id: 'pnl', label: 'Profit & Loss & Expenses' },
-              { id: 'rooms', label: 'Occupancy, ADR & RevPAR' },
-              { id: 'sources', label: 'Reservations & Booking Sources' },
-              { id: 'pos_dept', label: 'POS Sales & Departments' },
-              { id: 'inventory_staff', label: 'Inventory & Staff Performance' },
-            ] as Array<{ id: ReportTab; label: string }>
-          ).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setActiveTab(t.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-                activeTab === t.id
-                  ? 'bg-[#1c46be] text-white'
-                  : t.id === 'pending_payments' && current.reservationBalanceNgn > 0
-                    ? 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
-                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="h-9 px-3 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 cursor-pointer"
             >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
+              <option value="ALL">All Sources</option>
+              {availableSources.map((src) => (
+                <option key={src} value={src}>
+                  {src}
+                </option>
+              ))}
+            </select>
 
-      {/* 10 Executive KPI Cards (Ledger Revenue, Collected vs Not Paid/Pending, Expenses, Profit & Ops) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        {[
-          {
-            label: 'Total Ledger Revenue',
-            value: formatNgn(current.totalRevenueNgn),
-            delta: revDelta.label,
-            positive: revDelta.positive,
-            sub: `VAT: ${formatNgn(current.totalVatNgn)}`,
-            highlight: false,
-            icon: Wallet,
-          },
-          {
-            label: 'Booking Collected (Paid)',
-            value: formatNgn(current.reservationCollectedNgn),
-            delta: collectedDelta.label,
-            positive: collectedDelta.positive,
-            sub: `${current.collectionRatePct.toFixed(0)}% collected (${current.fullyPaidCount} paid)`,
-            highlight: false,
-            icon: TrendingUp,
-          },
-          {
-            label: 'Not Paid / Pending Balance',
-            value: formatNgn(current.reservationBalanceNgn),
-            delta: current.reservationBalanceNgn > 0 ? `${current.unpaidCount} Not Paid · ${current.partialCount} Partial` : 'All bookings settled',
-            positive: current.reservationBalanceNgn === 0 ? true : false,
-            sub: `Billed: ${formatNgn(current.reservationTotalValueNgn)}`,
-            highlight: current.reservationBalanceNgn > 0,
-            icon: ShieldAlert,
-          },
-          {
-            label: 'Total Expenses',
-            value: formatNgn(current.totalExpensesNgn),
-            delta: expDelta.label,
-            positive: expDelta.positive === null ? null : !expDelta.positive,
-            sub: `${current.pnlByCategory.filter((c) => c.expenseNgn > 0).length} active cost categories`,
-            highlight: false,
-            icon: TrendingDown,
-          },
-          {
-            label: 'Net Profit & Margin',
-            value: formatNgn(current.netProfitNgn),
-            delta: netDelta.label,
-            positive: netDelta.positive,
-            sub: `Operating Margin: ${current.profitMarginPct.toFixed(1)}%`,
-            highlight: false,
-            icon: BarChart3,
-          },
-          {
-            label: 'Room Occupancy',
-            value: `${current.occupancyPct.toFixed(1)}%`,
-            delta: occDelta.label,
-            positive: occDelta.positive,
-            sub: `${current.occupiedRoomNights} / ${current.availableRoomNights} room-nights`,
-            highlight: false,
-            icon: BedDouble,
-          },
-          {
-            label: 'ADR (Avg Daily Rate)',
-            value: formatNgn(current.adrNgn),
-            delta: adrDelta.label,
-            positive: adrDelta.positive,
-            sub: `Earned: ${formatNgn(current.earnedRoomRevenueNgn)}`,
-            highlight: false,
-            icon: Building2,
-          },
-          {
-            label: 'RevPAR',
-            value: formatNgn(current.revparNgn),
-            delta: revparDelta.label,
-            positive: revparDelta.positive,
-            sub: `${rooms.length} rooms · ${periodDays} day(s)`,
-            highlight: false,
-            icon: Layers,
-          },
-          {
-            label: 'POS Sales',
-            value: formatNgn(current.posTotalSalesNgn),
-            delta: posDelta.label,
-            positive: posDelta.positive,
-            sub: `${current.periodPosOrders.length} orders · ${current.posItemsSold} items`,
-            highlight: false,
-            icon: UtensilsCrossed,
-          },
-          {
-            label: 'Inventory Valuation',
-            value: formatNgn(inventoryMetrics.totalValuationNgn),
-            delta: `${inventoryMetrics.lowStockItems.length} low-stock SKUs`,
-            positive: inventoryMetrics.lowStockItems.length === 0,
-            sub: `Payroll: ${formatNgn(opsMetrics.totalMonthlySalaryBillNgn)}`,
-            highlight: false,
-            icon: Package,
-          },
-        ].map((kpi) => {
-          const Icon = kpi.icon;
-          return (
-            <div
-              key={kpi.label}
-              className={`rounded-xl p-4 flex flex-col justify-between gap-2.5 border ${
-                kpi.highlight
-                  ? 'bg-amber-50/70 border-amber-300'
-                  : 'bg-white border-slate-200'
-              }`}
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | ReservationStatus)}
+              className="h-9 px-3 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 cursor-pointer"
             >
-              <div className="flex items-start justify-between gap-2">
-                <p className={`text-xs font-medium ${kpi.highlight ? 'text-amber-900 font-semibold' : 'text-slate-500'}`}>
-                  {kpi.label}
-                </p>
-                <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                    kpi.highlight
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                </div>
-              </div>
-              <div>
-                <p
-                  className={`font-mono-tabular text-lg font-bold ${
-                    kpi.highlight ? 'text-rose-700' : 'text-slate-900'
-                  }`}
-                >
-                  {kpi.value}
-                </p>
-                <div className="flex items-center justify-between gap-2 mt-1 text-[11px]">
-                  <span
-                    className={`font-semibold truncate ${
-                      kpi.positive === true
-                        ? 'text-emerald-700'
-                        : kpi.positive === false
-                          ? 'text-rose-700'
-                          : 'text-slate-500'
-                    }`}
-                  >
-                    {kpi.delta}
-                  </span>
-                  <span className="text-slate-500 truncate">{kpi.sub}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Weekly & Monthly Revenue Summary + Not Paid / Pending Payments Section */}
-      {(activeTab === 'overview' || activeTab === 'period_reports') && (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                {periodReportMode === 'monthly'
-                  ? 'Monthly Revenue & Settlement Report'
-                  : 'Weekly Revenue & Settlement Report'}
-              </h2>
-              <p className="text-xs text-slate-500">
-                Separates collected paid revenue from unpaid &amp; pending booking balances ({dateWindow.label})
-              </p>
-            </div>
-            <div className="no-print flex items-center gap-1.5 text-xs">
-              <button
-                type="button"
-                onClick={() => setPeriodReportMode('monthly')}
-                className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
-                  periodReportMode === 'monthly'
-                    ? 'bg-[#061539] text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                Monthly ({current.monthlyBreakdown.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setPeriodReportMode('weekly')}
-                className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
-                  periodReportMode === 'weekly'
-                    ? 'bg-[#061539] text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                Weekly ({current.weeklyBreakdown.length})
-              </button>
-            </div>
+              <option value="all">All Statuses</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="checked_in">Checked-in</option>
+              <option value="checked_out">Checked-out</option>
+              <option value="pending">Pending</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="no_show">No-show</option>
+            </select>
           </div>
 
+          {/* Crisp Bookings Table */}
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">
-                    {periodReportMode === 'monthly' ? 'Month' : 'Week Window'}
-                  </th>
-                  <th className="px-4 py-3 font-semibold text-right">Check-ins</th>
-                  <th className="px-4 py-3 font-semibold text-right">Occ. Nights</th>
-                  <th className="px-4 py-3 font-semibold text-right">Occ %</th>
-                  <th className="px-4 py-3 font-semibold text-right">Room Earned</th>
-                  <th className="px-4 py-3 font-semibold text-right">POS Sales</th>
-                  <th className="px-4 py-3 font-semibold text-right">Paid Collected</th>
-                  <th className="px-4 py-3 font-semibold text-right">Not Paid / Pending</th>
-                  <th className="px-4 py-3 font-semibold text-right">Ledger Rev</th>
-                  <th className="px-4 py-3 font-semibold text-right">Expenses</th>
-                  <th className="px-4 py-3 font-semibold text-right">Net P&amp;L</th>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                  <th className="py-3 px-4">Booking ID</th>
+                  <th className="py-3 px-4">Guest Name</th>
+                  <th className="py-3 px-4">Room</th>
+                  <th className="py-3 px-4">Source</th>
+                  <th className="py-3 px-4">Check-In</th>
+                  <th className="py-3 px-4">Check-Out</th>
+                  <th className="py-3 px-4 text-center">Nights</th>
+                  <th className="py-3 px-4 text-right">Amount</th>
+                  <th className="py-3 px-4 text-center">Payment</th>
+                  <th className="py-3 px-4 text-center">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {(periodReportMode === 'monthly'
-                  ? current.monthlyBreakdown
-                  : current.weeklyBreakdown
-                ).map((bucket) => (
-                  <tr
-                    key={bucket.key}
-                    onClick={() => {
-                      setCustomStart(bucket.startDate);
-                      setCustomEnd(bucket.endDate);
-                      setPreset('custom');
-                    }}
-                    title="Click to filter entire report to this period"
-                    className="hover:bg-blue-50/50 cursor-pointer"
-                  >
-                    <td className="px-4 py-3 font-semibold text-[#1c46be] whitespace-nowrap">
-                      <span>{bucket.label}</span>
-                      <span className="block text-[10px] font-mono-tabular text-slate-500">
-                        {bucket.startDate} → {bucket.endDate}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right">{bucket.bookingsCount}</td>
-                    <td className="px-4 py-3 font-mono-tabular text-right">
-                      {bucket.occupiedNights}/{bucket.availableNights}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold">
-                      {bucket.occupancyPct.toFixed(1)}%
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold text-slate-900">
-                      {formatNgn(bucket.earnedRoomRevenueNgn)}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right text-slate-700">
-                      {formatNgn(bucket.posSalesNgn)}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold text-emerald-700">
-                      {formatNgn(bucket.paidCollectedNgn)}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right font-bold">
-                      {bucket.pendingUnpaidNgn > 0 ? (
-                        <span className="text-rose-700">
-                          {formatNgn(bucket.pendingUnpaidNgn)}
-                          <span className="block text-[10px] font-medium">
-                            ({bucket.unpaidCount} pending)
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">₦0</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right text-emerald-700">
-                      {formatNgn(bucket.revenueNgn)}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right text-rose-700">
-                      {formatNgn(bucket.expenseNgn)}
-                    </td>
-                    <td
-                      className={`px-4 py-3 font-mono-tabular text-right font-bold ${
-                        bucket.netNgn >= 0 ? 'text-slate-900' : 'text-rose-700'
-                      }`}
-                    >
-                      {formatNgn(bucket.netNgn)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Not Paid & Pending Payments Register (Explicit visibility so unpaid bookings are clearly shown) */}
-      {(activeTab === 'overview' || activeTab === 'pending_payments' || activeTab === 'period_reports') && (
-        <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-amber-100 bg-amber-50/40 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Not Paid &amp; Pending Payments ({current.pendingPaymentRows.length})
-              </h2>
-              <p className="text-xs text-slate-600">
-                Reservations with unpaid or partial balances are tracked separately from collected cash revenue
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular">
-              <span className="px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 font-bold">
-                Not Paid ({current.unpaidCount}): {formatNgn(current.unpaidPendingNgn)}
-              </span>
-              <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 font-bold">
-                Partial Pending ({current.partialCount}): {formatNgn(current.partialPendingNgn)}
-              </span>
-              <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white font-bold">
-                Total Due: {formatNgn(current.reservationBalanceNgn)}
-              </span>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Ref</th>
-                  <th className="px-4 py-3 font-semibold">Guest</th>
-                  <th className="px-4 py-3 font-semibold">Room</th>
-                  <th className="px-4 py-3 font-semibold">Stay Dates</th>
-                  <th className="px-4 py-3 font-semibold">Source</th>
-                  <th className="px-4 py-3 font-semibold text-right">Billed Total</th>
-                  <th className="px-4 py-3 font-semibold text-right">Paid</th>
-                  <th className="px-4 py-3 font-semibold text-right">Not Paid / Pending</th>
-                  <th className="px-4 py-3 font-semibold">Payment State</th>
-                  <th className="px-4 py-3 font-semibold">Stay Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {current.pendingPaymentRows.length === 0 ? (
+              <tbody className="divide-y divide-slate-100 text-xs sm:text-[13px]">
+                {filteredBookings.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-emerald-700 font-medium">
-                      All reservations in this period are 100% paid — zero pending balances.
+                    <td colSpan={10} className="py-12 text-center text-slate-500">
+                      No bookings found for <strong>{period.label}</strong>. Try selecting{' '}
+                      <button
+                        type="button"
+                        onClick={() => setPeriodPreset('all_time')}
+                        className="text-emerald-700 font-semibold hover:underline cursor-pointer"
+                      >
+                        All Time
+                      </button>{' '}
+                      or clearing your search filter.
                     </td>
                   </tr>
                 ) : (
-                  current.pendingPaymentRows.map((row) => {
-                    const isOta = isOtaBookingChannel(row.res.channel);
-                    const paySummary = getReservationPaymentSummary(
-                      row.res,
-                      property.usdExchangeRateNgn
-                    );
+                  filteredBookings.map((r) => {
+                    const roomDisp = getReservationRoomDisplay(r, rooms);
+                    const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+                    const nights = r.nights || computeNights(r.checkInDate, r.checkOutDate);
+                    const isOta = isOtaBookingChannel(r.channel);
+                    const sourceLabel = formatBookingSourceLabel(r.channel);
+
+                    const paymentBadgeClass =
+                      pay.paymentStatus === 'Paid'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : pay.paymentStatus === 'Partial'
+                          ? 'bg-amber-50 text-amber-800 border-amber-200'
+                          : 'bg-rose-50 text-rose-700 border-rose-200';
+
+                    const statusBadgeClass =
+                      r.status === 'confirmed'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : r.status === 'checked_in'
+                          ? 'bg-sky-50 text-sky-700 border-sky-200'
+                          : r.status === 'checked_out'
+                            ? 'bg-slate-100 text-slate-700 border-slate-200'
+                            : r.status === 'pending'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-rose-50 text-rose-700 border-rose-200';
+
                     return (
-                      <tr key={row.res.id} className="hover:bg-amber-50/30">
-                        <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                          {row.res.bookingRef}
+                      <tr
+                        key={r.id}
+                        className="hover:bg-slate-50/90 transition-colors"
+                      >
+                        <td className="py-3 px-4 font-mono-tabular font-bold text-[#1c46be] whitespace-nowrap">
+                          {r.bookingRef}
                         </td>
-                        <td className="px-4 py-2.5">
-                          <p className="font-semibold text-slate-900">{row.res.guestName}</p>
-                          {row.res.guestPhone && (
-                            <p className="text-[11px] font-mono-tabular text-slate-500">
-                              {row.res.guestPhone}
-                            </p>
-                          )}
+                        <td className="py-3 px-4 font-semibold text-slate-900 whitespace-nowrap">
+                          {r.guestName}
                         </td>
-                        <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-800 whitespace-nowrap">
-                          {row.roomDisplay.roomNumberLabel}
+                        <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+                          {roomDisp.roomNumberLabel}
                         </td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-slate-700 whitespace-nowrap">
-                          {row.res.checkInDate} → {row.res.checkOutDate}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <span className="font-semibold text-emerald-800">{sourceLabel}</span>
                         </td>
-                        <td className="px-4 py-2.5 text-slate-700 font-medium whitespace-nowrap">
-                          {row.sourceLabel}
+                        <td className="py-3 px-4 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {formatReadableDate(r.checkInDate)}
                         </td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-slate-900 whitespace-nowrap">
-                          <span className="block">{formatNgn(row.totalAmount)}</span>
-                          {isOta && (
-                            <span className="block text-[10px] font-normal text-slate-500">
-                              Exp. Payout: {formatNgn(paySummary.expectedPayoutNgn)}
+                        <td className="py-3 px-4 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {formatReadableDate(r.checkOutDate)}
+                        </td>
+                        <td className="py-3 px-4 font-mono-tabular text-center font-semibold text-slate-800">
+                          {nights}
+                        </td>
+                        <td className="py-3 px-4 font-mono-tabular text-right whitespace-nowrap">
+                          {isOta && pay.sourceCurrency === 'USD' ? (
+                            <div className="flex flex-col items-end leading-tight">
+                              <span className="font-bold text-slate-900">
+                                {formatUsd(pay.sourceTotalAmount)}
+                              </span>
+                              <span className="text-[11px] text-slate-500">
+                                {formatNgn(pay.expectedPayoutNgn)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="font-bold text-slate-900">
+                              {formatNgn(pay.totalAmount)}
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right text-emerald-700 whitespace-nowrap">
-                          {isOta ? (
-                            <>
-                              <span className="block text-[11px] font-semibold text-blue-700">
-                                OTA:{' '}
-                                {formatChannelCurrency(
-                                  paySummary.otaPaidSourceAmount,
-                                  paySummary.sourceCurrency
-                                )}{' '}
-                                {paySummary.sourceCurrency}
-                              </span>
-                              <span className="block text-[10px] text-emerald-700">
-                                Direct: {formatNgn(paySummary.hotelPaidAmount)}
-                              </span>
-                            </>
-                          ) : (
-                            formatNgn(row.amountPaid)
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right font-bold text-rose-700 whitespace-nowrap">
-                          {formatNgn(row.balance)}
-                        </td>
-                        <td className="px-4 py-2.5 whitespace-nowrap">
+                        <td className="py-3 px-4 text-center whitespace-nowrap">
                           <span
-                            className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold ${
-                              row.paymentStatus === 'Unpaid'
-                                ? 'bg-rose-100 text-rose-800'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md border text-[11px] font-semibold ${paymentBadgeClass}`}
                           >
-                            {row.paymentStatus === 'Unpaid' ? 'Not Paid' : 'Partial (Pending)'}
+                            {pay.paymentStatus}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 whitespace-nowrap capitalize text-slate-700">
-                          {RESERVATION_STATUS_LABELS[row.res.status] || row.res.status}
+                        <td className="py-3 px-4 text-center whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md border text-[11px] font-semibold ${statusBadgeClass}`}
+                          >
+                            {RESERVATION_STATUS_LABELS[r.status] || r.status}
+                          </span>
                         </td>
                       </tr>
                     );
@@ -2543,1307 +1087,249 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
         </div>
       )}
 
-      {/* Interactive Charts Row: Line Chart + Bar Chart + Pie Chart (Shown in Overview) */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {/* Interactive Line Chart */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div>
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  {lineMode === 'financial'
-                    ? `${trendGranularity === 'monthly' ? 'Monthly' : trendGranularity === 'weekly' ? 'Weekly' : 'Daily'} Revenue, Expenses & Net P&L Trend`
-                    : lineMode === 'settlement'
-                      ? `${trendGranularity === 'monthly' ? 'Monthly' : trendGranularity === 'weekly' ? 'Weekly' : 'Daily'} Paid Collected vs Not Paid / Pending`
-                      : `${trendGranularity === 'monthly' ? 'Monthly' : trendGranularity === 'weekly' ? 'Weekly' : 'Daily'} Occupancy % & RevPAR Trend`}
-                </h2>
-                <p className="text-[11px] text-slate-500">
-                  Hover or tap any point to inspect exact PMS figures ({activeTrendSeries.length} periods plotted)
-                </p>
-              </div>
-              <div className="no-print flex flex-wrap items-center gap-2 text-xs">
-                <div className="inline-flex items-center bg-slate-100 p-0.5 rounded-lg">
-                  {(
-                    [
-                      { id: 'daily', label: 'Daily' },
-                      { id: 'weekly', label: 'Weekly' },
-                      { id: 'monthly', label: 'Monthly' },
-                    ] as const
-                  ).map((g) => (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => {
-                        setTrendGranularity(g.id);
-                        setHoveredDayIndex(null);
-                      }}
-                      className={`px-2.5 py-1 rounded-md font-medium cursor-pointer ${
-                        trendGranularity === g.id
-                          ? 'bg-white text-slate-900 shadow-xs'
-                          : 'text-slate-600'
-                      }`}
-                    >
-                      {g.label}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setLineMode('financial')}
-                  className={`px-3 py-1.5 rounded-lg font-medium cursor-pointer ${
-                    lineMode === 'financial'
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  Revenue &amp; P&amp;L
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLineMode('settlement')}
-                  className={`px-3 py-1.5 rounded-lg font-medium cursor-pointer ${
-                    lineMode === 'settlement'
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  Paid vs Pending
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLineMode('hospitality')}
-                  className={`px-3 py-1.5 rounded-lg font-medium cursor-pointer ${
-                    lineMode === 'hospitality'
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  Occupancy %
-                </button>
-              </div>
+      {/* TAB 2: SIMPLE FINANCIAL SUMMARY (P&L) */}
+      {activeTab === 'financials' && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200 border-t-4 border-t-emerald-600 rounded-xl p-4 shadow-xs">
+              <p className="text-xs font-semibold text-slate-500">Total Revenue</p>
+              <p className="font-mono-tabular text-2xl font-extrabold text-emerald-700 mt-1">
+                {formatNgn(financials.totalRevenue)}
+              </p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Rooms + POS ({financials.posOrderCount} orders)
+              </p>
             </div>
-
-            {/* Active Hovered Point Summary Bar */}
-            {activeDayPoint && (
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2 text-xs">
-                <span className="font-mono-tabular font-semibold text-slate-900 inline-flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-[#1c46be]" />
-                  <span>{activeDayPoint.label}</span>
-                </span>
-                {lineMode === 'financial' ? (
-                  <div className="flex flex-wrap items-center gap-4 font-mono-tabular">
-                    <span className="text-emerald-700 font-semibold">
-                      Revenue: {formatNgn(activeDayPoint.revenueNgn)}
-                    </span>
-                    <span className="text-rose-700 font-semibold">
-                      Expenses: {formatNgn(activeDayPoint.expenseNgn)}
-                    </span>
-                    <span className="text-[#1c46be] font-bold">
-                      Net: {formatNgn(activeDayPoint.netNgn)}
-                    </span>
-                  </div>
-                ) : lineMode === 'settlement' ? (
-                  <div className="flex flex-wrap items-center gap-4 font-mono-tabular">
-                    <span className="text-emerald-700 font-semibold">
-                      Paid Collected: {formatNgn(activeDayPoint.paidCollectedNgn)}
-                    </span>
-                    <span className="text-rose-700 font-bold">
-                      Not Paid / Pending: {formatNgn(activeDayPoint.pendingUnpaidNgn)}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-4 font-mono-tabular">
-                    <span className="text-[#1c46be] font-bold">
-                      Occupancy: {activeDayPoint.occupancyPct.toFixed(1)}%
-                    </span>
-                    <span className="text-emerald-700 font-semibold">
-                      RevPAR: {formatNgn(activeDayPoint.revparNgn)}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="w-full overflow-x-auto">
-              <svg
-                viewBox={`0 0 ${lineWidth} ${lineHeight}`}
-                className="w-full min-w-[520px] h-56 select-none"
+            <div className="bg-white border border-slate-200 border-t-4 border-t-rose-500 rounded-xl p-4 shadow-xs">
+              <p className="text-xs font-semibold text-slate-500">Operating Expenses</p>
+              <p className="font-mono-tabular text-2xl font-extrabold text-rose-700 mt-1">
+                {formatNgn(financials.ledgerExpenses)}
+              </p>
+              <p className="text-[11px] text-slate-500 mt-1">Posted ledger expenses</p>
+            </div>
+            <div className="bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-4 shadow-xs">
+              <p className="text-xs font-semibold text-slate-500">Net Operating Profit</p>
+              <p
+                className={`font-mono-tabular text-2xl font-extrabold mt-1 ${
+                  financials.netProfit >= 0 ? 'text-[#061539]' : 'text-rose-700'
+                }`}
               >
-                {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-                  const y = padT + plotH * (1 - t);
-                  const val = lineMaxVal * t;
-                  return (
-                    <g key={t}>
-                      <line
-                        x1={padL}
-                        x2={lineWidth - padR}
-                        y1={y}
-                        y2={y}
-                        stroke="#e2e8f0"
-                        strokeDasharray="3 3"
-                      />
-                      <text
-                        x={padL - 6}
-                        y={y + 3}
-                        textAnchor="end"
-                        className="fill-slate-400 text-[10px] font-mono"
-                      >
-                        {lineMode === 'hospitality' ? `${Math.round(val)}%` : formatCompactNgn(val)}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                {lineMode === 'financial' ? (
-                  <>
-                    <path
-                      d={buildPath(
-                        activeTrendSeries.map((d) => d.revenueNgn),
-                        lineMaxVal
-                      )}
-                      fill="none"
-                      stroke="#059669"
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d={buildPath(
-                        activeTrendSeries.map((d) => d.expenseNgn),
-                        lineMaxVal
-                      )}
-                      fill="none"
-                      stroke="#e11d48"
-                      strokeWidth="2"
-                      strokeDasharray="4 3"
-                    />
-                  </>
-                ) : lineMode === 'settlement' ? (
-                  <>
-                    <path
-                      d={buildPath(
-                        activeTrendSeries.map((d) => d.paidCollectedNgn),
-                        lineMaxVal
-                      )}
-                      fill="none"
-                      stroke="#059669"
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d={buildPath(
-                        activeTrendSeries.map((d) => d.pendingUnpaidNgn),
-                        lineMaxVal
-                      )}
-                      fill="none"
-                      stroke="#d97706"
-                      strokeWidth="2.2"
-                      strokeDasharray="4 3"
-                    />
-                  </>
-                ) : (
-                  <path
-                    d={buildPath(
-                      activeTrendSeries.map((d) => d.occupancyPct),
-                      100
-                    )}
-                    fill="none"
-                    stroke="#1c46be"
-                    strokeWidth="2.5"
-                  />
-                )}
-
-                {activeTrendSeries.map((pt, idx) => {
-                  const x = toLineX(idx, activeTrendSeries.length);
-                  const yMain =
-                    lineMode === 'financial'
-                      ? toLineY(pt.revenueNgn, lineMaxVal)
-                      : lineMode === 'settlement'
-                        ? toLineY(pt.paidCollectedNgn, lineMaxVal)
-                        : toLineY(pt.occupancyPct, 100);
-                  const showLabel =
-                    activeTrendSeries.length <= 10 ||
-                    idx % Math.ceil(activeTrendSeries.length / 8) === 0 ||
-                    idx === activeTrendSeries.length - 1;
-                  return (
-                    <g
-                      key={pt.key}
-                      onMouseEnter={() => setHoveredDayIndex(idx)}
-                      onClick={() => setHoveredDayIndex(idx)}
-                      className="cursor-pointer"
-                    >
-                      {hoveredDayIndex === idx && (
-                        <line
-                          x1={x}
-                          x2={x}
-                          y1={padT}
-                          y2={padT + plotH}
-                          stroke="#94a3b8"
-                          strokeWidth="1"
-                        />
-                      )}
-                      <circle
-                        cx={x}
-                        cy={yMain}
-                        r={hoveredDayIndex === idx ? 5 : 3}
-                        fill={lineMode === 'hospitality' ? '#1c46be' : '#059669'}
-                        stroke="#ffffff"
-                        strokeWidth="1.5"
-                      />
-                      {lineMode !== 'hospitality' && (
-                        <circle
-                          cx={x}
-                          cy={toLineY(
-                            lineMode === 'financial' ? pt.expenseNgn : pt.pendingUnpaidNgn,
-                            lineMaxVal
-                          )}
-                          r={hoveredDayIndex === idx ? 4.5 : 2.5}
-                          fill={lineMode === 'financial' ? '#e11d48' : '#d97706'}
-                          stroke="#ffffff"
-                          strokeWidth="1.2"
-                        />
-                      )}
-                      <rect
-                        x={x - plotW / Math.max(2, activeTrendSeries.length * 2)}
-                        y={padT}
-                        width={plotW / Math.max(1, activeTrendSeries.length)}
-                        height={plotH}
-                        fill="transparent"
-                      />
-                      {showLabel && (
-                        <text
-                          x={x}
-                          y={lineHeight - 6}
-                          textAnchor="middle"
-                          className="fill-slate-500 text-[10px] font-mono"
-                        >
-                          {pt.label.slice(0, 11)}
-                        </text>
-                      )}
-                    </g>
-                  );
-                })}
-              </svg>
+                {formatNgn(financials.netProfit)}
+              </p>
+              <p className="text-[11px] text-slate-500 mt-1">Revenue minus expenses</p>
+            </div>
+            <div className="bg-white border border-slate-200 border-t-4 border-t-amber-500 rounded-xl p-4 shadow-xs">
+              <p className="text-xs font-semibold text-slate-500">Outstanding Balances</p>
+              <p className="font-mono-tabular text-2xl font-extrabold text-amber-800 mt-1">
+                {formatNgn(financials.totalOutstandingNgn)}
+              </p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {financials.pendingFolios.length} open{' '}
+                {financials.pendingFolios.length === 1 ? 'folio' : 'folios'}
+              </p>
             </div>
           </div>
 
-          {/* Interactive Bar Chart & Pie Chart Side-by-Side */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Interactive Bar Chart */}
-            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                <div>
-                  <h2 className="font-display text-sm font-bold text-slate-900">
-                    {barMode === 'category'
-                      ? 'Revenue vs Expenses by Category'
-                      : 'Earned Revenue by Room (RM-1 to RM-8)'}
-                  </h2>
-                  <p className="text-[11px] text-slate-500">
-                    Hover or click any bar to inspect exact category or room totals
-                  </p>
-                </div>
-                <div className="no-print flex items-center gap-1.5 text-xs">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Ledger Categories Breakdown */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <div className="bg-gradient-to-r from-[#0c562c] to-[#136f3b] px-4 py-3 text-white flex items-center justify-between">
+                <h3 className="font-display text-sm font-bold">Revenue &amp; Expense Breakdown</h3>
+                {onNavigate && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setBarMode('category');
-                      setHoveredBarIndex(null);
-                    }}
-                    className={`px-2.5 py-1 rounded-lg font-medium cursor-pointer ${
-                      barMode === 'category'
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-700'
-                    }`}
+                    onClick={() => onNavigate('accounting')}
+                    className="text-xs font-semibold text-white/90 hover:text-white hover:underline cursor-pointer"
                   >
-                    By Category
+                    Open Ledger →
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBarMode('rooms');
-                      setHoveredBarIndex(null);
-                    }}
-                    className={`px-2.5 py-1 rounded-lg font-medium cursor-pointer ${
-                      barMode === 'rooms'
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    By Room
-                  </button>
-                </div>
+                )}
               </div>
-
-              {hoveredBarIndex !== null && barData[hoveredBarIndex] && (
-                <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold text-slate-900">
-                    {barData[hoveredBarIndex].fullLabel}
-                  </span>
-                  <div className="flex items-center gap-3 font-mono-tabular">
-                    <span className="text-[#1c46be] font-bold">
-                      {barData[hoveredBarIndex].primaryLabel}:{' '}
-                      {formatNgn(barData[hoveredBarIndex].primary)}
-                    </span>
-                    <span className="text-rose-700 font-semibold">
-                      {barData[hoveredBarIndex].secondaryLabel}:{' '}
-                      {barMode === 'category'
-                        ? formatNgn(barData[hoveredBarIndex].secondary)
-                        : `${barData[hoveredBarIndex].secondary}%`}
-                    </span>
+              <div className="divide-y divide-slate-100">
+                {financials.categories.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-slate-500">
+                    No ledger entries recorded in {period.label}.
                   </div>
-                </div>
-              )}
-
-              {barData.length === 0 ? (
-                <p className="text-xs text-slate-500 py-10 text-center">
-                  No ledger or room revenue entries in this date range.
-                </p>
-              ) : (
-                <div className="w-full overflow-x-auto">
-                  <svg viewBox="0 0 540 220" className="w-full min-w-[420px] h-56 select-none">
-                    {[0, 0.5, 1].map((t) => {
-                      const y = 18 + 165 * (1 - t);
-                      return (
-                        <g key={t}>
-                          <line x1={48} x2={528} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="3 3" />
-                          <text x={44} y={y + 3} textAnchor="end" className="fill-slate-400 text-[10px] font-mono">
-                            {formatCompactNgn(barMaxPrimary * t)}
-                          </text>
-                        </g>
-                      );
-                    })}
-
-                    {barData.map((bar, idx) => {
-                      const bandW = 472 / barData.length;
-                      const xCenter = 52 + bandW * idx + bandW / 2;
-                      const barW = barMode === 'category' ? Math.min(18, bandW * 0.34) : Math.min(28, bandW * 0.55);
-                      const h1 = (bar.primary / (barMaxPrimary || 1)) * 165;
-                      const h2 =
-                        barMode === 'category'
-                          ? (bar.secondary / (barMaxPrimary || 1)) * 165
-                          : 0;
-                      return (
-                        <g
-                          key={bar.label}
-                          onMouseEnter={() => setHoveredBarIndex(idx)}
-                          onClick={() => setHoveredBarIndex(idx)}
-                          className="cursor-pointer"
-                        >
-                          <rect
-                            x={barMode === 'category' ? xCenter - barW - 1 : xCenter - barW / 2}
-                            y={183 - h1}
-                            width={barW}
-                            height={Math.max(2, h1)}
-                            rx={3}
-                            fill={hoveredBarIndex === idx ? '#1e3a8a' : '#1c46be'}
-                          />
-                          {barMode === 'category' && (
-                            <rect
-                              x={xCenter + 1}
-                              y={183 - h2}
-                              width={barW}
-                              height={Math.max(2, h2)}
-                              rx={3}
-                              fill={hoveredBarIndex === idx ? '#be123c' : '#f43f5e'}
-                            />
-                          )}
-                          <text
-                            x={xCenter}
-                            y={202}
-                            textAnchor="middle"
-                            className="fill-slate-600 text-[10px] font-medium"
-                          >
-                            {bar.label.slice(0, 10)}
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </svg>
-                </div>
-              )}
-            </div>
-
-            {/* Interactive Pie / Donut Chart */}
-            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-1.5">
-                  <PieChartIcon className="w-4 h-4 text-[#1c46be]" />
-                  <h2 className="font-display text-sm font-bold text-slate-900">
-                    Distribution Mix
-                  </h2>
-                </div>
-                <div className="no-print flex items-center gap-1 text-[11px]">
-                  {(
-                    [
-                      { id: 'sources', label: 'Sources' },
-                      { id: 'expenses', label: 'Expenses' },
-                      { id: 'inventory', label: 'Inventory' },
-                    ] as const
-                  ).map((pm) => (
-                    <button
-                      key={pm.id}
-                      type="button"
-                      onClick={() => {
-                        setPieMode(pm.id);
-                        setSelectedPieIndex(null);
-                      }}
-                      className={`px-2.5 py-1 rounded-lg font-medium cursor-pointer ${
-                        pieMode === pm.id
-                          ? 'bg-slate-900 text-white'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}
+                ) : (
+                  financials.categories.map((cat) => (
+                    <div
+                      key={`${cat.type}-${cat.category}`}
+                      className="px-4 py-3 flex items-center justify-between gap-3 text-xs"
                     >
-                      {pm.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {pieSlices.length === 0 || (pieSlices[0]?.total || 0) <= 0 ? (
-                <p className="text-xs text-slate-500 py-12 text-center">
-                  No positive records available for this breakdown in the selected window.
-                </p>
-              ) : (
-                <div className="flex flex-col sm:flex-row items-center gap-4">
-                  <svg viewBox="0 0 180 180" className="w-44 h-44 shrink-0 select-none">
-                    {pieSlices.map((sl, idx) => {
-                      const r = selectedPieIndex === idx ? 76 : 70;
-                      const cx = 90;
-                      const cy = 90;
-                      if (sl.sharePct >= 99.9) {
-                        return (
-                          <circle
-                            key={sl.label}
-                            cx={cx}
-                            cy={cy}
-                            r={r}
-                            fill={sl.color}
-                            onClick={() => setSelectedPieIndex(idx)}
-                            className="cursor-pointer"
-                          />
-                        );
-                      }
-                      const x1 = cx + r * Math.cos(sl.startAngle);
-                      const y1 = cy + r * Math.sin(sl.startAngle);
-                      const x2 = cx + r * Math.cos(sl.endAngle);
-                      const y2 = cy + r * Math.sin(sl.endAngle);
-                      const largeArc = sl.endAngle - sl.startAngle > Math.PI ? 1 : 0;
-                      const d = `M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`;
-                      return (
-                        <path
-                          key={sl.label}
-                          d={d}
-                          fill={sl.color}
-                          stroke="#ffffff"
-                          strokeWidth="2"
-                          onMouseEnter={() => setSelectedPieIndex(idx)}
-                          onClick={() => setSelectedPieIndex(idx)}
-                          className="cursor-pointer transition-all"
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                            cat.type === 'revenue' ? 'bg-emerald-500' : 'bg-rose-500'
+                          }`}
                         />
-                      );
-                    })}
-                    <circle cx={90} cy={90} r={38} fill="#ffffff" />
-                    <text x={90} y={87} textAnchor="middle" className="fill-slate-900 text-xs font-bold font-mono">
-                      {activePieSlice ? `${activePieSlice.sharePct.toFixed(0)}%` : '100%'}
-                    </text>
-                    <text x={90} y={101} textAnchor="middle" className="fill-slate-500 text-[9px]">
-                      {activePieSlice ? activePieSlice.label.slice(0, 12) : ''}
-                    </text>
-                  </svg>
-
-                  <div className="flex-1 w-full space-y-1.5 text-xs">
-                    {pieSlices.map((sl, idx) => (
-                      <button
-                        key={sl.label}
-                        type="button"
-                        onClick={() => setSelectedPieIndex(idx)}
-                        className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-                          selectedPieIndex === idx ? 'bg-slate-100' : 'hover:bg-slate-50'
+                        <span className="font-semibold text-slate-800 truncate">{cat.category}</span>
+                        <span className="text-[11px] text-slate-400">({cat.count})</span>
+                      </div>
+                      <span
+                        className={`font-mono-tabular font-bold shrink-0 ${
+                          cat.type === 'revenue' ? 'text-emerald-700' : 'text-rose-700'
                         }`}
                       >
-                        <span className="inline-flex items-center gap-2 min-w-0">
-                          <span
-                            className="w-2.5 h-2.5 rounded-full shrink-0"
-                            style={{ backgroundColor: sl.color }}
-                          />
-                          <span className="truncate text-slate-800 font-medium">{sl.label}</span>
-                        </span>
-                        <span className="font-mono-tabular font-semibold text-slate-900 shrink-0">
-                          {formatNgn(sl.value)} ({sl.sharePct.toFixed(0)}%)
-                        </span>
-                      </button>
-                    ))}
+                        {cat.type === 'revenue' ? '+' : '-'}
+                        {formatNgn(cat.amount)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Pending Payment Balances */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <div className="bg-gradient-to-r from-[#061539] to-[#1c46be] px-4 py-3 text-white flex items-center justify-between">
+                <h3 className="font-display text-sm font-bold">Outstanding Guest Balances</h3>
+                <span className="font-mono-tabular text-xs font-bold text-amber-300">
+                  {formatNgn(financials.totalOutstandingNgn)}
+                </span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {financials.pendingFolios.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-emerald-700 font-medium">
+                    All bookings in {period.label} are fully settled.
                   </div>
-                </div>
-              )}
+                ) : (
+                  financials.pendingFolios.slice(0, 8).map(({ reservation, pay }) => (
+                    <div
+                      key={reservation.id}
+                      className="px-4 py-3 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 truncate">
+                          {reservation.guestName}
+                        </p>
+                        <p className="font-mono-tabular text-[11px] text-slate-500">
+                          {reservation.bookingRef} · {getReservationRoomDisplay(reservation, rooms).roomNumberLabel}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-mono-tabular font-bold text-rose-700">
+                          {formatNgn(pay.balance)}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          Paid {formatNgn(pay.amountPaid)}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Profit & Loss and Expenses Detail */}
-      {(activeTab === 'overview' || activeTab === 'pnl') && (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Profit &amp; Loss (P&amp;L) and Expense Breakdown
-              </h2>
-              <p className="text-xs text-slate-500">
-                Computed directly from Property Accounting Ledger entries ({dateWindow.label})
-              </p>
+      {/* TAB 3: ROOMS & OPERATIONS SUMMARY */}
+      {activeTab === 'rooms' && (
+        <div className="space-y-5">
+          {/* Compact Operations Snapshot */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 shadow-xs">
+              <div className="w-10 h-10 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+                <UtensilsCrossed className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-semibold">POS / Dining Sales</p>
+                <p className="font-mono-tabular text-lg font-extrabold text-[#061539]">
+                  {formatNgn(financials.posRevenue)}
+                </p>
+                <p className="text-[11px] text-slate-500">{financials.posOrderCount} orders in period</p>
+              </div>
             </div>
-            <span className="font-mono-tabular text-xs font-bold text-slate-900">
-              Net Operating Result: {formatNgn(current.netProfitNgn)} ({current.profitMarginPct.toFixed(1)}%)
-            </span>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 shadow-xs">
+              <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-semibold">Housekeeping &amp; Maintenance</p>
+                <p className="font-mono-tabular text-lg font-extrabold text-[#061539]">
+                  {housekeepingTasks.filter((t) => t.status === 'completed').length}/
+                  {housekeepingTasks.length} Done
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {maintenanceTickets.filter((t) => t.status !== 'resolved').length} open maintenance tickets
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 shadow-xs">
+              <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 font-semibold">Guests &amp; Staff Directory</p>
+                <p className="font-mono-tabular text-lg font-extrabold text-[#061539]">
+                  {guests.length} Guests · {staffMembers.length} Staff
+                </p>
+                <p className="text-[11px] text-slate-500">{rooms.length} total rooms configured</p>
+              </div>
+            </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Accounting Category</th>
-                  <th className="px-4 py-3 font-semibold text-right">Revenue (₦)</th>
-                  <th className="px-4 py-3 font-semibold text-right">Expenses (₦)</th>
-                  <th className="px-4 py-3 font-semibold text-right">Net Contribution (₦)</th>
-                  <th className="px-4 py-3 font-semibold text-right">Expense Share %</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {current.pnlByCategory.map((row) => {
-                  const expShare =
-                    current.totalExpensesNgn > 0
-                      ? (row.expenseNgn / current.totalExpensesNgn) * 100
-                      : 0;
-                  return (
-                    <tr key={row.category} className="hover:bg-slate-50/60">
-                      <td className="px-4 py-3 font-medium text-slate-900">{row.category}</td>
-                      <td className="px-4 py-3 font-mono-tabular text-right text-emerald-700 font-semibold">
+          {/* Room-by-Room Performance Table */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+            <div className="bg-gradient-to-r from-[#0c562c] to-[#136f3b] px-4 sm:px-5 py-3 text-white flex items-center justify-between">
+              <h3 className="font-display text-sm font-bold">Room Performance ({rooms.length} Rooms)</h3>
+              {onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('rooms')}
+                  className="text-xs font-semibold text-white/90 hover:text-white hover:underline cursor-pointer"
+                >
+                  Manage Rooms →
+                </button>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                    <th className="py-3 px-4">Room</th>
+                    <th className="py-3 px-4">Category</th>
+                    <th className="py-3 px-4 text-center">Bookings</th>
+                    <th className="py-3 px-4 text-center">Nights Sold</th>
+                    <th className="py-3 px-4">Occupancy</th>
+                    <th className="py-3 px-4 text-right">Avg Rate (ADR)</th>
+                    <th className="py-3 px-4 text-right">Total Revenue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs sm:text-[13px]">
+                  {roomPerformance.map((row) => (
+                    <tr key={row.room.id} className="hover:bg-slate-50/80">
+                      <td className="py-3 px-4 font-mono-tabular font-bold text-[#061539]">
+                        {row.room.roomNumber}
+                      </td>
+                      <td className="py-3 px-4 text-slate-700">{row.room.roomType}</td>
+                      <td className="py-3 px-4 font-mono-tabular text-center font-semibold text-slate-800">
+                        {row.bookings}
+                      </td>
+                      <td className="py-3 px-4 font-mono-tabular text-center text-slate-700">
+                        {row.nights}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-600 rounded-full"
+                              style={{ width: `${row.occPct}%` }}
+                            />
+                          </div>
+                          <span className="font-mono-tabular text-xs font-semibold text-slate-700">
+                            {row.occPct}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-mono-tabular text-right text-slate-700">
+                        {formatNgn(row.adr)}
+                      </td>
+                      <td className="py-3 px-4 font-mono-tabular text-right font-bold text-emerald-700">
                         {formatNgn(row.revenueNgn)}
                       </td>
-                      <td className="px-4 py-3 font-mono-tabular text-right text-rose-700 font-semibold">
-                        {formatNgn(row.expenseNgn)}
-                      </td>
-                      <td
-                        className={`px-4 py-3 font-mono-tabular text-right font-bold ${
-                          row.netNgn >= 0 ? 'text-slate-900' : 'text-rose-700'
-                        }`}
-                      >
-                        {formatNgn(row.netNgn)}
-                      </td>
-                      <td className="px-4 py-3 font-mono-tabular text-right text-slate-600">
-                        {expShare.toFixed(1)}%
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot className="bg-slate-50 border-t border-slate-200 font-bold text-slate-900">
-                <tr>
-                  <td className="px-4 py-3">Total Period Ledger</td>
-                  <td className="px-4 py-3 font-mono-tabular text-right text-emerald-700">
-                    {formatNgn(current.totalRevenueNgn)}
-                  </td>
-                  <td className="px-4 py-3 font-mono-tabular text-right text-rose-700">
-                    {formatNgn(current.totalExpensesNgn)}
-                  </td>
-                  <td className="px-4 py-3 font-mono-tabular text-right">
-                    {formatNgn(current.netProfitNgn)}
-                  </td>
-                  <td className="px-4 py-3 font-mono-tabular text-right">100.0%</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Room Occupancy, ADR, RevPAR & Suite Performance */}
-      {(activeTab === 'overview' || activeTab === 'rooms') && (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Room Occupancy, ADR &amp; RevPAR Breakdown ({rooms.length} Rooms)
-              </h2>
-              <p className="text-xs text-slate-500">
-                Live room stays overlapping {dateWindow.label} · Blocked Date Windows: {blockedDates.length}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs font-mono-tabular">
-              <span className="text-slate-700">
-                Occ: <strong>{current.occupancyPct.toFixed(1)}%</strong>
-              </span>
-              <span className="text-emerald-700">
-                ADR: <strong>{formatNgn(current.adrNgn)}</strong>
-              </span>
-              <span className="text-[#1c46be]">
-                RevPAR: <strong>{formatNgn(current.revparNgn)}</strong>
-              </span>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Room</th>
-                  <th className="px-4 py-3 font-semibold">Section &amp; Type</th>
-                  <th className="px-4 py-3 font-semibold text-right">Rack Rate</th>
-                  <th className="px-4 py-3 font-semibold text-right">Occ. Nights</th>
-                  <th className="px-4 py-3 font-semibold text-right">Occupancy %</th>
-                  <th className="px-4 py-3 font-semibold text-right">Earned Rev</th>
-                  <th className="px-4 py-3 font-semibold text-right">ADR</th>
-                  <th className="px-4 py-3 font-semibold text-right">RevPAR</th>
-                  <th className="px-4 py-3 font-semibold">Live Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {current.roomBreakdown
-                  .filter((rb) => {
-                    if (bookingRoomFilter !== 'ALL' && rb.room.roomNumber !== bookingRoomFilter) {
-                      return false;
-                    }
-                    const q = reportSearch.trim().toLowerCase();
-                    if (!q) return true;
-                    return [rb.room.roomNumber, rb.room.name, rb.room.roomType, rb.section, rb.room.occupancyStatus]
-                      .join(' ')
-                      .toLowerCase()
-                      .includes(q);
-                  })
-                  .map((rb) => (
-                  <tr key={rb.room.id} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-3 font-mono-tabular font-bold text-slate-900">
-                      {rb.room.roomNumber}
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">{rb.room.roomType}</p>
-                      <p className="text-[11px] text-slate-500">{rb.section}</p>
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right">
-                      {formatNgn(rb.room.nightlyRateNgn)}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right">
-                      {rb.occupiedNights} / {rb.availableNights}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold">
-                      {rb.occupancyPct.toFixed(1)}%
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right font-semibold text-emerald-700">
-                      {formatNgn(rb.roomRevenueNgn)}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right">
-                      {formatNgn(rb.adrNgn)}
-                    </td>
-                    <td className="px-4 py-3 font-mono-tabular text-right text-[#1c46be] font-semibold">
-                      {formatNgn(rb.revparNgn)}
-                    </td>
-                    <td className="px-4 py-3 capitalize text-slate-700">
-                      {rb.room.occupancyStatus.replace(/_/g, ' ')}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Room Bookings Daily Report (Day-by-Day Rollup & Searchable Booking Register) */}
-      {(activeTab === 'overview' || activeTab === 'daily_bookings' || activeTab === 'sources') && (
-        <div className="space-y-6">
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  Room Bookings Daily Report ({dateWindow.label})
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Live daily room bookings, arrivals, departures, room-nights, and folio settlement register
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular">
-                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 font-semibold">
-                  Bookings: {dailyBookingsDataset.summary.totalRows}
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-semibold">
-                  Paid: {formatNgn(dailyBookingsDataset.summary.totalPaidNgn)}
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 font-semibold">
-                  Balance: {formatNgn(dailyBookingsDataset.summary.totalBalanceNgn)}
-                </span>
-              </div>
-            </div>
-
-            {/* Daily Bookings KPI Summary Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 p-4 bg-slate-50/70 border-b border-slate-100 text-xs">
-              <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <p className="text-[11px] text-slate-500">Matching Bookings</p>
-                <p className="font-mono-tabular text-base font-bold text-slate-900 mt-0.5">
-                  {dailyBookingsDataset.summary.totalRows}
-                </p>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <p className="text-[11px] text-slate-500">Booked in Window</p>
-                <p className="font-mono-tabular text-base font-bold text-slate-900 mt-0.5">
-                  {dailyBookingsDataset.summary.createdInWindow}
-                </p>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <p className="text-[11px] text-slate-500">Arrivals</p>
-                <p className="font-mono-tabular text-base font-bold text-[#1c46be] mt-0.5">
-                  {dailyBookingsDataset.summary.arrivalsInWindow}
-                </p>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <p className="text-[11px] text-slate-500">Check-outs</p>
-                <p className="font-mono-tabular text-base font-bold text-slate-900 mt-0.5">
-                  {dailyBookingsDataset.summary.departuresInWindow}
-                </p>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <p className="text-[11px] text-slate-500">Room-Nights</p>
-                <p className="font-mono-tabular text-base font-bold text-slate-900 mt-0.5">
-                  {dailyBookingsDataset.summary.totalNights}
-                </p>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <p className="text-[11px] text-slate-500">Booking Value</p>
-                <p className="font-mono-tabular text-base font-bold text-slate-900 mt-0.5">
-                  {formatNgn(dailyBookingsDataset.summary.totalValueNgn)}
-                </p>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-lg p-3">
-                <p className="text-[11px] text-slate-500">Collected</p>
-                <p className="font-mono-tabular text-base font-bold text-emerald-700 mt-0.5">
-                  {formatNgn(dailyBookingsDataset.summary.totalPaidNgn)}
-                </p>
-              </div>
-            </div>
-
-            {/* Day-by-Day Breakdown Rollup (click any day to inspect that single date) */}
-            {dailyBookingsDataset.rollup.length > 0 && (
-              <div className="border-b border-slate-200">
-                <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                  <p className="text-xs font-bold text-slate-800">
-                    Day-by-Day Room Bookings Rollup
-                  </p>
-                  <span className="text-[11px] text-slate-500">
-                    Click any date row to focus report on that exact day
-                  </span>
-                </div>
-                <div className="overflow-x-auto max-h-64">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 sticky top-0">
-                      <tr>
-                        <th className="px-4 py-2.5 font-semibold">Date</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Booked</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Arrivals</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Departures</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Occupied Rooms</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Booked Value</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Collected</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {dailyBookingsDataset.rollup.map((dayRow) => (
-                        <tr
-                          key={dayRow.dateIso}
-                          onClick={() => {
-                            setSingleDay(dayRow.dateIso);
-                            setPreset('single_day');
-                          }}
-                          className="hover:bg-blue-50/50 cursor-pointer"
-                        >
-                          <td className="px-4 py-2 font-mono-tabular font-semibold text-[#1c46be]">
-                            {dayRow.dateIso}
-                          </td>
-                          <td className="px-4 py-2 font-mono-tabular text-right">
-                            {dayRow.bookingsCreated}
-                          </td>
-                          <td className="px-4 py-2 font-mono-tabular text-right">
-                            {dayRow.arrivalsCount}
-                          </td>
-                          <td className="px-4 py-2 font-mono-tabular text-right">
-                            {dayRow.departuresCount}
-                          </td>
-                          <td className="px-4 py-2 font-mono-tabular text-right">
-                            {dayRow.occupiedSuites} ({dayRow.occupancyPct.toFixed(0)}%)
-                          </td>
-                          <td className="px-4 py-2 font-mono-tabular text-right font-semibold text-slate-900">
-                            {formatNgn(dayRow.bookingValueNgn)}
-                          </td>
-                          <td className="px-4 py-2 font-mono-tabular text-right font-semibold text-emerald-700">
-                            {formatNgn(dayRow.collectedNgn)}
-                          </td>
-                          <td className="px-4 py-2 font-mono-tabular text-right text-amber-700 font-semibold">
-                            {formatNgn(dayRow.balanceNgn)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Searchable Daily Room Bookings Detail Register */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Date Booked</th>
-                    <th className="px-4 py-3 font-semibold">Ref</th>
-                    <th className="px-4 py-3 font-semibold">Guest Name</th>
-                    <th className="px-4 py-3 font-semibold">Room &amp; Type</th>
-                    <th className="px-4 py-3 font-semibold">Check-in → Check-out</th>
-                    <th className="px-4 py-3 font-semibold text-right">Nights</th>
-                    <th className="px-4 py-3 font-semibold">Source</th>
-                    <th className="px-4 py-3 font-semibold text-right">Total</th>
-                    <th className="px-4 py-3 font-semibold text-right">Paid</th>
-                    <th className="px-4 py-3 font-semibold text-right">Balance</th>
-                    <th className="px-4 py-3 font-semibold">Payment</th>
-                    <th className="px-4 py-3 font-semibold">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {dailyBookingsDataset.rows.length === 0 ? (
-                    <tr>
-                      <td colSpan={12} className="px-4 py-8 text-center text-slate-500">
-                        No room bookings match the selected date range or search filters.
-                      </td>
-                    </tr>
-                  ) : (
-                    dailyBookingsDataset.rows.map(
-                      ({ res, bookedDate, roomDisplay, payment, sourceLabel }) => {
-                        const isOta = isOtaBookingChannel(res.channel);
-                        return (
-                          <tr key={res.id} className="hover:bg-slate-50/70">
-                            <td className="px-4 py-2.5 font-mono-tabular text-slate-600 whitespace-nowrap">
-                              {bookedDate}
-                            </td>
-                            <td className="px-4 py-2.5 font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
-                              {res.bookingRef}
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <p className="font-semibold text-slate-900">{res.guestName}</p>
-                              {res.guestPhone && (
-                                <p className="text-[11px] font-mono-tabular text-slate-500">
-                                  {res.guestPhone}
-                                </p>
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5 whitespace-nowrap">
-                              <span className="font-mono-tabular font-semibold text-slate-900">
-                                {roomDisplay.roomNumberLabel}
-                              </span>
-                              <span className="block text-[11px] text-slate-500">
-                                {roomDisplay.roomTypeLabel}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2.5 font-mono-tabular text-slate-700 whitespace-nowrap">
-                              {res.checkInDate} → {res.checkOutDate}
-                            </td>
-                            <td className="px-4 py-2.5 font-mono-tabular text-right">
-                              {res.nights}
-                            </td>
-                            <td className="px-4 py-2.5 whitespace-nowrap text-slate-700 font-medium">
-                              {sourceLabel}
-                            </td>
-                            <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-slate-900 whitespace-nowrap">
-                              <span className="block">{formatNgn(payment.totalAmount)}</span>
-                              {isOta && (
-                                <span className="block text-[10px] font-normal text-slate-500">
-                                  Exp. Payout: {formatNgn(payment.expectedPayoutNgn)}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-emerald-700 whitespace-nowrap">
-                              {isOta ? (
-                                <>
-                                  <span className="block text-[11px] text-blue-700">
-                                    OTA:{' '}
-                                    {formatChannelCurrency(
-                                      payment.otaPaidSourceAmount,
-                                      payment.sourceCurrency
-                                    )}{' '}
-                                    {payment.sourceCurrency}
-                                  </span>
-                                  <span className="block text-[10px] text-emerald-700">
-                                    Direct: {formatNgn(payment.hotelPaidAmount)}
-                                  </span>
-                                </>
-                              ) : (
-                                formatNgn(payment.amountPaid)
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold text-rose-700 whitespace-nowrap">
-                              {formatNgn(payment.balance)}
-                            </td>
-                            <td className="px-4 py-2.5 whitespace-nowrap">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${
-                                  payment.paymentStatus === 'Paid'
-                                    ? 'bg-emerald-50 text-emerald-700'
-                                    : payment.paymentStatus === 'Partial'
-                                      ? 'bg-amber-50 text-amber-700'
-                                      : 'bg-rose-50 text-rose-700'
-                                }`}
-                              >
-                                {payment.paymentStatus === 'Unpaid'
-                                  ? 'Not Paid'
-                                  : payment.paymentStatus === 'Partial'
-                                    ? 'Partial (Pending)'
-                                    : 'Paid'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2.5 whitespace-nowrap capitalize font-medium text-slate-700">
-                              {RESERVATION_STATUS_LABELS[res.status] || res.status}
-                            </td>
-                          </tr>
-                        );
-                      }
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Reservations & Booking Sources */}
-      {(activeTab === 'overview' || activeTab === 'sources') && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Reservations Status & Receivables */}
-          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100">
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Reservations Summary ({current.periodReservations.length})
-              </h2>
-              <p className="text-xs text-slate-500">
-                Paid: <span className="font-semibold text-emerald-700">{formatNgn(current.reservationCollectedNgn)}</span> · Not Paid / Pending:{' '}
-                <span className="font-semibold text-rose-700">
-                  {formatNgn(current.reservationBalanceNgn)}
-                </span>{' '}
-                · Total Guests: {guests.length}
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-2.5 font-semibold">Status</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Count</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Nights</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Billed (₦)</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Paid (₦)</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Pending (₦)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {resStatusRows.map((row) => (
-                    <tr key={row.status}>
-                      <td className="px-4 py-2.5 capitalize font-medium text-slate-900">
-                        {row.status.replace(/_/g, ' ')}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right">{row.count}</td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right">{row.nights}</td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold">
-                        {formatNgn(row.valueNgn)}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right text-emerald-700 font-semibold">
-                        {formatNgn(row.paidNgn)}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right text-rose-700 font-semibold">
-                        {formatNgn(row.pendingNgn)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Booking Sources & OTA Commission */}
-          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100">
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Booking Sources &amp; Channel Manager Mix
-              </h2>
-              <p className="text-xs text-slate-500">
-                Walk-in, Website, Booking.com, Airbnb, Expedia &amp; connected iCal channels
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-2.5 font-semibold">Source</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Bookings</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Nights</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Total Value</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Collected</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Est. OTA Fee</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {current.bookingSources.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
-                        No active reservations in selected period.
-                      </td>
-                    </tr>
-                  ) : (
-                    current.bookingSources.map((src) => (
-                      <tr key={src.source} className="hover:bg-slate-50/60">
-                        <td className="px-4 py-2.5 font-semibold text-slate-900">{src.source}</td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right">{src.bookings}</td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right">{src.nights}</td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold">
-                          {formatNgn(src.totalValueNgn)}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right text-emerald-700">
-                          {formatNgn(src.collectedNgn)}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono-tabular text-right text-slate-600">
-                          {formatNgn(src.estCommissionNgn)} ({src.commissionPct}%)
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* POS Sales & Departmental Performance */}
-      {(activeTab === 'overview' || activeTab === 'pos_dept') && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* POS Sales Breakdown */}
-          <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  Restaurant &amp; Bar POS Sales
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Subtotal {formatNgn(current.posSubtotalNgn)} · VAT (7.5%){' '}
-                  {formatNgn(current.posVatNgn)}
-                </p>
-              </div>
-              <span className="font-mono-tabular text-sm font-bold text-[#1c46be]">
-                {formatNgn(current.posTotalSalesNgn)}
-              </span>
-            </div>
-
-            <div className="space-y-2 text-xs">
-              <p className="font-semibold text-slate-700">By Service Type</p>
-              {opsMetrics.posByService.map((row) => (
-                <div
-                  key={row.serviceType}
-                  className="flex items-center justify-between py-1.5 border-b border-slate-100"
-                >
-                  <span className="text-slate-800 font-medium">
-                    {row.serviceType} ({row.orders} orders · {row.items} items)
-                  </span>
-                  <span className="font-mono-tabular font-semibold text-slate-900">
-                    {formatNgn(row.totalNgn)}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-2 text-xs pt-2">
-              <p className="font-semibold text-slate-700">By Payment Settlement Method</p>
-              <div className="grid grid-cols-2 gap-2">
-                {opsMetrics.posByMethod.map((pm) => (
-                  <div
-                    key={pm.method}
-                    className="p-2.5 rounded-lg bg-slate-50 border border-slate-200"
-                  >
-                    <p className="text-[11px] text-slate-500">{pm.method}</p>
-                    <p className="font-mono-tabular font-bold text-slate-900 mt-0.5">
-                      {formatNgn(pm.totalNgn)}
-                    </p>
-                    <p className="text-[10px] text-slate-500">{pm.orders} orders</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Departmental Performance Scorecard */}
-          <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="border-b border-slate-100 pb-3">
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Departmental Performance Scorecard
-              </h2>
-              <p className="text-xs text-slate-500">
-                Serviced Apartments vs Hotel Rooms, F&amp;B, Housekeeping, and Engineering
-              </p>
-            </div>
-
-            <div className="space-y-2.5 text-xs">
-              {current.sectionPerformance.map((sp) => (
-                <div
-                  key={sp.department}
-                  className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-900">
-                      {sp.department} ({sp.unitCount} suites)
-                    </span>
-                    <span className="font-mono-tabular font-bold text-emerald-700">
-                      {formatNgn(sp.revenueNgn)}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-600 font-mono-tabular">
-                    <span>Occ: {sp.occupancyPct.toFixed(1)}%</span>
-                    <span>
-                      Nights: {sp.occupiedNights}/{sp.availableNights}
-                    </span>
-                    <span>ADR: {formatNgn(sp.adrNgn)}</span>
-                    <span>RevPAR: {formatNgn(sp.revparNgn)}</span>
-                  </div>
-                </div>
-              ))}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                  <p className="font-semibold text-slate-900">Housekeeping Operations</p>
-                  <p className="font-mono-tabular text-base font-bold text-emerald-700">
-                    {opsMetrics.hkRate.toFixed(0)}% Completed
-                  </p>
-                  <p className="text-[11px] text-slate-500">
-                    {opsMetrics.hkCompleted} of {housekeepingTasks.length} tasks clean/inspected
-                  </p>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                  <p className="font-semibold text-slate-900">Engineering &amp; Maintenance</p>
-                  <p className="font-mono-tabular text-base font-bold text-slate-900">
-                    {formatNgn(opsMetrics.mntEstCostNgn)}
-                  </p>
-                  <p className="text-[11px] text-slate-500">
-                    {opsMetrics.mntResolved} resolved · {opsMetrics.mntOpen} open tickets
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Inventory Costs & Staff Performance */}
-      {(activeTab === 'overview' || activeTab === 'inventory_staff') && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Inventory Valuation & Procurement Costs */}
-          <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  Inventory Costs &amp; Procurement
-                </h2>
-                <p className="text-xs text-slate-500">
-                  PO Received: {formatNgn(inventoryMetrics.receivedPoNgn)} · Open POs:{' '}
-                  {formatNgn(inventoryMetrics.pendingPoNgn)}
-                </p>
-              </div>
-              <span className="font-mono-tabular text-xs font-bold text-slate-900">
-                Stock: {formatNgn(inventoryMetrics.totalValuationNgn)}
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-2.5 font-semibold">Inventory Category</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">SKUs</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Low Stock</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Stock Valuation</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {inventoryMetrics.byCategory.map((cat) => (
-                    <tr key={cat.category}>
-                      <td className="px-4 py-2.5 font-medium text-slate-900">{cat.category}</td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right">{cat.skuCount}</td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right">
-                        <span
-                          className={
-                            cat.lowStockCount > 0 ? 'text-amber-700 font-bold' : 'text-slate-500'
-                          }
-                        >
-                          {cat.lowStockCount}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold">
-                        {formatNgn(cat.valuationNgn)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Staff Performance & Payroll */}
-          <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  Staff Performance &amp; Payroll ({staffMembers.length} Staff)
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Shifts Completed: {opsMetrics.shiftsCompleted}/{current.periodShifts.length} (
-                  {opsMetrics.shiftCompletionPct.toFixed(0)}%) · On-Time Attendance:{' '}
-                  {opsMetrics.attPresent} (Late: {opsMetrics.attLate})
-                </p>
-              </div>
-              <Users className="w-4 h-4 text-slate-500" />
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-2.5 font-semibold">Employee</th>
-                    <th className="px-4 py-2.5 font-semibold">Department</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Monthly Salary</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Shifts</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Attendance</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {opsMetrics.staffScorecard
-                    .filter((row) => {
-                      const q = reportSearch.trim().toLowerCase();
-                      if (!q) return true;
-                      return [row.staff.fullName, row.staff.staffCode, row.staff.department, row.staff.role]
-                        .join(' ')
-                        .toLowerCase()
-                        .includes(q);
-                    })
-                    .map((row) => (
-                    <tr key={row.staff.id} className="hover:bg-slate-50/60">
-                      <td className="px-4 py-2.5">
-                        <p className="font-medium text-slate-900">{row.staff.fullName}</p>
-                        <p className="text-[11px] font-mono-tabular text-slate-500">
-                          {row.staff.staffCode}
-                        </p>
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-600">{row.staff.department}</td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right font-semibold">
-                        {formatNgn(row.monthlyCompNgn)}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right">
-                        {row.shiftsCompleted}/{row.shiftsAssigned}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono-tabular text-right">
-                        {row.onTimeCount}/{row.attendanceLogs}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -3852,6 +1338,23 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
           </div>
         </div>
       )}
+
+      {/* Clean Bottom Report Footer Strip */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <span className="inline-flex items-center gap-2 text-slate-600">
+          <Info className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>
+            Report generated on:{' '}
+            <strong className="font-mono-tabular text-slate-800">{generatedTimestamp}</strong>
+          </span>
+        </span>
+        <span className="font-semibold text-slate-700">
+          Total Revenue (Bookings):{' '}
+          <strong className="font-mono-tabular text-sm font-extrabold text-[#061539]">
+            {formatNgn(kpis.totalBookingRevenueNgn)}
+          </strong>
+        </span>
+      </div>
     </div>
   );
 };

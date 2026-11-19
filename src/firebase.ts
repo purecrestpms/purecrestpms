@@ -13,9 +13,14 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
+const customAuthDomain =
+  (import.meta.env.VITE_CUSTOM_AUTH_DOMAIN as string | undefined)?.trim() || '';
+
 export const effectiveFirebaseConfig = {
   ...firebaseConfig,
-  authDomain: 'pchpms.com',
+  // Use Firebase's provisioned authDomain unless a verified custom OAuth proxy domain is explicitly configured.
+  // Overriding authDomain without registering https://<domain>/__/auth/handler in Google Cloud OAuth causes Error 400: redirect_uri_mismatch.
+  authDomain: customAuthDomain || firebaseConfig.authDomain,
 };
 
 const app = initializeApp(effectiveFirebaseConfig);
@@ -49,6 +54,7 @@ function createFirestoreInstance(): Firestore {
 export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'purecresthospitality@gmail.com';
 export const BOOTSTRAPPED_ADMIN_EMAILS = [
