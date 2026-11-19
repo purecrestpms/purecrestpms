@@ -34,7 +34,13 @@ import {
 } from '../firebase';
 import { mergeCmsWithDefaults } from '../context/CmsContext';
 import { buildRichgatesSeedPayload, generateLicenseKey, RICHGATES_PROPERTY_ID } from '../data/seedData';
-import { checkRoomDateRangeAvailability } from '../utils/availability';
+import {
+  checkRoomDateRangeAvailability,
+  datesOverlapIso,
+  getLocalIsoDate,
+  matchesRoomRecord,
+  normalizeIsoDate,
+} from '../utils/availability';
 import { deterministicOtaReservationId, ParsedIcalEvent, parseIcalEvents } from '../utils/icalParser';
 import { ParsedOtaCsvRow } from '../utils/otaCsvParser';
 import {
@@ -3461,8 +3467,8 @@ export async function syncOtaChannelWorkflow(params: {
     }
   }
 
-  const yesterdayIso = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const yesterdayIso = getLocalIsoDate(new Date(Date.now() - 86400000));
+  const todayIso = getLocalIsoDate();
 
   const normalizedMappedRoom = (params.channel.roomNumber || '').trim();
   const isSpecificMappedRoom =
@@ -3475,14 +3481,18 @@ export async function syncOtaChannelWorkflow(params: {
     const raw = (hint || '').trim().toLowerCase();
     if (!raw) return [];
 
-    // 1. Direct RM-X code match
+    // 1. Direct flexible room matcher (RM-1, Room 1, RM 01, room.name, or roomId)
+    const directMatches = roomList.filter((r) => matchesRoomRecord(r, raw, hint));
+    if (directMatches.length > 0) return directMatches;
+
+    // 2. Direct RM-X code inside longer text
     const rmMatch = raw.match(/\b(rm-\d{1,2})\b/i);
     if (rmMatch) {
-      const byCode = roomList.filter((r) => r.roomNumber.toLowerCase() === rmMatch[1].toLowerCase());
+      const byCode = roomList.filter((r) => matchesRoomRecord(r, undefined, rmMatch[1]));
       if (byCode.length > 0) return byCode;
     }
 
-    // 2. Exact roomNumber or roomName match
+    // 3. Exact roomNumber or roomName substring match
     const exactCodeOrName = roomList.filter(
       (r) =>
         r.roomNumber.toLowerCase() === raw ||
@@ -3491,7 +3501,7 @@ export async function syncOtaChannelWorkflow(params: {
     );
     if (exactCodeOrName.length > 0) return exactCodeOrName;
 
-    // 3. Longest roomType match first (so "Deluxe Studio with Kitchenette" beats "Deluxe Studio")
+    // 4. Longest roomType match first (so "Deluxe Studio with Kitchenette" beats "Deluxe Studio")
     const byTypeLengthDesc = [...roomList].sort((a, b) => b.roomType.length - a.roomType.length);
     for (const candidate of byTypeLengthDesc) {
       const rt = candidate.roomType.trim().toLowerCase();
@@ -3504,7 +3514,7 @@ export async function syncOtaChannelWorkflow(params: {
   };
 
   const mappedRoomsFromChannel = isSpecificMappedRoom
-    ? roomList.filter((r) => r.roomNumber.trim().toLowerCase() === normalizedMappedRoom.toLowerCase())
+    ? roomList.filter((r) => matchesRoomRecord(r, normalizedMappedRoom, normalizedMappedRoom))
     : [];
 
   const pickRoomForEvent = (ev: ParsedIcalEvent, ignoreReservationId?: string): RoomRecord => {
@@ -3536,11 +3546,11 @@ export async function syncOtaChannelWorkflow(params: {
       !existingReservations.some(
         (res) =>
           res.id !== ignoreReservationId &&
-          res.roomId === room.id &&
+          matchesRoomRecord(room, res.roomId, res.roomNumber) &&
           res.status !== 'cancelled' &&
           res.status !== 'no_show' &&
           res.status !== 'checked_out' &&
-          datesOverlap(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
+          datesOverlapIso(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
       );
 
     if (matchedPool.length > 0) {
@@ -3566,20 +3576,20 @@ export async function syncOtaChannelWorkflow(params: {
       const countA = existingReservations.filter(
         (res) =>
           res.id !== ignoreReservationId &&
-          res.roomId === a.id &&
+          matchesRoomRecord(a, res.roomId, res.roomNumber) &&
           res.status !== 'cancelled' &&
           res.status !== 'no_show' &&
           res.status !== 'checked_out' &&
-          datesOverlap(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
+          datesOverlapIso(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
       ).length;
       const countB = existingReservations.filter(
         (res) =>
           res.id !== ignoreReservationId &&
-          res.roomId === b.id &&
+          matchesRoomRecord(b, res.roomId, res.roomNumber) &&
           res.status !== 'cancelled' &&
           res.status !== 'no_show' &&
           res.status !== 'checked_out' &&
-          datesOverlap(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
+          datesOverlapIso(ev.checkInDate, ev.checkOutDate, res.checkInDate, res.checkOutDate)
       ).length;
       return countA - countB;
     });
@@ -3785,12 +3795,21 @@ export async function syncOtaChannelWorkflow(params: {
     }
 
     const deterministicId = deterministicOtaReservationId(params.channel.id, ev.uid);
+    const byUidCandidate = byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`);
+    const byRefCandidate = ev.otaBookingRef
+      ? byBookingRef.get(`${resolvedChannelSource}::${ev.otaBookingRef.toUpperCase()}`)
+      : undefined;
+    const belongsToThisChannelRoom = (cand?: ReservationRecord): boolean => {
+      if (!cand) return false;
+      if (mappedRoomsFromChannel.length === 0) return true;
+      return mappedRoomsFromChannel.some((rm) =>
+        matchesRoomRecord(rm, cand.roomId, cand.roomNumber)
+      );
+    };
     const existing =
       byId.get(deterministicId) ||
-      byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`) ||
-      (ev.otaBookingRef
-        ? byBookingRef.get(`${resolvedChannelSource}::${ev.otaBookingRef.toUpperCase()}`)
-        : undefined);
+      (belongsToThisChannelRoom(byUidCandidate) ? byUidCandidate : undefined) ||
+      (belongsToThisChannelRoom(byRefCandidate) ? byRefCandidate : undefined);
 
     const safeGuestName = (ev.guestName || `${resolvedChannelSource} Guest`).trim().slice(0, 120);
     const safeAdults = Math.max(1, Math.min(20, ev.adults ?? 2));
@@ -4227,17 +4246,18 @@ export async function importOtaCsvReservationsWorkflow(params: {
     const isFreeForDates = (candidate: RoomRecord) =>
       !existingReservations.some(
         (res) =>
-          res.roomId === candidate.id &&
+          matchesRoomRecord(candidate, res.roomId, res.roomNumber) &&
           res.status !== 'cancelled' &&
           res.status !== 'no_show' &&
           res.status !== 'checked_out' &&
-          datesOverlap(checkIn, checkOut, res.checkInDate, res.checkOutDate)
+          datesOverlapIso(checkIn, checkOut, res.checkInDate, res.checkOutDate)
       );
 
     const hint = (roomHint || '').trim().toLowerCase();
     if (hint) {
       const exactMatches = roomList.filter(
         (r) =>
+          matchesRoomRecord(r, roomHint, roomHint) ||
           r.roomNumber.toLowerCase() === hint ||
           r.name.toLowerCase() === hint ||
           hint.includes(r.roomNumber.toLowerCase()) ||
@@ -4261,13 +4281,18 @@ export async function importOtaCsvReservationsWorkflow(params: {
     | { kind: 'update'; ref: ReturnType<typeof doc>; data: Record<string, unknown> };
   const writes: QueuedWrite[] = [];
   const now = serverTimestamp();
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getLocalIsoDate();
 
   let created = 0;
   let updated = 0;
   let skipped = 0;
 
-  for (const row of params.rows) {
+  for (const rawRow of params.rows) {
+    const row = {
+      ...rawRow,
+      checkInDate: normalizeIsoDate(rawRow.checkInDate),
+      checkOutDate: normalizeIsoDate(rawRow.checkOutDate),
+    };
     const resolvedChannelSource: ReservationRecord['channel'] = row.channelOverride
       ? normalizeChannel(row.channelOverride)
       : defaultResolvedChannelSource;

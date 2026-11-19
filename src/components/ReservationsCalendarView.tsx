@@ -23,6 +23,7 @@ import {
   formatNgn,
   getRoomSection,
   GuestRecord,
+  isOtaBookingChannel,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
@@ -34,8 +35,10 @@ import {
 import {
   checkRoomDateRangeAvailability,
   formatRoomAvailabilityTag,
+  getLocalIsoDate,
   isActiveBlockingReservation,
   matchesRoomRecord,
+  normalizeIsoDate,
 } from '../utils/availability';
 import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
@@ -90,7 +93,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   onOpenReservationFolio,
 }) => {
   const { cms } = useCms();
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getLocalIsoDate();
   const tomorrowIso = addDaysIso(todayIso, 1);
 
   const [calendarStart, setCalendarStart] = useState<string>(todayIso);
@@ -695,34 +698,41 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         </td>
 
                         {calendarDays.map((day) => {
-                          const res = activeReservations.find(
-                            (r) =>
-                              matchesRoomRecord(room, r.roomId, r.roomNumber) &&
-                              r.checkInDate <= day &&
-                              day <
-                                (r.checkOutDate > r.checkInDate
-                                  ? r.checkOutDate
-                                  : addDaysIso(r.checkInDate, 1))
-                          );
-                          const blk = blockedDates.find(
-                            (b) =>
-                              matchesRoomRecord(room, b.roomId, b.roomNumber) &&
-                              b.startDate <= day &&
-                              day < (b.endDate > b.startDate ? b.endDate : addDaysIso(b.startDate, 1))
-                          );
+                          const res = activeReservations.find((r) => {
+                            if (!matchesRoomRecord(room, r.roomId, r.roomNumber)) return false;
+                            const rIn = normalizeIsoDate(r.checkInDate);
+                            const rOutRaw = normalizeIsoDate(r.checkOutDate);
+                            if (!rIn) return false;
+                            const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+                            return rIn <= day && day < rOut;
+                          });
+                          const blk = blockedDates.find((b) => {
+                            if (!matchesRoomRecord(room, b.roomId, b.roomNumber)) return false;
+                            const bStart = normalizeIsoDate(b.startDate);
+                            const bEndRaw = normalizeIsoDate(b.endDate);
+                            if (!bStart) return false;
+                            const bEnd = bEndRaw > bStart ? bEndRaw : addDaysIso(bStart, 1);
+                            return bStart <= day && day < bEnd;
+                          });
 
                           if (res) {
                             const isCheckedIn = res.status === 'checked_in';
                             const isPending = res.status === 'pending';
+                            const isOta = isOtaBookingChannel(res.channel);
                             const cellColor = isCheckedIn
                               ? 'bg-emerald-600'
                               : isPending
                                 ? 'bg-violet-600'
-                                : 'bg-amber-500';
+                                : isOta
+                                  ? 'bg-orange-500'
+                                  : 'bg-amber-500';
+                            const sourceTag = isOta
+                              ? ` · ${formatBookingSourceLabel(res.channel)}`
+                              : '';
                             return (
                               <td
                                 key={day}
-                                title={`${res.bookingRef} · ${res.guestName} (${res.status}) · ${res.checkInDate} → ${res.checkOutDate} — Click to open Folio`}
+                                title={`${res.bookingRef} · ${res.guestName} (${res.status}${sourceTag}) · ${normalizeIsoDate(res.checkInDate)} → ${normalizeIsoDate(res.checkOutDate)} — Click to open Folio`}
                                 className="p-1 border-r border-slate-100 last:border-r-0 align-middle"
                               >
                                 <button

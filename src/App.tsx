@@ -1067,14 +1067,12 @@ export default function App() {
       otaAutoSyncBusyRef.current = true;
       try {
         let totalNew = 0;
-        let workingReservations = [...curReservations];
         for (const ch of due) {
           try {
             const res = await syncOtaChannelWorkflow({
               property: activeProp,
               channel: ch,
               rooms: curRooms,
-              reservations: workingReservations,
               actorRole: `${ROLE_LABELS[curRole]} (Auto-Sync)`,
             });
             totalNew += res.created;

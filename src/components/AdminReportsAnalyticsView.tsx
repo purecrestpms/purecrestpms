@@ -292,10 +292,29 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       0
     );
 
+    // Clamp occupied room-nights strictly inside [period.start, period.end] for accurate period occupancy
     const periodDays =
       periodPreset === 'all_time' ? 30 : daysBetweenInclusive(period.start, period.end);
-    const capacityNights = Math.max(1, rooms.length * periodDays);
-    const occupancyPct = Math.min(100, Math.round((totalNights / capacityNights) * 100));
+    const sellableCount =
+      rooms.filter((rm) => rm.occupancyStatus !== 'out_of_order').length || rooms.length;
+    const capacityNights = Math.max(1, sellableCount * periodDays);
+    const periodEndExclusive = addDaysIso(period.end, 1);
+    const occupiedNightsInPeriod =
+      periodPreset === 'all_time'
+        ? totalNights
+        : reservations
+            .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
+            .reduce((sum, r) => {
+              const rIn = (r.checkInDate || '').slice(0, 10);
+              const rOutRaw = (r.checkOutDate || '').slice(0, 10);
+              if (!rIn) return sum;
+              const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+              const overlapStart = rIn > period.start ? rIn : period.start;
+              const overlapEnd = rOut < periodEndExclusive ? rOut : periodEndExclusive;
+              if (overlapEnd <= overlapStart) return sum;
+              return sum + computeNights(overlapStart, overlapEnd);
+            }, 0);
+    const occupancyPct = Math.min(100, Math.round((occupiedNightsInPeriod / capacityNights) * 100));
 
     return {
       totalBookings,
@@ -309,7 +328,7 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       occupancyPct,
       totalBookingRevenueNgn,
     };
-  }, [periodReservations, priorReservations, property.usdExchangeRateNgn, rooms.length, period, periodPreset]);
+  }, [periodReservations, priorReservations, reservations, property.usdExchangeRateNgn, rooms, period, periodPreset]);
 
   // Visual Charts Data (6-Month Trend + Bookings by Source)
   const monthlyTrend = useMemo(
@@ -372,9 +391,13 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       .reduce((s, e) => s + e.amountNgn, 0);
 
     const periodPos = posOrders.filter((o) => inPeriod(o.orderDate));
-    const posRevenue = periodPos.reduce((s, o) => s + o.totalNgn, 0);
+    const posRevenue = periodPos.reduce((s, o) => s + (Number(o.totalNgn) || 0), 0);
+    // Exclude room_folio POS orders from standalone POS addition because they are already counted in reservation totals
+    const nonFolioPosRevenue = periodPos
+      .filter((o) => o.paymentStatus !== 'room_folio')
+      .reduce((s, o) => s + (Number(o.totalNgn) || 0), 0);
 
-    const totalRevenue = Math.max(ledgerRevenue, kpis.totalBookingRevenueNgn + posRevenue);
+    const totalRevenue = Math.max(ledgerRevenue, kpis.totalBookingRevenueNgn + nonFolioPosRevenue);
     const netProfit = totalRevenue - ledgerExpenses;
 
     // Group revenue & expense categories cleanly

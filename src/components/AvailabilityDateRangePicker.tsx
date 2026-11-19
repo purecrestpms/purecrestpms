@@ -9,13 +9,23 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import { BlockedDateRecord, ReservationRecord, RoomRecord } from '../types/pms';
+import {
+  BlockedDateRecord,
+  formatBookingSourceLabel,
+  isOtaBookingChannel,
+  ReservationRecord,
+  RoomRecord,
+} from '../types/pms';
 import {
   addDaysIso,
   checkDayStatusForRoom,
   checkRoomDateRangeAvailability,
   diffNightsIso,
   findAvailableRoomsForRange,
+  getLocalIsoDate,
+  isActiveBlockingReservation,
+  matchesRoomRecord,
+  normalizeIsoDate,
 } from '../utils/availability';
 
 interface AvailabilityDateRangePickerProps {
@@ -100,7 +110,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
   mode = 'reservation',
   compact = false,
 }) => {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getLocalIsoDate();
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [openField, setOpenField] = useState<'none' | 'check_in' | 'check_out'>('none');
@@ -210,26 +220,49 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
           },
         };
       }
-      const openCount = pool.filter(
-        (candidate) =>
-          checkDayStatusForRoom({
-            room: candidate,
-            dayIso: cell.iso,
-            reservations,
-            blockedDates,
-            excludeReservationId,
-          }).available
-      ).length;
-      const unassignedHeld = reservations.filter(
-        (r) =>
-          r.id !== excludeReservationId &&
-          (r.status === 'confirmed' || r.status === 'checked_in' || r.status === 'pending') &&
-          !r.roomId &&
-          (!roomType || r.requestedRoomType === roomType) &&
-          r.checkInDate <= cell.iso &&
-          cell.iso < (r.checkOutDate > r.checkInDate ? r.checkOutDate : addDaysIso(r.checkInDate, 1))
-      ).length;
-      const netOpen = Math.max(0, openCount - unassignedHeld);
+      const perRoomInfo = pool.map((candidate) =>
+        checkDayStatusForRoom({
+          room: candidate,
+          dayIso: cell.iso,
+          reservations,
+          blockedDates,
+          excludeReservationId,
+        })
+      );
+      const openCount = perRoomInfo.filter((inf) => inf.available).length;
+      const otaRoomMatches = perRoomInfo.filter((inf) => !inf.available && inf.isOta);
+
+      const unassignedMatches = reservations.filter((r) => {
+        if (r.id === excludeReservationId) return false;
+        if (!isActiveBlockingReservation(r)) return false;
+        const matchedAnyInPool = pool.some((candidate) =>
+          matchesRoomRecord(candidate, r.roomId, r.roomNumber)
+        );
+        if (matchedAnyInPool) return false;
+        const isUnassigned = !r.roomId || String(r.roomNumber || '').trim().toLowerCase() === 'unassigned';
+        if (!isUnassigned) return false;
+        if (roomType && (r.requestedRoomType || '').trim().toLowerCase() !== roomType.trim().toLowerCase()) {
+          return false;
+        }
+        const rIn = normalizeIsoDate(r.checkInDate);
+        const rOutRaw = normalizeIsoDate(r.checkOutDate);
+        if (!rIn) return false;
+        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+        return rIn <= cell.iso && cell.iso < rOut;
+      });
+
+      const unassignedOtaCount = unassignedMatches.filter((r) => isOtaBookingChannel(r.channel)).length;
+      const otaBookingsCount = otaRoomMatches.length + unassignedOtaCount;
+      const primaryOtaChannel =
+        otaRoomMatches[0]?.otaChannel ||
+        (unassignedOtaCount > 0
+          ? formatBookingSourceLabel(
+              unassignedMatches.find((r) => isOtaBookingChannel(r.channel))?.channel || 'Airbnb'
+            )
+          : undefined);
+
+      const netOpen = Math.max(0, openCount - unassignedMatches.length);
+      const bookedCount = Math.max(0, pool.length - netOpen);
       if (netOpen > 0) {
         return {
           ...cell,
@@ -237,21 +270,77 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
             status: 'available' as const,
             available: true,
             label: `${netOpen}/${pool.length} open`,
-            detail: `${netOpen} of ${pool.length} ${roomType || 'rooms'} open on ${formatPrettyDate(cell.iso)}`,
+            detail:
+              otaBookingsCount > 0
+                ? `${netOpen} of ${pool.length} ${roomType || 'rooms'} open on ${formatPrettyDate(cell.iso)} (${otaBookingsCount} ${primaryOtaChannel || 'OTA'} booking${otaBookingsCount > 1 ? 's' : ''} active)`
+                : `${netOpen} of ${pool.length} ${roomType || 'rooms'} open on ${formatPrettyDate(cell.iso)}`,
+            isOta: otaBookingsCount > 0,
+            otaChannel: primaryOtaChannel,
+            otaBookingsCount,
+            bookedCount,
+            totalPoolCount: pool.length,
           },
         };
       }
+      const otaSuffix =
+        otaBookingsCount > 0
+          ? ` including ${otaBookingsCount} ${primaryOtaChannel || 'OTA'} booking${otaBookingsCount > 1 ? 's' : ''}`
+          : '';
       return {
         ...cell,
         info: {
           status: 'reserved' as const,
           available: false,
-          label: 'Unavailable',
-          detail: `All ${pool.length} ${roomType || 'rooms'} are reserved, booked on OTA, or blocked on ${formatPrettyDate(cell.iso)}.`,
+          label: otaBookingsCount > 0 ? `Booked (${primaryOtaChannel || 'OTA'})` : 'Unavailable',
+          detail: `All ${pool.length} ${roomType || 'rooms'} are unavailable on ${formatPrettyDate(cell.iso)}${otaSuffix}.`,
+          isOta: otaBookingsCount > 0,
+          otaChannel: primaryOtaChannel,
+          otaBookingsCount,
+          bookedCount: pool.length,
+          totalPoolCount: pool.length,
         },
       };
     });
   }, [monthCells, room, roomType, rooms, reservations, blockedDates, excludeReservationId]);
+
+  // Count distinct active OTA / Airbnb bookings overlapping the currently displayed calendar month
+  const monthOtaSummary = useMemo(() => {
+    const firstIso = monthCells[0]?.iso || '';
+    const lastIso = monthCells[monthCells.length - 1]?.iso || '';
+    if (!firstIso || !lastIso) return { total: 0, airbnb: 0 };
+    const pool = room
+      ? [room]
+      : roomType
+        ? rooms.filter((r) => r.roomType === roomType)
+        : rooms;
+
+    const matched = reservations.filter((r) => {
+      if (r.id === excludeReservationId) return false;
+      if (!isActiveBlockingReservation(r)) return false;
+      if (!isOtaBookingChannel(r.channel)) return false;
+      const rIn = normalizeIsoDate(r.checkInDate);
+      const rOutRaw = normalizeIsoDate(r.checkOutDate);
+      if (!rIn) return false;
+      const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+      const overlapsVisibleGrid = rIn <= lastIso && rOut > firstIso;
+      if (!overlapsVisibleGrid) return false;
+      if (room) {
+        return matchesRoomRecord(room, r.roomId, r.roomNumber);
+      }
+      if (pool.length === 0) return true;
+      if (pool.some((candidate) => matchesRoomRecord(candidate, r.roomId, r.roomNumber))) {
+        return true;
+      }
+      const isUnassigned = !r.roomId || String(r.roomNumber || '').trim().toLowerCase() === 'unassigned';
+      return (
+        isUnassigned &&
+        (!roomType || (r.requestedRoomType || '').trim().toLowerCase() === roomType.trim().toLowerCase())
+      );
+    });
+
+    const airbnb = matched.filter((r) => formatBookingSourceLabel(r.channel) === 'Airbnb').length;
+    return { total: matched.length, airbnb };
+  }, [monthCells, room, roomType, rooms, reservations, excludeReservationId]);
 
   const nights = checkInDate && checkOutDate && checkOutDate > checkInDate
     ? diffNightsIso(checkInDate, checkOutDate)
@@ -552,6 +641,25 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
               </button>
             </div>
 
+            {/* Synced Airbnb / OTA Live Indicator */}
+            {monthOtaSummary.total > 0 && (
+              <div className="rounded-lg bg-orange-50/80 border border-orange-200 px-2.5 py-1.5 text-[11px] font-medium text-orange-900 flex items-center justify-between gap-2">
+                <span>
+                  {monthOtaSummary.airbnb > 0
+                    ? `${monthOtaSummary.airbnb} Airbnb booking${monthOtaSummary.airbnb > 1 ? 's' : ''}`
+                    : `${monthOtaSummary.total} OTA booking${monthOtaSummary.total > 1 ? 's' : ''}`}{' '}
+                  synced in {MONTH_NAMES[viewMonth]}
+                  {monthOtaSummary.total > monthOtaSummary.airbnb && monthOtaSummary.airbnb > 0
+                    ? ` (+${monthOtaSummary.total - monthOtaSummary.airbnb} other OTA)`
+                    : ''}
+                </span>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                  Synced
+                </span>
+              </div>
+            )}
+
             {/* Inline Conflict / Unavailable Click Notification */}
             {clickNotice && (
               <div
@@ -588,6 +696,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                   cell.info.status === 'reserved' ||
                   cell.info.status === 'checked_in' ||
                   cell.info.status === 'pending';
+                const isOtaBooked = Boolean(cell.info.isOta);
                 const isBlocked = cell.info.status === 'blocked';
                 const isOoo = cell.info.status === 'out_of_order';
                 const isUnavailable = !cell.info.available;
@@ -627,10 +736,18 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                   tileClass = canBeTurnoverCheckout
                     ? 'bg-rose-50 text-rose-800 border-rose-300 border-dashed hover:bg-emerald-50'
                     : 'bg-rose-100/90 text-rose-700 border-rose-200 line-through decoration-rose-500/70';
+                } else if (isReservedLike && isOtaBooked) {
+                  tileClass = canBeTurnoverCheckout
+                    ? 'bg-orange-50 text-orange-900 border-orange-300 border-dashed hover:bg-emerald-50'
+                    : 'bg-orange-100/90 text-orange-950 border-orange-300 font-semibold';
                 } else if (isReservedLike) {
                   tileClass = canBeTurnoverCheckout
                     ? 'bg-amber-50 text-amber-900 border-amber-300 border-dashed hover:bg-emerald-50'
                     : 'bg-amber-100/90 text-amber-900 border-amber-300/80';
+                } else if (isOtaBooked) {
+                  // Room-type mode: some rooms booked on Airbnb/OTA, others still open
+                  tileClass =
+                    'bg-orange-50/60 text-slate-800 border-orange-200 hover:bg-emerald-50 hover:border-emerald-500';
                 }
 
                 return (
@@ -648,7 +765,10 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                     } ${isToday && !isCheckIn && !isCheckOut ? 'ring-1 ring-[#1c46be]' : ''}`}
                   >
                     <span className="leading-none">{cell.dayNum}</span>
-                    {!isCheckIn && !isCheckOut && isReservedLike && (
+                    {!isCheckIn && !isCheckOut && isOtaBooked && (
+                      <span className="w-1.5 h-1.5 rounded-full mt-0.5 bg-orange-600" />
+                    )}
+                    {!isCheckIn && !isCheckOut && !isOtaBooked && isReservedLike && (
                       <span
                         className={`w-1.5 h-1.5 rounded-full mt-0.5 ${
                           cell.info.status === 'checked_in'
@@ -678,12 +798,16 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                 Selected
               </span>
               <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded bg-orange-200 border border-orange-400" />
+                Airbnb / OTA
+              </span>
+              <span className="inline-flex items-center gap-1">
                 <span className="w-2.5 h-2.5 rounded bg-amber-200 border border-amber-400" />
                 Reserved
               </span>
               <span className="inline-flex items-center gap-1">
                 <span className="w-2.5 h-2.5 rounded bg-rose-200 border border-rose-400" />
-                Blocked / Unavail.
+                Blocked
               </span>
             </div>
           </div>

@@ -15,10 +15,13 @@ import {
 } from 'lucide-react';
 import {
   AttendanceRecord,
+  formatBookingSourceLabel,
   formatNgn,
+  getReservationPaymentSummary,
   getReservationRoomDisplay,
   GuestRecord,
   HousekeepingTaskRecord,
+  isOtaBookingChannel,
   LedgerEntryRecord,
   LicenseRecord,
   MaintenanceTicketRecord,
@@ -36,6 +39,12 @@ import {
   StaffRole,
   StaffSessionRecord,
 } from '../types/pms';
+import {
+  diffNightsIso,
+  getLocalIsoDate,
+  matchesRoomRecord,
+  normalizeIsoDate,
+} from '../utils/availability';
 import { CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { StaffDashboardView } from './StaffDashboardView';
 
@@ -177,7 +186,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSignOut,
 }) => {
   const [perfRange, setPerfRange] = useState<'7d' | '14d' | '30d'>('7d');
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getLocalIsoDate();
   const yesterdayIso = addDaysIso(todayIso, -1);
   const sortedRooms = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
 
@@ -222,60 +231,103 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [userName]);
 
   const metrics = useMemo(() => {
-    const totalRooms = rooms.length;
+    const sellableRooms = rooms.filter((r) => r.occupancyStatus !== 'out_of_order');
+    const totalInventory = sellableRooms.length > 0 ? sellableRooms.length : rooms.length;
     const activeNonCancelled = reservations.filter(
       (r) => r.status !== 'cancelled' && r.status !== 'no_show'
     );
 
-    const occupiedRoomsCount = rooms.filter((r) => r.occupancyStatus === 'occupied').length;
-    const activeTodayFromRes = activeNonCancelled.filter(
-      (r) =>
-        r.status === 'checked_in' ||
-        ((r.status === 'confirmed' || r.status === 'pending') &&
-          r.checkInDate <= todayIso &&
-          r.checkOutDate > todayIso)
-    ).length;
+    const resolveRoomKey = (r: ReservationRecord): string => {
+      const matched = rooms.find((rm) => matchesRoomRecord(rm, r.roomId, r.roomNumber));
+      if (matched) return `room:${matched.id}`;
+      return `res:${r.id}`;
+    };
 
-    const currentOccupied = Math.max(occupiedRoomsCount, Math.min(totalRooms, activeTodayFromRes));
+    const countUniqueOccupiedOnDay = (dayIso: string, includeRoomStatusFlag: boolean): number => {
+      const occupiedKeys = new Set<string>();
+      if (includeRoomStatusFlag) {
+        for (const rm of sellableRooms) {
+          if (rm.occupancyStatus === 'occupied') {
+            occupiedKeys.add(`room:${rm.id}`);
+          }
+        }
+      }
+      for (const r of activeNonCancelled) {
+        const rIn = normalizeIsoDate(r.checkInDate);
+        const rOutRaw = normalizeIsoDate(r.checkOutDate);
+        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+        const coversDay = rIn <= dayIso && dayIso < rOut;
+        if (includeRoomStatusFlag && r.status === 'checked_in') {
+          occupiedKeys.add(resolveRoomKey(r));
+        } else if (coversDay) {
+          occupiedKeys.add(resolveRoomKey(r));
+        }
+      }
+      return Math.min(totalInventory, occupiedKeys.size);
+    };
+
+    const currentOccupied = countUniqueOccupiedOnDay(todayIso, true);
     const occupancyRate =
-      totalRooms > 0 ? Math.min(100, Math.round((currentOccupied / totalRooms) * 100)) : 0;
+      totalInventory > 0 ? Math.min(100, Math.round((currentOccupied / totalInventory) * 100)) : 0;
 
     // Prior week occupancy rate (7 days ago)
     const lastWeekIso = addDaysIso(todayIso, -7);
-    const lastWeekOccupied = activeNonCancelled.filter(
-      (r) => r.checkInDate <= lastWeekIso && r.checkOutDate > lastWeekIso
-    ).length;
+    const lastWeekOccupied = countUniqueOccupiedOnDay(lastWeekIso, false);
     const lastWeekOccRate =
-      totalRooms > 0 ? Math.min(100, Math.round((lastWeekOccupied / totalRooms) * 100)) : 0;
+      totalInventory > 0 ? Math.min(100, Math.round((lastWeekOccupied / totalInventory) * 100)) : 0;
     const occDelta = occupancyRate - lastWeekOccRate;
 
-    // Arrivals today vs yesterday
-    const arrivalsToday = reservations.filter(
-      (r) =>
-        (r.status === 'confirmed' || r.status === 'pending') &&
-        r.checkInDate <= todayIso
-    ).length;
-    const arrivalsYesterday = reservations.filter(
-      (r) => r.status !== 'cancelled' && r.status !== 'no_show' && r.checkInDate === yesterdayIso
+    // Arrivals today (scheduled today + overdue un-checked-in) vs yesterday's scheduled arrivals
+    const arrivalsToday = activeNonCancelled.filter((r) => {
+      const rIn = normalizeIsoDate(r.checkInDate);
+      if (rIn === todayIso) return true;
+      return (r.status === 'confirmed' || r.status === 'pending') && rIn < todayIso;
+    }).length;
+    const arrivalsYesterday = activeNonCancelled.filter(
+      (r) => normalizeIsoDate(r.checkInDate) === yesterdayIso
     ).length;
     const arrivalsDelta = arrivalsToday - arrivalsYesterday;
 
-    // Departures today vs yesterday
-    const departuresToday = reservations.filter(
-      (r) => r.status === 'checked_in' && r.checkOutDate <= todayIso
-    ).length;
-    const departuresYesterday = reservations.filter(
-      (r) => r.status !== 'cancelled' && r.status !== 'no_show' && r.checkOutDate === yesterdayIso
+    // Departures today (checked-in due today/overdue + already checked-out today) vs yesterday's departures
+    const departuresToday = activeNonCancelled.filter((r) => {
+      const rOut = normalizeIsoDate(r.checkOutDate);
+      if (r.status === 'checked_in' && rOut <= todayIso) return true;
+      if (r.status === 'checked_out' && rOut === todayIso) return true;
+      return false;
+    }).length;
+    const departuresYesterday = activeNonCancelled.filter(
+      (r) => normalizeIsoDate(r.checkOutDate) === yesterdayIso
     ).length;
     const departuresDelta = departuresToday - departuresYesterday;
 
-    // Today's revenue vs same day last week
-    const revenueToday = ledgerEntries
-      .filter((e) => e.entryType === 'revenue' && e.entryDate === todayIso)
-      .reduce((sum, e) => sum + (Number(e.amountNgn) || 0), 0);
-    const revenueLastWeek = ledgerEntries
-      .filter((e) => e.entryType === 'revenue' && e.entryDate === lastWeekIso)
-      .reduce((sum, e) => sum + (Number(e.amountNgn) || 0), 0);
+    // Daily revenue: posted ledger revenue + prorated nightly OTA-prepaid stays (without double-counting ledger refs)
+    const computeDailyRevenueNgn = (targetIso: string): number => {
+      const dayLedger = ledgerEntries.filter(
+        (e) => e.entryType === 'revenue' && normalizeIsoDate(e.entryDate) === targetIso
+      );
+      const ledgerTotal = dayLedger.reduce((sum, e) => sum + (Number(e.amountNgn) || 0), 0);
+      const ledgerRefs = new Set(
+        dayLedger.map((e) => (e.reference || '').trim().toUpperCase()).filter(Boolean)
+      );
+
+      let otaAccruedNgn = 0;
+      for (const r of activeNonCancelled) {
+        if (!isOtaBookingChannel(r.channel)) continue;
+        const rIn = normalizeIsoDate(r.checkInDate);
+        const rOutRaw = normalizeIsoDate(r.checkOutDate);
+        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+        if (!(rIn <= targetIso && targetIso < rOut)) continue;
+        if (r.bookingRef && ledgerRefs.has(r.bookingRef.trim().toUpperCase())) continue;
+        const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+        if (pay.otaPaidAmount <= 0) continue;
+        const stayNights = Math.max(1, r.nights || diffNightsIso(rIn, rOut));
+        otaAccruedNgn += Math.round(pay.expectedPayoutNgn / stayNights);
+      }
+      return Math.round(ledgerTotal + otaAccruedNgn);
+    };
+
+    const revenueToday = computeDailyRevenueNgn(todayIso);
+    const revenueLastWeek = computeDailyRevenueNgn(lastWeekIso);
     const revenueDeltaPct =
       revenueLastWeek > 0
         ? Math.round(((revenueToday - revenueLastWeek) / revenueLastWeek) * 100)
@@ -293,9 +345,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       revenueToday,
       revenueDeltaPct,
     };
-  }, [rooms, reservations, ledgerEntries, todayIso, yesterdayIso]);
+  }, [rooms, reservations, ledgerEntries, property.usdExchangeRateNgn, todayIso, yesterdayIso]);
 
-  // Booking Performance Bar Chart Data
+  // Booking Performance Bar Chart Data (active stays per day)
   const bookingPerformance = useMemo(() => {
     const days = perfRange === '7d' ? 7 : perfRange === '14d' ? 14 : 30;
     const validRes = reservations.filter(
@@ -306,9 +358,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     for (let offset = days - 1; offset >= 0; offset -= 1) {
       const iso = addDaysIso(todayIso, -offset);
       const count = validRes.filter((r) => {
-        const bookedOn = (r.bookedDate || r.checkInDate || '').slice(0, 10);
-        const staysOnDay = r.checkInDate <= iso && r.checkOutDate > iso;
-        return bookedOn === iso || staysOnDay;
+        const rIn = normalizeIsoDate(r.checkInDate);
+        const rOutRaw = normalizeIsoDate(r.checkOutDate);
+        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+        return rIn <= iso && iso < rOut;
       }).length;
       series.push({
         iso,
@@ -322,22 +375,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return { series, yMax };
   }, [reservations, perfRange, todayIso]);
 
-  // Occupancy Trend Area Chart (Last 7 days ending today)
+  // Occupancy Trend Area Chart (Last 7 days ending today — unique rooms deduplicated)
   const occupancyTrend = useMemo(() => {
-    const totalRooms = Math.max(1, rooms.length);
+    const sellableRooms = rooms.filter((r) => r.occupancyStatus !== 'out_of_order');
+    const totalInventory = Math.max(1, sellableRooms.length > 0 ? sellableRooms.length : rooms.length);
     const validRes = reservations.filter(
       (r) => r.status !== 'cancelled' && r.status !== 'no_show'
     );
     const points: Array<{ iso: string; label: string; pct: number }> = [];
     for (let offset = 6; offset >= 0; offset -= 1) {
       const iso = addDaysIso(todayIso, -offset);
-      const occupiedOnDay = validRes.filter(
-        (r) => r.checkInDate <= iso && r.checkOutDate > iso
-      ).length;
+      const uniqueRoomsOnDay = new Set<string>();
+      for (const r of validRes) {
+        const rIn = normalizeIsoDate(r.checkInDate);
+        const rOutRaw = normalizeIsoDate(r.checkOutDate);
+        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+        if (rIn <= iso && iso < rOut) {
+          const matched = rooms.find((rm) => matchesRoomRecord(rm, r.roomId, r.roomNumber));
+          uniqueRoomsOnDay.add(matched ? `room:${matched.id}` : `res:${r.id}`);
+        }
+      }
       const pct =
         offset === 0
           ? metrics.occupancyRate
-          : Math.min(100, Math.round((occupiedOnDay / totalRooms) * 100));
+          : Math.min(100, Math.round((uniqueRoomsOnDay.size / totalInventory) * 100));
       points.push({
         iso,
         label: getWeekdayShort(iso),
@@ -345,13 +406,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       });
     }
     return points;
-  }, [rooms.length, reservations, todayIso, metrics.occupancyRate]);
+  }, [rooms, reservations, todayIso, metrics.occupancyRate]);
+
+  // Current In-House (Checked-In) Guests sorted by soonest check-out
+  const inHouseGuests = useMemo(() => {
+    return [...reservations]
+      .filter((r) => r.status === 'checked_in')
+      .sort((a, b) =>
+        normalizeIsoDate(a.checkOutDate).localeCompare(normalizeIsoDate(b.checkOutDate))
+      );
+  }, [reservations]);
+
+  // Check-Outs Due (checked-in guests departing today or overdue)
+  const checkOutsDue = useMemo(() => {
+    return inHouseGuests.filter((r) => normalizeIsoDate(r.checkOutDate) <= todayIso);
+  }, [inHouseGuests, todayIso]);
 
   // Recent Reservations (top 6 most recent active/upcoming stays)
   const recentReservations = useMemo(() => {
     return [...reservations]
       .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
-      .sort((a, b) => (b.checkInDate || '').localeCompare(a.checkInDate || ''))
+      .sort((a, b) =>
+        normalizeIsoDate(b.checkInDate).localeCompare(normalizeIsoDate(a.checkInDate))
+      )
       .slice(0, 6);
   }, [reservations]);
 
@@ -631,7 +708,193 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 4. Bottom Row: Recent Reservations Table + Occupancy Trend Line Chart */}
+      {/* 4. In-House Guests + Check-Outs Due Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* In-House Guests */}
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <BedDouble className="w-4 h-4 text-[#0b5d34]" />
+              <h2 className="font-display text-base font-bold text-slate-900">
+                In-House Guests
+              </h2>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold font-mono-tabular text-[#0b5d34]">
+                {inHouseGuests.length}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('in_house')}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+            >
+              <span>View All</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {inHouseGuests.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500">
+              No guests are currently checked in. Use <strong>Check In</strong> to check in an arrival or walk-in guest.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-semibold text-slate-500">
+                    <th className="py-3 px-5">Guest Name</th>
+                    <th className="py-3 px-3">Room</th>
+                    <th className="py-3 px-3">Stay</th>
+                    <th className="py-3 px-3">Balance</th>
+                    <th className="py-3 px-5 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {inHouseGuests.slice(0, 6).map((res) => {
+                    const roomDisp = getReservationRoomDisplay(res, rooms);
+                    const pay = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
+                    const isOta = isOtaBookingChannel(res.channel);
+                    const checkOutNorm = normalizeIsoDate(res.checkOutDate);
+                    const isDueOut = checkOutNorm <= todayIso;
+                    return (
+                      <tr
+                        key={res.id}
+                        onClick={() => onOpenReservationFolio(res.id, 'front_desk')}
+                        className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                      >
+                        <td className="py-3 px-5 whitespace-nowrap">
+                          <div className="font-semibold text-slate-900">{res.guestName}</div>
+                          {isOta && (
+                            <div className="text-[10px] font-medium text-orange-700">
+                              {formatBookingSourceLabel(res.channel)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 font-mono-tabular font-semibold text-slate-700 whitespace-nowrap">
+                          {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'}
+                        </td>
+                        <td className="py-3 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {formatShortDate(res.checkInDate)} → {formatShortDate(res.checkOutDate)}
+                        </td>
+                        <td className="py-3 px-3 font-mono-tabular whitespace-nowrap">
+                          {pay.balance > 0 ? (
+                            <span className="font-semibold text-rose-700">
+                              {formatNgn(pay.balance)}
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-emerald-700">Settled</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-5 text-right whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                              isDueOut
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-emerald-100/90 text-emerald-800'
+                            }`}
+                          >
+                            {isDueOut ? 'Due Out' : 'Checked In'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Check-Outs Due */}
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <LogOut className="w-4 h-4 text-[#0b5d34]" />
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Check-Outs Due
+              </h2>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[11px] font-bold font-mono-tabular border ${
+                  checkOutsDue.length > 0
+                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                    : 'bg-slate-50 border-slate-200 text-slate-600'
+                }`}
+              >
+                {checkOutsDue.length}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('in_house')}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+            >
+              <span>View All</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {checkOutsDue.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 my-auto">
+              No check-outs due today. All scheduled departures are clear.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {checkOutsDue.slice(0, 6).map((res) => {
+                const roomDisp = getReservationRoomDisplay(res, rooms);
+                const pay = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
+                const checkOutNorm = normalizeIsoDate(res.checkOutDate);
+                const isOverdue = checkOutNorm < todayIso;
+                return (
+                  <div
+                    key={res.id}
+                    onClick={() => onOpenReservationFolio(res.id, 'front_desk')}
+                    className="px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-xs text-slate-900 truncate">
+                          {res.guestName}
+                        </span>
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${
+                            isOverdue
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {isOverdue ? 'Overdue' : 'Due Today'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono-tabular mt-0.5">
+                        {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'} · Out{' '}
+                        {formatShortDate(res.checkOutDate)} ·{' '}
+                        {pay.balance > 0 ? (
+                          <span className="font-semibold text-rose-700">
+                            Bal {formatNgn(pay.balance)}
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-emerald-700">Paid</span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenReservationFolio(res.id, 'front_desk');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] text-white text-[11px] font-semibold shrink-0 transition-colors cursor-pointer"
+                    >
+                      Check Out
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 5. Bottom Row: Recent Reservations Table + Occupancy Trend Line Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Recent Reservations */}
         <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
