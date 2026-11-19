@@ -1392,7 +1392,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                         className="w-full border border-slate-200 rounded-lg px-3 py-2"
                       />
                       <span className="text-[10px] text-slate-500 mt-0.5 block">
-                        Leave blank if user signs in via Google Workspace/Gmail.
+                        Leave blank to send a password setup link to the user&apos;s email.
                       </span>
                     </div>
                     {uRole !== 'unassigned' && (

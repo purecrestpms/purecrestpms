@@ -28,6 +28,7 @@ import {
   transitionReservationStatus,
 } from '../services/pmsService';
 import {
+  AttendanceRecord,
   convertNgnToUsd,
   formatBookingSourceLabel,
   formatChannelCurrency,
@@ -47,6 +48,7 @@ import {
   matchesBookingSourceFilter,
   NavSectionId,
   PaymentStatusLabel,
+  PortalMode,
   PosOrderRecord,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
@@ -56,7 +58,11 @@ import {
   ReservationStatus,
   RoomRecord,
   RoomSection,
+  ShiftScheduleRecord,
   sortRoomsByNumber,
+  StaffMemberRecord,
+  StaffRole,
+  StaffSessionRecord,
 } from '../types/pms';
 import {
   BookingsBySourcePieChart,
@@ -93,6 +99,15 @@ interface DashboardViewProps {
   maintenanceTickets: MaintenanceTicketRecord[];
   activeLicense?: LicenseRecord;
   canManageRooms: boolean;
+  portalMode?: PortalMode;
+  activeRole?: StaffRole;
+  userUid?: string;
+  userEmail?: string;
+  userName?: string;
+  staffMembers?: StaffMemberRecord[];
+  staffSessions?: StaffSessionRecord[];
+  shifts?: ShiftScheduleRecord[];
+  attendance?: AttendanceRecord[];
   allowedSections?: NavSectionId[];
   actorRole?: string;
   onNotify?: (msg: string) => void;
@@ -122,6 +137,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   maintenanceTickets,
   activeLicense: _activeLicense,
   canManageRooms,
+  portalMode,
+  activeRole,
+  userUid,
+  userEmail,
+  userName,
+  staffMembers = [],
+  staffSessions = [],
+  shifts = [],
+  attendance = [],
   allowedSections,
   actorRole = 'Property Admin',
   onNotify,
@@ -510,7 +534,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     (a) => a.role === 'unassigned' || !a.active
   ).length;
 
-  if (!canManageRooms) {
+  if (!canManageRooms || portalMode === 'staff') {
     return (
       <StaffDashboardView
         property={property}
@@ -521,8 +545,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         maintenanceTickets={maintenanceTickets}
         allowedSections={allowedSections}
         actorRole={actorRole}
+        activeRole={activeRole}
+        userUid={userUid}
+        userEmail={userEmail}
+        userName={userName}
+        staffMembers={staffMembers}
+        staffSessions={staffSessions}
+        shifts={shifts}
+        attendance={attendance}
+        onNotify={onNotify}
         onNavigate={onNavigate}
         onOpenReservationFolio={onOpenReservationFolio}
+        onInspectRoom={onInspectRoom}
         onSignOut={onSignOut}
       />
     );

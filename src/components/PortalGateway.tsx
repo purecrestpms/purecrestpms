@@ -7,7 +7,6 @@ import {
   Eye,
   EyeOff,
   Lock,
-  LogIn,
   Mail,
   Shield,
   ShieldCheck,
@@ -21,7 +20,6 @@ interface PortalGatewayProps {
   tenantSlug?: string | null;
   tenantPropertyName?: string;
   tenantLogoUrl?: string;
-  onGoogleSignIn: (portal: PortalMode) => Promise<void>;
   onEmailPasswordSignIn: (portal: PortalMode, email: string, password: string) => Promise<void>;
   onPasswordReset: (email: string) => Promise<void>;
   authError: string | null;
@@ -46,7 +44,6 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
   tenantSlug,
   tenantPropertyName,
   tenantLogoUrl,
-  onGoogleSignIn,
   onEmailPasswordSignIn,
   onPasswordReset,
   authError,
@@ -75,11 +72,7 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (workEmailHint.trim() || passwordHint) {
-      void onEmailPasswordSignIn(selectedPortal, workEmailHint, passwordHint);
-      return;
-    }
-    void onGoogleSignIn(selectedPortal);
+    void onEmailPasswordSignIn(selectedPortal, workEmailHint, passwordHint);
   };
 
   const cardHeading = isPchPage
@@ -332,23 +325,6 @@ export const PortalGateway: React.FC<PortalGatewayProps> = ({
               >
                 <span>{isSigningIn ? 'Signing in...' : 'Sign In'}</span>
                 <ArrowRight className="w-4 h-4" />
-              </button>
-
-              <div className="relative flex items-center justify-center py-1">
-                <div className="border-t border-slate-200 w-full" />
-                <span className="bg-white px-2.5 text-[11px] font-medium text-slate-400 whitespace-nowrap relative">
-                  or
-                </span>
-              </div>
-
-              <button
-                type="button"
-                disabled={isSigningIn}
-                onClick={() => void onGoogleSignIn(selectedPortal)}
-                className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-[#062052] text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <LogIn className="w-4 h-4 text-[#1c46be]" />
-                <span>Continue with Google</span>
               </button>
             </form>
           </div>

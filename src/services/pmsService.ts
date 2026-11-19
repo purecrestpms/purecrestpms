@@ -1375,11 +1375,37 @@ export async function updateRoomStatus(params: {
       ...params.updates,
       updatedAt: serverTimestamp(),
     };
+    if (typeof params.updates.roomNumber === 'string') {
+      payload.roomNumber = (params.updates.roomNumber.trim() || params.room.roomNumber).slice(0, 16);
+    }
+    if (typeof params.updates.name === 'string') {
+      const cleanName = params.updates.name.trim() || params.room.name;
+      payload.name = (cleanName.length >= 2 ? cleanName : `${cleanName} Room`).slice(0, 80);
+    }
+    if (typeof params.updates.roomType === 'string') {
+      const cleanType = params.updates.roomType.trim() || params.room.roomType;
+      payload.roomType = (cleanType.length >= 2 ? cleanType : 'Standard Room').slice(0, 64);
+    }
+    if (typeof params.updates.nightlyRateNgn === 'number') {
+      payload.nightlyRateNgn = Math.max(1000, Math.round(params.updates.nightlyRateNgn));
+    }
+    if (typeof params.updates.maxGuests === 'number') {
+      payload.maxGuests = Math.min(12, Math.max(1, Math.round(params.updates.maxGuests)));
+    }
+    if (typeof params.updates.imageUrl === 'string') {
+      payload.imageUrl = params.updates.imageUrl.trim().slice(0, 350000);
+    }
     if (Array.isArray(params.updates.galleryImages)) {
       payload.galleryImages = params.updates.galleryImages
         .map((u) => (typeof u === 'string' ? u.trim() : ''))
         .filter(Boolean)
         .slice(0, 6);
+    }
+    if (Array.isArray(params.updates.amenities)) {
+      payload.amenities = params.updates.amenities
+        .map((a) => (typeof a === 'string' ? a.trim() : ''))
+        .filter(Boolean)
+        .slice(0, 15);
     }
     await updateDoc(ref, payload);
     const logSummary = Object.entries(params.updates)
@@ -1398,7 +1424,7 @@ export async function updateRoomStatus(params: {
       action: `Updated Room ${params.updates.roomNumber || params.room.roomNumber}`,
       details: logSummary,
       authorizedEmails: params.property.authorizedEmails,
-    });
+    }).catch(() => undefined);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
@@ -2694,20 +2720,150 @@ export async function clockInStaff(params: {
   }
 }
 
+export async function clockInCurrentStaffWorkflow(params: {
+  property: PropertyRecord;
+  staffId?: string;
+  staffName: string;
+  actorRole: string;
+}): Promise<{ id: string; clockInTime: string; date: string }> {
+  const { uid, email } = getActorContext();
+  const id = cleanId('att');
+  const nowDate = new Date();
+  const timeStr = nowDate.toTimeString().slice(0, 5);
+  const dateIso = nowDate.toISOString().slice(0, 10);
+  const resolvedStaffId = (params.staffId || uid).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128) || uid;
+  const resolvedName = (params.staffName.trim() || email || 'Staff Member').slice(0, 120);
+  const safeName = resolvedName.length >= 2 ? resolvedName : `${resolvedName} Staff`;
+  const ref = doc(db, 'properties', params.property.id, 'attendance', id);
+  try {
+    await setDoc(ref, {
+      propertyId: params.property.id,
+      staffId: resolvedStaffId,
+      staffName: safeName,
+      date: dateIso,
+      clockInTime: timeStr,
+      status: 'present',
+      authorizedEmails: params.property.authorizedEmails,
+      ownerUid: uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Shifts & Attendance',
+      action: `Clocked In: ${safeName}`,
+      details: `${dateIso} · Clocked in at ${timeStr}`,
+      authorizedEmails: params.property.authorizedEmails,
+    }).catch(() => undefined);
+    return { id, clockInTime: timeStr, date: dateIso };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, ref.path);
+  }
+}
+
 export async function clockOutAttendance(params: {
   property: PropertyRecord;
   record: AttendanceRecord;
-}) {
+  actorRole?: string;
+}): Promise<string> {
   const ref = doc(db, 'properties', params.property.id, 'attendance', params.record.id);
+  const clockOutTime = new Date().toTimeString().slice(0, 5);
   try {
     await updateDoc(ref, {
-      clockOutTime: new Date().toTimeString().slice(0, 5),
+      clockOutTime,
       status: 'clocked_out',
       updatedAt: serverTimestamp(),
     });
+    if (params.actorRole) {
+      await writeAuditLog({
+        propertyId: params.property.id,
+        actorRole: params.actorRole,
+        module: 'Shifts & Attendance',
+        action: `Clocked Out: ${params.record.staffName}`,
+        details: `${params.record.date} · In: ${params.record.clockInTime} · Out: ${clockOutTime}`,
+        authorizedEmails: params.property.authorizedEmails,
+      }).catch(() => undefined);
+    }
+    return clockOutTime;
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
+}
+
+export async function endStaffShiftWorkflow(params: {
+  property: PropertyRecord;
+  activeAttendance?: AttendanceRecord | null;
+  activeShift?: ShiftScheduleRecord | null;
+  staffId?: string;
+  staffName: string;
+  department: string;
+  handoverNotes: string;
+  actorRole: string;
+}): Promise<{ clockOutTime: string; closedAtIso: string }> {
+  const { uid, email } = getActorContext();
+  const nowDate = new Date();
+  const clockOutTime = nowDate.toTimeString().slice(0, 5);
+  const closedAtIso = nowDate.toISOString();
+  const dateIso = closedAtIso.slice(0, 10);
+  const cleanNotes = params.handoverNotes.trim().slice(0, 400);
+  const safeName = (params.staffName.trim() || email || 'Staff Member').slice(0, 120);
+
+  if (params.activeAttendance && !params.activeAttendance.clockOutTime) {
+    await clockOutAttendance({
+      property: params.property,
+      record: params.activeAttendance,
+    });
+  }
+
+  if (params.activeShift && params.activeShift.status === 'scheduled') {
+    await closeShiftWorkflow({
+      property: params.property,
+      shift: params.activeShift,
+      handoverNotes: cleanNotes,
+      actorRole: params.actorRole,
+    });
+  } else {
+    const hour = nowDate.getHours();
+    const shiftWindow: ShiftScheduleRecord['shiftWindow'] =
+      hour >= 7 && hour < 15
+        ? 'Morning (07:00 - 15:00)'
+        : hour >= 15 && hour < 23
+          ? 'Afternoon (15:00 - 23:00)'
+          : 'Night (23:00 - 07:00)';
+    const id = cleanId('shf');
+    const ref = doc(db, 'properties', params.property.id, 'shifts', id);
+    try {
+      await setDoc(ref, {
+        propertyId: params.property.id,
+        staffId: (params.staffId || uid).slice(0, 128),
+        staffName: safeName.length >= 2 ? safeName : `${safeName} Staff`,
+        department: (params.department || 'Front Desk').slice(0, 64),
+        shiftDate: dateIso,
+        shiftWindow,
+        status: 'completed',
+        handoverNotes: cleanNotes,
+        closedBy: email.slice(0, 120),
+        closedAtIso,
+        authorizedEmails: params.property.authorizedEmails,
+        ownerUid: uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await writeAuditLog({
+        propertyId: params.property.id,
+        actorRole: params.actorRole,
+        module: 'Shifts & Attendance',
+        action: `Ended Shift: ${safeName}`,
+        details: `${dateIso} · ${shiftWindow} · Out: ${clockOutTime}${cleanNotes ? ` · Notes: ${cleanNotes}` : ''}`,
+        authorizedEmails: params.property.authorizedEmails,
+      }).catch(() => undefined);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, ref.path);
+    }
+  }
+
+  return { clockOutTime, closedAtIso };
 }
 
 export async function deleteAttendanceWorkflow(params: {

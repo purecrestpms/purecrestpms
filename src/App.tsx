@@ -2,12 +2,9 @@ import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } f
 import {
   applyActionCode,
   confirmPasswordReset,
-  getRedirectResult,
   onAuthStateChanged,
   sendEmailVerification,
   signInWithEmailAndPassword,
-  signInWithPopup,
-  signInWithRedirect,
   signOut,
   User,
   verifyPasswordResetCode,
@@ -60,7 +57,6 @@ import {
   auth,
   db,
   getPchActionCodeSettings,
-  googleProvider,
   isBootstrappedAdminEmail,
   isFirestoreOfflineError,
   isSafePchRedirectUrl,
@@ -281,9 +277,6 @@ function detectInitialSection(): NavSectionId {
 function formatAuthErrorMessage(err: unknown): string {
   const code = (err as { code?: string })?.code || '';
   const raw = err instanceof Error ? err.message : String(err);
-  if (raw.toLowerCase().includes('redirect_uri_mismatch')) {
-    return 'Google Sign-In redirect URL mismatch. Please refresh the page and try again, or sign in with your email and password.';
-  }
   if (
     code === 'auth/unauthorized-domain' ||
     code === 'auth/unauthorized-continue-uri' ||
@@ -295,26 +288,20 @@ function formatAuthErrorMessage(err: unknown): string {
     return `Domain "${host}" must be added under Authentication → Settings → Authorized domains.`;
   }
   if (code === 'auth/operation-not-allowed') {
-    return 'Email and password sign-in is not currently enabled. Please sign in with Google or contact your administrator.';
+    return 'Email and password sign-in is not currently enabled. Please contact your administrator.';
   }
   if (
     code === 'auth/invalid-credential' ||
     code === 'auth/wrong-password' ||
     code === 'auth/user-not-found'
   ) {
-    return 'Invalid email or password. Use "Forgot password?" to reset it, or click "Continue with Google".';
+    return 'Invalid email or password. Use "Forgot password?" to reset your password.';
   }
   if (code === 'auth/invalid-email') {
     return 'Please enter a valid email address.';
   }
   if (code === 'auth/too-many-requests') {
     return 'Too many login attempts. Please wait a minute or reset your password.';
-  }
-  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-    return 'The sign-in window was closed before completing. Please try again or enter your email and password.';
-  }
-  if (code === 'auth/popup-blocked') {
-    return 'Popup window was blocked by your browser. Please allow popups or enter your email and password.';
   }
   if (code === 'auth/network-request-failed') {
     return 'Network error while signing in. Check your internet connection and try again.';
@@ -604,9 +591,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    void getRedirectResult(auth).catch((err) => {
-      if (active) setAuthError(formatAuthErrorMessage(err));
-    });
     const unsub = onAuthStateChanged(auth, (u) => {
       const finalizeAuth = async () => {
         if (u) {
@@ -715,8 +699,9 @@ export default function App() {
 
   const isPrivilegedAdmin =
     effectiveRole === 'pch_admin' || effectiveRole === 'property_admin';
+  const isStaffViewMode = portalMode === 'staff' || !isPrivilegedAdmin;
 
-  const rawAllowedSections: NavSectionId[] = isPrivilegedAdmin
+  const rawAllowedSections: NavSectionId[] = !isStaffViewMode
     ? Array.from(
         new Set([...baseAllowedSections, 'user_management', 'staff_sessions', 'shift_daily_report'])
       )
@@ -724,9 +709,12 @@ export default function App() {
         new Set([
           'dashboard',
           ...baseAllowedSections.filter(
-            (s) => !ADMIN_ONLY_SECTIONS.includes(s) && s !== 'ota_channels'
+            (s) =>
+              !ADMIN_ONLY_SECTIONS.includes(s) &&
+              s !== 'ota_channels' &&
+              s !== 'reports' &&
+              s !== 'shift_daily_report'
           ),
-          'shift_daily_report',
         ])
       );
 
@@ -832,15 +820,22 @@ export default function App() {
       onSnapshotErr('licenses')
     );
 
-    const unsubAud = onSnapshot(
-      audQuery,
-      (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLogRecord);
-        list.sort((a, b) => b.timestampIso.localeCompare(a.timestampIso));
-        setAuditLogs(list);
-      },
-      onSnapshotErr('audit_logs')
-    );
+    const unsubAud =
+      isAdmin || portalMode === 'pch-admin'
+        ? onSnapshot(
+            audQuery,
+            (snap) => {
+              const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLogRecord);
+              list.sort((a, b) => b.timestampIso.localeCompare(a.timestampIso));
+              setAuditLogs(list);
+            },
+            () => {
+              setAuditLogs([]);
+            }
+          )
+        : () => {
+            setAuditLogs([]);
+          };
 
     const unsubUserProfile = onSnapshot(
       doc(db, 'users', user.uid),
@@ -1185,25 +1180,6 @@ export default function App() {
     }
   };
 
-  const handleGoogleSignIn = async (portal: PortalMode) => {
-    setAuthError(null);
-    setAuthNotice(null);
-    setIsSigningIn(true);
-    try {
-      handlePortalSelection(portal);
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      const code = (err as { code?: string })?.code;
-      if (code === 'auth/popup-blocked') {
-        await signInWithRedirect(auth, googleProvider);
-        return;
-      }
-      setAuthError(formatAuthErrorMessage(err));
-    } finally {
-      setIsSigningIn(false);
-    }
-  };
-
   const handleEmailPasswordSignIn = async (
     portal: PortalMode,
     email: string,
@@ -1213,7 +1189,7 @@ export default function App() {
     setAuthNotice(null);
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password) {
-      setAuthError('Enter both your email and password, or click Continue with Google.');
+      setAuthError('Enter both your email and password to sign in.');
       return;
     }
     setIsSigningIn(true);
@@ -1227,7 +1203,7 @@ export default function App() {
         await sendEmailVerification(cred.user, actionSettings).catch(() => undefined);
         await signOut(auth);
         setAuthNotice(
-          `Please verify your email address (${cred.user.email}). We sent a PCHPMS verification link to your inbox (and spam folder) — click it and sign in again, or use "Continue with Google".`
+          `Please verify your email address (${cred.user.email}). We sent a PCHPMS verification link to your inbox (and spam folder) — click it and sign in again.`
         );
       }
     } catch (err) {
@@ -1439,7 +1415,6 @@ export default function App() {
         tenantSlug={loginTenantSlug}
         tenantPropertyName={activePropertyForRole?.name}
         tenantLogoUrl={activePropertyForRole?.logoUrl}
-        onGoogleSignIn={handleGoogleSignIn}
         onEmailPasswordSignIn={handleEmailPasswordSignIn}
         onPasswordReset={handlePasswordReset}
         authError={authError}
@@ -1930,6 +1905,20 @@ export default function App() {
                   userAccounts={userAccounts}
                   activeLicense={activeLicense}
                   canManageRooms={effectiveRole === 'pch_admin' || effectiveRole === 'property_admin'}
+                  portalMode={portalMode}
+                  activeRole={effectiveRole}
+                  userUid={user.uid}
+                  userEmail={user.email || ''}
+                  userName={
+                    matchedUserAccount?.fullName ||
+                    userProfile?.displayName ||
+                    user.displayName ||
+                    'Property Operator'
+                  }
+                  staffMembers={staffMembers}
+                  staffSessions={staffSessions}
+                  shifts={shifts}
+                  attendance={attendance}
                   allowedSections={effectiveAllowedSections}
                   housekeepingTasks={housekeepingTasks}
                   actorRole={ROLE_LABELS[effectiveRole]}

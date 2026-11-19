@@ -23,6 +23,7 @@ import {
   formatNgn,
   getRoomSection,
   GuestRecord,
+  PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
   ReservationRecord,
@@ -37,6 +38,7 @@ import {
 } from '../utils/availability';
 import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
+import { CountrySelect } from './CountrySelect';
 import { useCms } from '../context/CmsContext';
 
 interface ReservationsCalendarViewProps {
@@ -117,6 +119,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const [guestFirstName, setGuestFirstName] = useState('');
   const [guestLastName, setGuestLastName] = useState('');
   const [guestPhone, setGuestPhone] = useState('+234 803 ');
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestAddress, setGuestAddress] = useState('');
+  const [guestCity, setGuestCity] = useState('');
+  const [guestState, setGuestState] = useState('');
+  const [guestCountry, setGuestCountry] = useState('Nigeria');
   const [bookCheckIn, setBookCheckIn] = useState(todayIso);
   const [bookCheckOut, setBookCheckOut] = useState(tomorrowIso);
   const [adults, setAdults] = useState(1);
@@ -124,7 +131,12 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const [channel, setChannel] = useState<ReservationRecord['channel']>('Website');
   const [paymentMethod, setPaymentMethod] =
     useState<ReservationRecord['paymentMethod']>('Bank Transfer');
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatusLabel>('Paid');
   const [depositNgn, setDepositNgn] = useState(0);
+  const [cautionEnabled, setCautionEnabled] = useState(false);
+  const [cautionFeeNgn, setCautionFeeNgn] = useState(20000);
+  const [cautionCollectedNgn, setCautionCollectedNgn] = useState(0);
+  const [cautionRefunded, setCautionRefunded] = useState(false);
   const [immediateCheckIn, setImmediateCheckIn] = useState(false);
   const [quickIdType, setQuickIdType] = useState<GuestRecord['idType']>('NIN');
   const [quickIdNumber, setQuickIdNumber] = useState('');
@@ -259,7 +271,12 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setBookCheckOut(eDate);
       setAdults(1);
       setChildrenCount(0);
-      setDepositNgn(chosenRoom.nightlyRateNgn);
+      setDepositNgn(chosenRoom.nightlyRateNgn * diffNights(sDate, eDate));
+      setPaymentStatus('Paid');
+      setCautionEnabled(false);
+      setCautionFeeNgn(20000);
+      setCautionCollectedNgn(0);
+      setCautionRefunded(false);
       setImmediateCheckIn(sDate <= todayIso);
       setQuickIdNumber('');
       setQuickPayConfirmed(false);
@@ -337,6 +354,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         room,
         guestName: trimmedGuest,
         guestPhone: guestPhone.trim(),
+        guestEmail: guestEmail.trim(),
+        guestAddress: guestAddress.trim(),
+        guestCity: guestCity.trim(),
+        guestState: guestState.trim(),
+        guestCountry: guestCountry.trim() || 'Nigeria',
         guestIdType: quickIdType,
         guestIdNumber: quickIdNumber.trim(),
         checkInDate: bookCheckIn,
@@ -347,7 +369,13 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         children: Math.max(0, childrenCount),
         channel,
         paymentMethod,
+        paymentStatus,
         depositNgn: Math.max(0, depositNgn),
+        hotelPaidNgn: Math.max(0, depositNgn),
+        cautionDepositEnabled: cautionEnabled,
+        cautionDepositNgn: cautionEnabled ? Math.max(0, cautionFeeNgn) : 0,
+        cautionDepositCollectedNgn: cautionEnabled ? Math.max(0, cautionCollectedNgn) : 0,
+        cautionDepositRefunded: cautionEnabled ? cautionRefunded : false,
         immediateCheckIn,
         paymentConfirmed: immediateCheckIn ? quickPayConfirmed : false,
         idVerified: immediateCheckIn ? quickIdVerified : false,
@@ -368,6 +396,14 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setModalMode('none');
       setGuestFirstName('');
       setGuestLastName('');
+      setGuestEmail('');
+      setGuestAddress('');
+      setGuestCity('');
+      setGuestState('');
+      setGuestCountry('Nigeria');
+      setCautionEnabled(false);
+      setCautionCollectedNgn(0);
+      setCautionRefunded(false);
       setQuickIdNumber('');
       setQuickKeyIssued(null);
     } catch (err) {
@@ -947,8 +983,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
 
       {/* Block / Book Modal */}
       {modalMode !== 'none' && (
-        <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-6 space-y-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <button
@@ -1161,36 +1197,98 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   compact
                 />
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Guest First Name *</label>
-                    <input
-                      type="text"
-                      required
-                      value={guestFirstName}
-                      onChange={(e) => setGuestFirstName(e.target.value)}
-                      className="w-full h-10 border border-slate-200 rounded-lg px-3"
-                    />
+                <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 space-y-3">
+                  <p className="font-display text-[11px] font-bold uppercase tracking-wider text-[#061539]">
+                    Guest Details &amp; Address
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Guest First Name *</label>
+                      <input
+                        type="text"
+                        required
+                        value={guestFirstName}
+                        onChange={(e) => setGuestFirstName(e.target.value)}
+                        placeholder="First name"
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Guest Last Name *</label>
+                      <input
+                        type="text"
+                        required
+                        value={guestLastName}
+                        onChange={(e) => setGuestLastName(e.target.value)}
+                        placeholder="Last name"
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Phone *</label>
+                      <input
+                        type="text"
+                        required
+                        value={guestPhone}
+                        onChange={(e) => setGuestPhone(e.target.value)}
+                        placeholder="+234 800 000 0000"
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 font-mono-tabular"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Guest Last Name *</label>
-                    <input
-                      type="text"
-                      required
-                      value={guestLastName}
-                      onChange={(e) => setGuestLastName(e.target.value)}
-                      className="w-full h-10 border border-slate-200 rounded-lg px-3"
-                    />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Guest Email</label>
+                      <input
+                        type="email"
+                        value={guestEmail}
+                        onChange={(e) => setGuestEmail(e.target.value)}
+                        placeholder="guest@example.com"
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Street Address</label>
+                      <input
+                        type="text"
+                        value={guestAddress}
+                        onChange={(e) => setGuestAddress(e.target.value)}
+                        placeholder="House / Street / Estate"
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Phone *</label>
-                    <input
-                      type="text"
-                      required
-                      value={guestPhone}
-                      onChange={(e) => setGuestPhone(e.target.value)}
-                      className="w-full h-10 border border-slate-200 rounded-lg px-3"
-                    />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">City</label>
+                      <input
+                        type="text"
+                        value={guestCity}
+                        onChange={(e) => setGuestCity(e.target.value)}
+                        placeholder="e.g. Enugu"
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">State</label>
+                      <input
+                        type="text"
+                        value={guestState}
+                        onChange={(e) => setGuestState(e.target.value)}
+                        placeholder="State"
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Country</label>
+                      <CountrySelect
+                        value={guestCountry}
+                        onChange={setGuestCountry}
+                        placeholder="Search country..."
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1200,7 +1298,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     <select
                       value={channel}
                       onChange={(e) => setChannel(e.target.value as ReservationRecord['channel'])}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2.5 bg-white"
                     >
                       {PRIMARY_BOOKING_SOURCES.map((src) => (
                         <option key={src.value} value={src.value}>
@@ -1210,14 +1308,14 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     </select>
                   </div>
                   <div>
-                    <label className="block font-medium text-slate-700 mb-1">Deposit (₦)</label>
+                    <label className="block font-medium text-slate-700 mb-1">Payment Amount (₦)</label>
                     <input
                       type="number"
                       min={0}
                       step={500}
                       value={depositNgn}
                       onChange={(e) => setDepositNgn(Number(e.target.value))}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2.5 font-mono-tabular"
                     />
                   </div>
                   <div>
@@ -1227,7 +1325,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       min={1}
                       value={adults}
                       onChange={(e) => setAdults(Number(e.target.value))}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2.5 font-mono-tabular"
                     />
                   </div>
                   <div>
@@ -1237,12 +1335,12 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       min={0}
                       value={childrenCount}
                       onChange={(e) => setChildrenCount(Math.max(0, Number(e.target.value)))}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2.5 font-mono-tabular"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 items-center">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                   <div>
                     <label className="block font-medium text-slate-700 mb-1">Payment Method</label>
                     <select
@@ -1250,16 +1348,33 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       onChange={(e) =>
                         setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
                       }
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2.5 bg-white"
                     >
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="Card POS">Card POS</option>
                       <option value="Cash NGN">Cash NGN</option>
-                      <option value="Corporate Invoice">Corporate Invoice</option>
                       <option value="Online Gateway">Online Gateway</option>
+                      <option value="Corporate Invoice">Corporate Invoice</option>
+                      <option value="OTA Platform Payout">OTA Platform Payout</option>
                     </select>
                   </div>
-                  <label className="inline-flex items-center gap-2 text-slate-700 pt-4 cursor-pointer">
+                  <div>
+                    <label className="block font-medium text-slate-700 mb-1">Payment Status</label>
+                    <select
+                      value={paymentStatus}
+                      onChange={(e) => {
+                        const next = e.target.value as PaymentStatusLabel;
+                        setPaymentStatus(next);
+                        if (next === 'Unpaid') setDepositNgn(0);
+                      }}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2.5 bg-white font-semibold"
+                    >
+                      <option value="Paid">Paid</option>
+                      <option value="Partial">Partial</option>
+                      <option value="Unpaid">Unpaid</option>
+                    </select>
+                  </div>
+                  <label className="h-10 inline-flex items-center gap-2 px-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 font-medium cursor-pointer">
                     <input
                       type="checkbox"
                       checked={immediateCheckIn}
@@ -1268,6 +1383,59 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     />
                     <span>Check in guest immediately</span>
                   </label>
+                </div>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 space-y-2.5">
+                  <label className="inline-flex items-center gap-2 font-semibold text-amber-950 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={cautionEnabled}
+                      onChange={(e) => setCautionEnabled(e.target.checked)}
+                      className="rounded border-amber-400 text-emerald-600"
+                    />
+                    <span>Optional Refundable Caution / Deposit Fee</span>
+                  </label>
+                  {cautionEnabled && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                          Caution Fee (₦)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1000}
+                          value={cautionFeeNgn}
+                          onChange={(e) => setCautionFeeNgn(Math.max(0, Number(e.target.value)))}
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 font-mono-tabular"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                          Amount Collected (₦)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1000}
+                          value={cautionCollectedNgn}
+                          onChange={(e) =>
+                            setCautionCollectedNgn(Math.max(0, Number(e.target.value)))
+                          }
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 font-mono-tabular"
+                        />
+                      </div>
+                      <label className="h-10 inline-flex items-center gap-2 px-3 rounded-lg bg-white border border-amber-300 font-medium text-amber-950 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={cautionRefunded}
+                          onChange={(e) => setCautionRefunded(e.target.checked)}
+                          className="rounded border-amber-400 text-emerald-600"
+                        />
+                        <span>Refunded</span>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {immediateCheckIn && (

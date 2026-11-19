@@ -7418,6 +7418,36 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           placeholder="Search country..."
                         />
                       </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Guest ID Type
+                        </label>
+                        <select
+                          value={inlineIdType}
+                          onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                        >
+                          <option value="NIN">NIN</option>
+                          <option value="International Passport">International Passport</option>
+                          <option value="Driver License">Driver License</option>
+                          <option value="Voter Card">Voter Card</option>
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-1 lg:col-span-3">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Guest ID / Passport Number {immediateCheckIn ? '*' : '(Optional)'}
+                        </label>
+                        <input
+                          type="text"
+                          required={immediateCheckIn}
+                          value={inlineIdNumber}
+                          onChange={(e) => setInlineIdNumber(e.target.value)}
+                          placeholder="Enter NIN / International Passport / Driver License No."
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -7793,17 +7823,128 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     )}
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-                    <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={immediateCheckIn}
-                        onChange={(e) => setImmediateCheckIn(e.target.checked)}
-                        className="rounded border-slate-300 text-emerald-600"
-                      />
-                      <span>Immediate Front Desk Check-In (requires verification steps)</span>
-                    </label>
+                  {/* SECTION 5: IMMEDIATE CHECK-IN & MANDATORY VERIFICATION */}
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <label className="inline-flex items-center gap-2 font-bold text-slate-900 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={immediateCheckIn}
+                          onChange={(e) => setImmediateCheckIn(e.target.checked)}
+                          className="rounded border-slate-300 text-emerald-600"
+                        />
+                        <span>5. Check in guest immediately</span>
+                      </label>
+                      {immediateCheckIn && !selectedRoomId && (
+                        <span className="text-[11px] font-semibold text-amber-800">
+                          Assign a specific room above to enable immediate check-in.
+                        </span>
+                      )}
+                    </div>
 
+                    {immediateCheckIn && (
+                      <div className="space-y-3 pt-2 border-t border-emerald-200/70">
+                        <p className="font-bold text-slate-900">
+                          Mandatory Check-In Verification
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                              Guest ID Type
+                            </label>
+                            <select
+                              value={inlineIdType}
+                              onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
+                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                            >
+                              <option value="NIN">NIN</option>
+                              <option value="International Passport">International Passport</option>
+                              <option value="Driver License">Driver License</option>
+                              <option value="Voter Card">Voter Card</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                              ID Number *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={inlineIdNumber}
+                              onChange={(e) => setInlineIdNumber(e.target.value)}
+                              placeholder="ID / Passport No."
+                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-mono-tabular"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={inlinePayConfirmed}
+                              onChange={(e) => setInlinePayConfirmed(e.target.checked)}
+                            />
+                            <span>1. Payment confirmed (deposit/transfer verified)</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={inlineIdVerified}
+                              onChange={(e) => setInlineIdVerified(e.target.checked)}
+                            />
+                            <span>2. Guest government ID inspected &amp; verified</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={inlineRoomReady}
+                              onChange={(e) => setInlineRoomReady(e.target.checked)}
+                            />
+                            <span>3. Room inspected ready for guest</span>
+                          </label>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
+                          <span className="font-semibold text-slate-800">4. Key Issued? *</span>
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setInlineKeyIssued('yes')}
+                              className={`h-8 px-3.5 rounded font-semibold border cursor-pointer ${
+                                inlineKeyIssued === 'yes'
+                                  ? 'bg-emerald-600 border-emerald-600 text-white'
+                                  : 'bg-white border-slate-200 text-slate-700'
+                              }`}
+                            >
+                              Yes
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setInlineKeyIssued('no')}
+                              className={`h-8 px-3.5 rounded font-semibold border cursor-pointer ${
+                                inlineKeyIssued === 'no'
+                                  ? 'bg-rose-600 border-rose-600 text-white'
+                                  : 'bg-white border-slate-200 text-slate-700'
+                              }`}
+                            >
+                              No
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action Footer */}
+                  <div className="flex flex-wrap items-center justify-end gap-3 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowBookingForm(false)}
+                      className="h-10 px-4 text-xs font-semibold text-slate-600 hover:text-slate-900 rounded-lg border border-slate-200 bg-white cursor-pointer"
+                    >
+                      Cancel
+                    </button>
                     <button
                       type="submit"
                       disabled={
@@ -7822,7 +7963,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           blockedDates,
                         }).available ||
                         (immediateCheckIn &&
-                          (!inlinePayConfirmed ||
+                          (!selectedRoomId ||
+                            !inlinePayConfirmed ||
                             !inlineIdVerified ||
                             inlineIdNumber.trim().length < 3 ||
                             inlineKeyIssued !== 'yes' ||
@@ -7833,101 +7975,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       {busyId === 'booking'
                         ? 'Saving...'
                         : immediateCheckIn
-                          ? 'Verify & Check In Guest'
-                          : 'Save Reservation'}
+                          ? `Verify & Check In (${safeNights} ${safeNights === 1 ? 'night' : 'nights'})`
+                          : `Confirm Reservation (${safeNights} ${safeNights === 1 ? 'night' : 'nights'})`}
                     </button>
                   </div>
-
-                  {immediateCheckIn && (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
-                      <p className="font-bold text-slate-900">
-                        Mandatory Check-In Process (Required for Immediate Check-In)
-                      </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Guest ID Type
-                          </label>
-                          <select
-                            value={inlineIdType}
-                            onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
-                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                          >
-                            <option value="NIN">NIN</option>
-                            <option value="International Passport">International Passport</option>
-                            <option value="Driver License">Driver License</option>
-                            <option value="Voter Card">Voter Card</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Guest ID Number *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            value={inlineIdNumber}
-                            onChange={(e) => setInlineIdNumber(e.target.value)}
-                            placeholder="Enter NIN / Passport / License No."
-                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-mono-tabular"
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                        <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={inlinePayConfirmed}
-                            onChange={(e) => setInlinePayConfirmed(e.target.checked)}
-                          />
-                          <span>1. Payment Confirmed</span>
-                        </label>
-                        <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={inlineIdVerified}
-                            onChange={(e) => setInlineIdVerified(e.target.checked)}
-                          />
-                          <span>2. Guest ID Verified</span>
-                        </label>
-                        <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={inlineRoomReady}
-                            onChange={(e) => setInlineRoomReady(e.target.checked)}
-                          />
-                          <span>3. Room Inspected Ready</span>
-                        </label>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
-                        <span className="font-semibold text-slate-800">4. Key Issued? *</span>
-                        <div className="inline-flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setInlineKeyIssued('yes')}
-                            className={`h-8 px-3 rounded font-semibold border cursor-pointer ${
-                              inlineKeyIssued === 'yes'
-                                ? 'bg-emerald-600 border-emerald-600 text-white'
-                                : 'bg-white border-slate-200 text-slate-700'
-                            }`}
-                          >
-                            Yes
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setInlineKeyIssued('no')}
-                            className={`h-8 px-3 rounded font-semibold border cursor-pointer ${
-                              inlineKeyIssued === 'no'
-                                ? 'bg-rose-600 border-rose-600 text-white'
-                                : 'bg-white border-slate-200 text-slate-700'
-                            }`}
-                          >
-                            No
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </form>
               );
             })()

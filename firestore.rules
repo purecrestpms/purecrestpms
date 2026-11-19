@@ -766,17 +766,21 @@ service cloud.firestore {
       // Subcollection: Rooms
       match /rooms/{roomId} {
         allow get: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId);
-        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
-        allow create: if isValidId(propertyId) && isValidId(roomId) && isPropertyAdmin(propertyId) &&
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
+        allow create: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId) &&
           isValidRoom(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
         allow update: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId) &&
           isValidRoom(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isPropertyAdmin(propertyId) ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['occupancyStatus', 'housekeepingStatus', 'currentGuestName', 'currentReservationId', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'roomNumber', 'name', 'roomType', 'section', 'floor', 'nightlyRateNgn', 'maxGuests',
+              'occupancyStatus', 'housekeepingStatus', 'currentGuestName', 'currentReservationId',
+              'imageUrl', 'galleryImages', 'amenities', 'authorizedEmails', 'updatedAt'
+            ])
           );
-        allow delete: if isValidId(propertyId) && isValidId(roomId) && isPropertyAdmin(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(roomId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Guests
@@ -1122,7 +1126,7 @@ service cloud.firestore {
     // Root collection: Append-Only Audit Logs
     match /audit_logs/{logId} {
       allow get: if isValidId(logId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
-      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
       allow create: if isValidId(logId) && isVerifiedUser() && isValidAuditLog(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time;
       allow update: if false;

@@ -2768,7 +2768,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
               <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
                 <UserPlus className="w-4 h-4 text-emerald-700" />
                 <h2 className="font-display text-sm font-bold text-slate-900">
-                  Authorize Google Account for {property.name}
+                  Authorize User Account for {property.name}
                 </h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -2793,7 +2793,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Google Email</label>
+                  <label className="block font-medium text-slate-700 mb-1">Account Email *</label>
                   <input
                     required
                     type="email"
