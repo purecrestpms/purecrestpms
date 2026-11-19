@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import {
+  ArrowRight,
   Building2,
   Calendar,
   Check,
+  ChevronDown,
+  ChevronUp,
   CloudUpload,
   Copy,
   Download,
@@ -14,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   Shield,
+  SlidersHorizontal,
   Trash2,
   Upload,
   UserPlus,
@@ -96,6 +100,7 @@ interface AdminLicensingViewProps {
   activeRole: StaffRole;
   onSelectProperty: (id: string) => void;
   onSwitchPortal: (portal: PortalMode) => void;
+  onNavigate?: (section: NavSectionId) => void;
   onNotify: (msg: string) => void;
 }
 
@@ -121,6 +126,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   activeRole,
   onSelectProperty,
   onSwitchPortal,
+  onNavigate,
   onNotify,
 }) => {
   const { cms } = useCms();
@@ -464,15 +470,38 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [togglingChannelId, setTogglingChannelId] = useState<string | null>(null);
   const [syncingAllChannels, setSyncingAllChannels] = useState(false);
 
+  // Channel Manager clean tabbed workspace state
+  const [otaSubTab, setOtaSubTab] = useState<'channels' | 'csv' | 'ledger'>('channels');
+  const [expandedChannelId, setExpandedChannelId] = useState<string | null>(null);
+  const [lastCsvImportSummary, setLastCsvImportSummary] = useState<{
+    channel: string;
+    created: number;
+    updated: number;
+    skipped: number;
+  } | null>(null);
+
   // Channel Manager CSV Import state
-  const [showCsvImportPanel, setShowCsvImportPanel] = useState(false);
   const [csvChannelName, setCsvChannelName] =
-    useState<OtaIntegrationRecord['channelName']>('Airbnb');
+    useState<OtaIntegrationRecord['channelName']>('Booking.com');
   const [csvDefaultCurrency, setCsvDefaultCurrency] = useState<ChannelCurrency>('USD');
   const [csvFileName, setCsvFileName] = useState('');
   const [csvParsedRows, setCsvParsedRows] = useState<ParsedOtaCsvRow[]>([]);
   const [csvWarnings, setCsvWarnings] = useState<string[]>([]);
   const [csvImporting, setCsvImporting] = useState(false);
+
+  const formatChannelError = (err: unknown, fallback: string): string => {
+    if (!(err instanceof Error)) return fallback;
+    try {
+      const parsed = JSON.parse(err.message) as { error?: string };
+      if (parsed && typeof parsed.error === 'string') return parsed.error;
+    } catch {
+      // Plain error message
+    }
+    return err.message || fallback;
+  };
+
+  const getDisplayChannelName = (name: string) =>
+    name === 'Hotels.ng' ? 'Booking.com' : name;
 
   const normalizeChannelRoom = (room?: string) => {
     const raw = (room || '').trim();
@@ -564,6 +593,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   };
 
   const handleToggleChannelConnection = async (channel: OtaIntegrationRecord) => {
+    const label = getDisplayChannelName(channel.channelName);
     setTogglingChannelId(channel.id);
     try {
       const result = await syncOtaChannelWorkflow({
@@ -575,15 +605,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       const isNowConnected = result.connected ?? !channel.connected;
       onNotify(
         isNowConnected
-          ? `${channel.channelName} reconnected and ready to sync.`
-          : `${channel.channelName} disconnected permanently. It will remain disconnected until you manually reconnect it.`
+          ? `${label} connected and ready to sync.`
+          : `${label} disconnected. It will remain disconnected until you manually reconnect it.`
       );
     } catch (err) {
-      onNotify(
-        err instanceof Error
-          ? err.message
-          : `Failed updating connection status for ${channel.channelName}`
-      );
+      onNotify(formatChannelError(err, `Failed updating connection status for ${label}`));
     } finally {
       setTogglingChannelId(null);
     }
@@ -593,8 +619,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     channel: OtaIntegrationRecord,
     icsRawText?: string
   ) => {
+    const label = getDisplayChannelName(channel.channelName);
     if (!channel.connected) {
-      onNotify(`${channel.channelName} is disconnected. Reconnect it manually before syncing.`);
+      onNotify(`${label} is disconnected. Click Connect before syncing.`);
       return;
     }
     setSyncingChannelId(channel.id);
@@ -609,12 +636,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         actorRole: ROLE_LABELS[activeRole],
       });
       onNotify(
-        `${effectiveChannel.channelName}: ${result.created} new, ${result.updated} updated, ${result.cancelled} cancelled, ${result.skipped} unchanged`
+        `${label}: ${result.created} new, ${result.updated} updated, ${result.cancelled} cancelled, ${result.skipped} unchanged`
       );
     } catch (err) {
-      onNotify(
-        err instanceof Error ? err.message : `Failed syncing ${channel.channelName}`
-      );
+      onNotify(formatChannelError(err, `Failed syncing ${label}`));
     } finally {
       setSyncingChannelId(null);
     }
@@ -636,6 +661,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
   const handleCsvFileSelected = (file: File) => {
     setCsvFileName(file.name);
+    setLastCsvImportSummary(null);
     const reader = new FileReader();
     reader.onload = () => {
       const text = typeof reader.result === 'string' ? reader.result : '';
@@ -669,15 +695,20 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         otaChannels,
         actorRole: ROLE_LABELS[activeRole],
       });
+      setLastCsvImportSummary({
+        channel: csvChannelName,
+        created: res.created,
+        updated: res.updated,
+        skipped: res.skipped,
+      });
       onNotify(
-        `${csvChannelName} CSV imported: ${res.created} new, ${res.updated} updated, ${res.skipped} skipped`
+        `Saved ${res.created} new & ${res.updated} updated ${csvChannelName} reservation(s) to Reservations`
       );
       setCsvParsedRows([]);
       setCsvWarnings([]);
       setCsvFileName('');
-      setShowCsvImportPanel(false);
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : `Failed importing ${csvChannelName} CSV`);
+      onNotify(formatChannelError(err, `Failed importing ${csvChannelName} CSV`));
     } finally {
       setCsvImporting(false);
     }
@@ -818,28 +849,23 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setShowCsvImportPanel((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>Import CSV</span>
-            </button>
-            <button
-              type="button"
               disabled={syncingAllChannels}
               onClick={() => void handleSyncAllChannels()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncingAllChannels ? 'animate-spin' : ''}`} />
-              <span>{syncingAllChannels ? 'Syncing OTAs...' : 'Sync All Connected'}</span>
+              <span>{syncingAllChannels ? 'Syncing...' : 'Sync Connected'}</span>
             </button>
             <button
               type="button"
-              onClick={() => setShowChannelForm((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              onClick={() => {
+                setOtaSubTab('channels');
+                setShowChannelForm((v) => !v);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-[#061539] hover:bg-[#0d245d] text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>{cms.pages.ota_channels.ctaLabel || 'Add Channel / iCal Link'}</span>
+              <span>Add Channel</span>
             </button>
           </div>
         )}
@@ -857,946 +883,1117 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       </div>
 
       {/* SECTION: CHANNEL MANAGER & iCAL LINKS */}
-      {section === 'ota_channels' && (
-        <div className="space-y-6">
-          {/* Add New Channel + iCal Link Form */}
-          {showChannelForm && (
-            <form
-              onSubmit={handleCreateChannel}
-              className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 text-xs"
-            >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  Add Channel to Channel Manager (Inbound iCal .ics)
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setShowChannelForm(false)}
-                  className="text-slate-500 hover:text-slate-800"
-                >
-                  Cancel
-                </button>
-              </div>
+      {section === 'ota_channels' &&
+        (() => {
+          const connectedCount = otaChannels.filter((c) => c.connected).length;
+          const otaBookings = reservations
+            .filter((r) => isOtaBookingChannel(r.channel))
+            .sort((a, b) => b.checkInDate.localeCompare(a.checkInDate));
+          const usdOtaPaidTotal = otaBookings.reduce((sum, r) => {
+            const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+            return p.sourceCurrency === 'USD' ? sum + p.otaPaidSourceAmount : sum;
+          }, 0);
+          const expectedNgnTotal = otaBookings.reduce((sum, r) => {
+            const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+            return sum + p.expectedPayoutNgn;
+          }, 0);
+          const needsUsdResync = otaBookings.some((r) => {
+            const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+            const chDefault = getDefaultOtaChannelCurrency(r.channel);
+            return chDefault !== 'NGN' && p.sourceCurrency === 'NGN';
+          });
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Channel Platform</label>
-                  <select
-                    value={newChannelName}
-                    onChange={(e) => {
-                      const val = e.target.value as OtaIntegrationRecord['channelName'];
-                      setNewChannelName(val);
-                      if (val === 'Direct Website Engine' || val === 'Hotels.ng') {
-                        setNewDefaultCurrency('NGN');
-                      } else if (val === 'Airbnb' || val === 'Booking.com' || val === 'Expedia' || val === 'VRBO') {
-                        setNewDefaultCurrency('USD');
-                      }
-                    }}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="Airbnb">Airbnb</option>
-                    <option value="Booking.com">Booking.com</option>
-                    <option value="VRBO">VRBO</option>
-                    <option value="Hotels.ng">Hotels.ng</option>
-                    <option value="Expedia">Expedia</option>
-                    <option value="Custom iCal">Custom iCal</option>
-                    <option value="Direct Website Engine">Direct Website Engine</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Room Mapping</label>
-                  <select
-                    value={newChannelSuite}
-                    onChange={(e) => setNewChannelSuite(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="All Rooms">All Rooms (Property-wide)</option>
-                    {sortedRooms.map((r) => (
-                      <option key={r.id} value={r.roomNumber}>
-                        {r.roomNumber} · {r.roomType}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Property Listing ID</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. BKG-ENUGU-88412"
-                    value={newListingId}
-                    onChange={(e) => setNewListingId(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Inbound iCal URL (.ics)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="https://... or webcal://..."
-                    value={newIcalUrl}
-                    onChange={(e) => setNewIcalUrl(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Channel Booking Currency
-                  </label>
-                  <select
-                    value={newDefaultCurrency}
-                    onChange={(e) => setNewDefaultCurrency(e.target.value as ChannelCurrency)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-semibold"
-                  >
-                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                      <option key={cur} value={cur}>
-                        {cur}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Channel Nightly Rate ({newDefaultCurrency})
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="e.g. 200.00 (optional fallback)"
-                    value={newDefaultNightlyRate}
-                    onChange={(e) => setNewDefaultNightlyRate(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 font-mono-tabular"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Payment Collection Mode
-                  </label>
-                  <select
-                    value={newCollectionMode}
-                    onChange={(e) =>
-                      setNewCollectionMode(e.target.value as OtaPaymentCollectionMode)
-                    }
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white"
-                  >
-                    <option value="ota_prepaid">Guest Paid to OTA (Prepaid)</option>
-                    <option value="hotel_collect">Pay at Property (Hotel Collect)</option>
-                  </select>
-                </div>
-
-                <div className="flex items-end pb-1">
-                  <p className="text-[11px] text-slate-500 leading-snug">
-                    Paid amounts in iCal events (e.g. <span className="font-mono-tabular font-semibold">200 USD</span>) are stored verbatim in original currency without converting to ₦.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
-                <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newAutoSync}
-                    onChange={(e) => setNewAutoSync(e.target.checked)}
-                  />
-                  <span>Enable two-way calendar sync (.ics dates, guest &amp; exact OTA currency capture)</span>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
-                >
-                  Save Channel &amp; Connect iCal
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Import OTA Reservations CSV Panel */}
-          {showCsvImportPanel && (
-            <div className="bg-white border border-blue-200 rounded-xl p-5 space-y-4 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="w-4 h-4 text-blue-700" />
+          return (
+            <div className="space-y-5">
+              {/* Calm Summary Strip & Clean Segmented Tabs */}
+              <div className="bg-white border border-slate-200 rounded-xl px-5 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
                   <div>
-                    <h2 className="font-display text-sm font-bold text-slate-900">
-                      Import OTA Reservations via CSV (Airbnb, Booking.com, Expedia, VRBO)
-                    </h2>
-                    <p className="text-[11px] text-slate-500">
-                      Captures exact guest-paid amount in original USD/currency and converts to Naira at 1 USD = ₦{(property.usdExchangeRateNgn || 1600).toLocaleString()}.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadCsvTemplate}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-lg font-medium cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Download CSV Template</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowCsvImportPanel(false)}
-                    className="p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer"
-                    aria-label="Close CSV import"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">OTA Platform</label>
-                  <select
-                    value={csvChannelName}
-                    onChange={(e) => {
-                      const val = e.target.value as OtaIntegrationRecord['channelName'];
-                      setCsvChannelName(val);
-                      setCsvDefaultCurrency(getDefaultOtaChannelCurrency(val));
-                    }}
-                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
-                  >
-                    <option value="Airbnb">Airbnb</option>
-                    <option value="Booking.com">Booking.com</option>
-                    <option value="VRBO">VRBO</option>
-                    <option value="Expedia">Expedia</option>
-                    <option value="Hotels.ng">Hotels.ng</option>
-                    <option value="Custom iCal">Custom iCal</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Default Currency (if CSV omits Currency column)
-                  </label>
-                  <select
-                    value={csvDefaultCurrency}
-                    onChange={(e) => setCsvDefaultCurrency(e.target.value as ChannelCurrency)}
-                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white font-semibold"
-                  >
-                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                      <option key={cur} value={cur}>
-                        {cur}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Select CSV File</label>
-                  <label className="flex items-center justify-center gap-2 h-10 px-3 border border-dashed border-blue-300 bg-blue-50/60 hover:bg-blue-50 text-blue-900 rounded-lg font-semibold cursor-pointer">
-                    <Upload className="w-3.5 h-3.5" />
-                    <span className="truncate">
-                      {csvFileName || 'Choose .csv export file'}
+                    <span className="text-slate-500 block text-[11px]">Connected Channels</span>
+                    <span className="font-mono-tabular text-sm font-bold text-slate-900">
+                      {connectedCount}{' '}
+                      <span className="font-normal text-slate-400">/ {otaChannels.length}</span>
                     </span>
-                    <input
-                      type="file"
-                      accept=".csv,text/csv"
-                      className="sr-only"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleCsvFileSelected(file);
-                        e.target.value = '';
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-
-              {csvWarnings.length > 0 && (
-                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] space-y-0.5">
-                  {csvWarnings.slice(0, 4).map((w, idx) => (
-                    <p key={idx}>• {w}</p>
-                  ))}
-                </div>
-              )}
-
-              {csvParsedRows.length > 0 && (
-                <div className="space-y-3">
-                  <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                    <table className="w-full text-left border-collapse text-xs min-w-[760px]">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                          <th className="py-2 px-3">Ref &amp; Guest</th>
-                          <th className="py-2 px-3">Stay Dates</th>
-                          <th className="py-2 px-3">Room Hint</th>
-                          <th className="py-2 px-3 text-right">OTA Paid (Exact)</th>
-                          <th className="py-2 px-3 text-right">Converted (₦)</th>
-                          <th className="py-2 px-3 text-right">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {csvParsedRows.slice(0, 12).map((row) => {
-                          const fx = getFxRateToNgn(row.currency, property.usdExchangeRateNgn);
-                          const paidOrig = row.otaPaidSourceAmount ?? row.sourceTotalAmount ?? 0;
-                          const paidNgn =
-                            row.currency === 'NGN' ? Math.round(paidOrig) : Math.round(paidOrig * fx);
-                          return (
-                            <tr key={`${row.rowNumber}-${row.externalRef}`}>
-                              <td className="py-2 px-3">
-                                <p className="font-semibold text-slate-900">{row.guestName}</p>
-                                <p className="font-mono-tabular text-[11px] text-slate-500">
-                                  {row.externalRef}
-                                </p>
-                              </td>
-                              <td className="py-2 px-3 font-mono-tabular text-slate-700 whitespace-nowrap">
-                                {row.checkInDate} → {row.checkOutDate} ({row.nights}n)
-                              </td>
-                              <td className="py-2 px-3 text-slate-700">
-                                {row.roomHint || 'Auto-assign'}
-                              </td>
-                              <td className="py-2 px-3 text-right font-mono-tabular font-bold text-blue-800 whitespace-nowrap">
-                                {formatChannelCurrency(paidOrig, row.currency)} {row.currency}
-                              </td>
-                              <td className="py-2 px-3 text-right font-mono-tabular font-semibold text-emerald-700 whitespace-nowrap">
-                                {formatNgn(paidNgn)}
-                              </td>
-                              <td className="py-2 px-3 text-right capitalize text-slate-700">
-                                {row.status}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
                   </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-[11px] text-slate-600">
-                      Ready to import <span className="font-bold text-slate-900">{csvParsedRows.length}</span>{' '}
-                      reservation(s) into <span className="font-semibold">{csvChannelName}</span>.
-                      {csvParsedRows.length > 12 ? ' (Showing first 12 rows in preview)' : ''}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCsvParsedRows([]);
-                          setCsvWarnings([]);
-                          setCsvFileName('');
-                        }}
-                        className="px-3 py-2 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
-                      >
-                        Clear
-                      </button>
-                      <button
-                        type="button"
-                        disabled={csvImporting}
-                        onClick={() => void handleConfirmCsvImport()}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
-                      >
-                        {csvImporting
-                          ? 'Importing CSV...'
-                          : `Import ${csvParsedRows.length} Reservation(s)`}
-                      </button>
-                    </div>
+                  <div className="h-7 w-px bg-slate-200 hidden sm:block" />
+                  <div>
+                    <span className="text-slate-500 block text-[11px]">OTA Reservations</span>
+                    <span className="font-mono-tabular text-sm font-bold text-slate-900">
+                      {otaBookings.length}
+                    </span>
+                  </div>
+                  <div className="h-7 w-px bg-slate-200 hidden sm:block" />
+                  <div>
+                    <span className="text-slate-500 block text-[11px]">Daily FX Conversion</span>
+                    <span className="font-mono-tabular text-sm font-bold text-slate-900">
+                      $1 = ₦{(property.usdExchangeRateNgn || 1600).toLocaleString()}
+                    </span>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Outbound iCal Feed Export Generator */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-emerald-700" />
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  Outbound Property iCal Export Feed (.ics)
-                </h2>
-              </div>
-              <p className="text-xs text-slate-500">
-                Paste this outbound iCal link into Airbnb, Booking.com, or VRBO to block booked &amp; held dates automatically.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2.5 text-xs">
-              <select
-                value={exportSuiteFilter}
-                onChange={(e) => setExportSuiteFilter(e.target.value)}
-                className="border border-slate-200 rounded-lg px-3 py-2 bg-white"
-              >
-                <option value="ALL">All Rooms ({property.code})</option>
-                {sortedRooms.map((r) => (
-                  <option key={r.id} value={r.roomNumber}>
-                    {r.roomNumber} · {r.roomType}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                onClick={() => handleCopy(outboundFeedUrl, 'outbound-ical')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg font-medium text-slate-800 cursor-pointer"
-              >
-                {copiedKey === 'outbound-ical' ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Feed Link Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy iCal Link</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleDownloadIcs(exportSuiteFilter)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download .ics</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Connected Channels Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {otaChannels.map((ch) => {
-              const isIntlOta =
-                ch.channelName === 'Airbnb' ||
-                ch.channelName === 'Booking.com' ||
-                ch.channelName === 'Expedia' ||
-                ch.channelName === 'VRBO' ||
-                ch.channelName === 'Custom iCal';
-              const effectiveDefaultCurrency: ChannelCurrency =
-                isIntlOta && (!ch.defaultCurrency || ch.defaultCurrency === 'NGN')
-                  ? getDefaultOtaChannelCurrency(ch.channelName)
-                  : ch.defaultCurrency || getDefaultOtaChannelCurrency(ch.channelName);
-              const effectiveCollectionMode: OtaPaymentCollectionMode =
-                ch.paymentCollectionMode ||
-                (ch.channelName === 'Direct Website Engine' ? 'hotel_collect' : 'ota_prepaid');
-              const draft = icalDrafts[ch.id] ?? {
-                url: ch.icalImportUrl || '',
-                room: normalizeChannelRoom(ch.roomNumber),
-                listingId: ch.propertyListingId || '',
-                defaultCurrency: effectiveDefaultCurrency,
-                defaultNightlyRate:
-                  ch.defaultNightlyRate && ch.defaultNightlyRate > 0
-                    ? String(ch.defaultNightlyRate)
-                    : '',
-                paymentCollectionMode: effectiveCollectionMode,
-              };
-              const suiteParam = encodeURIComponent(
-                !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
-              );
-              const channelExportUrl =
-                ch.icalExportUrl ||
-                (typeof window !== 'undefined'
-                  ? `${window.location.origin}/?ical=${encodeURIComponent(property.id)}&room=${suiteParam}`
-                  : `/?ical=${property.id}&room=${suiteParam}`);
-              const mappedRoomObj =
-                draft.room && draft.room !== 'All Rooms'
-                  ? sortedRooms.find(
-                      (r) => r.roomNumber.toLowerCase() === draft.room.toLowerCase()
-                    )
-                  : undefined;
-              const mappedLabel = mappedRoomObj
-                ? `${mappedRoomObj.roomNumber} · ${mappedRoomObj.roomType}`
-                : draft.room || 'All Rooms';
-
-              return (
-                <div
-                  key={ch.id}
-                  className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Globe className="w-4 h-4 text-slate-700" />
-                        <h2 className="font-display text-sm font-bold text-slate-900">
-                          {ch.channelName}
-                        </h2>
-                        <span className="font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
-                          {draft.defaultCurrency}
-                        </span>
-                      </div>
-                      <span
-                        className={`text-xs font-semibold ${
-                          ch.connected ? 'text-emerald-700' : 'text-rose-700'
+                <div className="inline-flex items-center p-1 bg-slate-100 rounded-lg self-start md:self-auto">
+                  {(
+                    [
+                      { id: 'channels', label: 'Channels & iCal', count: otaChannels.length },
+                      { id: 'csv', label: 'Import CSV', count: null },
+                      { id: 'ledger', label: 'Export & Bookings', count: otaBookings.length },
+                    ] as Array<{
+                      id: 'channels' | 'csv' | 'ledger';
+                      label: string;
+                      count: number | null;
+                    }>
+                  ).map((tab) => {
+                    const active = otaSubTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setOtaSubTab(tab.id)}
+                        className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                          active
+                            ? 'bg-white text-[#061539] shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        {ch.connected ? 'Connected' : 'Disconnected'}
-                      </span>
-                    </div>
-                    {!ch.connected && (
-                      <div className="px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-800">
-                        Calendar disconnected permanently. Auto-sync is paused until you manually click <span className="font-semibold">Connect</span>.
-                      </div>
-                    )}
+                        {tab.label}
+                        {tab.count !== null && (
+                          <span className="ml-1.5 font-mono-tabular text-[11px] text-slate-400">
+                            {tab.count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex items-center justify-between gap-2 text-slate-500 font-mono-tabular">
-                        <label htmlFor={`listing-${ch.id}`} className="font-sans font-semibold text-slate-700 shrink-0">
-                          Property Listing ID
-                        </label>
-                        <span className="font-semibold text-slate-800 truncate text-right">
-                          {mappedLabel}
-                        </span>
-                      </div>
-                      <input
-                        id={`listing-${ch.id}`}
-                        type="text"
-                        placeholder="Enter OTA Listing / Hotel ID"
-                        value={draft.listingId}
-                        onChange={(e) =>
-                          setIcalDrafts((prev) => ({
-                            ...prev,
-                            [ch.id]: { ...draft, listingId: e.target.value },
-                          }))
-                        }
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
-                      />
-                    </div>
-
-                    {/* Currency, Nightly Rate & Collection Mode */}
-                    <div className="grid grid-cols-3 gap-1.5 pt-2 text-[11px] border-t border-slate-100">
-                      <div>
-                        <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
-                          Currency
-                        </label>
-                        <select
-                          value={draft.defaultCurrency}
-                          onChange={(e) =>
-                            setIcalDrafts((prev) => ({
-                              ...prev,
-                              [ch.id]: {
-                                ...draft,
-                                defaultCurrency: e.target.value as ChannelCurrency,
-                              },
-                            }))
-                          }
-                          className="w-full border border-slate-200 rounded-md px-2 py-1 bg-white font-semibold"
-                        >
-                          {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                            <option key={cur} value={cur}>
-                              {cur}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
-                          Rate ({draft.defaultCurrency}/nt)
-                        </label>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder={
-                            draft.defaultCurrency === 'NGN' ? 'Room ₦' : 'e.g. 200'
-                          }
-                          value={draft.defaultNightlyRate}
-                          onChange={(e) =>
-                            setIcalDrafts((prev) => ({
-                              ...prev,
-                              [ch.id]: { ...draft, defaultNightlyRate: e.target.value },
-                            }))
-                          }
-                          className="w-full border border-slate-200 rounded-md px-2 py-1 font-mono-tabular bg-slate-50 focus:bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
-                          Collection
-                        </label>
-                        <select
-                          value={draft.paymentCollectionMode}
-                          onChange={(e) =>
-                            setIcalDrafts((prev) => ({
-                              ...prev,
-                              [ch.id]: {
-                                ...draft,
-                                paymentCollectionMode: e.target.value as OtaPaymentCollectionMode,
-                              },
-                            }))
-                          }
-                          className="w-full border border-slate-200 rounded-md px-1.5 py-1 bg-white"
-                        >
-                          <option value="ota_prepaid">Paid to OTA</option>
-                          <option value="hotel_collect">Pay at Hotel</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-2 text-xs border-t border-slate-100">
-                      <div>
-                        <p className="text-slate-500">Sync Mode</p>
-                        <p className="font-semibold text-slate-900">
-                          {ch.autoSync ? 'Two-way Calendar Sync' : 'Manual Sync'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Bookings Imported</p>
-                        <p className="font-mono-tabular font-semibold text-slate-900">
-                          {ch.bookingsImported}
-                          {Number(draft.defaultNightlyRate) > 0 && (
-                            <span className="ml-1 text-[10px] font-normal text-blue-700">
-                              ({formatChannelCurrency(Number(draft.defaultNightlyRate), draft.defaultCurrency)}/nt)
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Inbound iCal Link & Room Mapping */}
-                    <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <label className="font-semibold text-slate-700 inline-flex items-center gap-1 shrink-0">
-                          <Link2 className="w-3 h-3 text-slate-400" />
-                          <span>Room &amp; iCal (.ics)</span>
-                        </label>
-                        <select
-                          value={draft.room}
-                          onChange={(e) =>
-                            setIcalDrafts((prev) => ({
-                              ...prev,
-                              [ch.id]: { ...draft, room: e.target.value },
-                            }))
-                          }
-                          className="border border-slate-200 rounded px-2 py-1 text-[11px] bg-white max-w-[190px] truncate"
-                        >
-                          <option value="All Rooms">All Rooms</option>
-                          {sortedRooms.map((r) => (
-                            <option key={r.id} value={r.roomNumber}>
-                              {r.roomNumber} · {r.roomType}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="text"
-                          aria-label="Inbound iCal link"
-                          placeholder="https://... or webcal://... (.ics)"
-                          value={draft.url}
-                          onChange={(e) =>
-                            setIcalDrafts((prev) => ({
-                              ...prev,
-                              [ch.id]: { ...draft, url: e.target.value },
-                            }))
-                          }
-                          className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] font-mono-tabular bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
-                        />
+              {/* TAB 1: CHANNELS & iCAL */}
+              {otaSubTab === 'channels' && (
+                <div className="space-y-4">
+                  {showChannelForm && (
+                    <form
+                      onSubmit={handleCreateChannel}
+                      className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 text-xs"
+                    >
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div>
+                          <h2 className="font-display text-sm font-bold text-slate-900">
+                            Connect New OTA Channel
+                          </h2>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Add an inbound iCal (.ics) feed for Booking.com, Airbnb, Expedia, or VRBO.
+                          </p>
+                        </div>
                         <button
                           type="button"
-                          disabled={busy}
-                          onClick={async () => {
-                            setBusy(true);
-                            try {
-                              const parsedRate = Number(draft.defaultNightlyRate.replace(/,/g, ''));
-                              await updateOtaChannelIcal({
-                                property,
-                                channel: ch,
-                                icalImportUrl: draft.url,
-                                roomNumber: draft.room,
-                                propertyListingId: draft.listingId,
-                                defaultCurrency: draft.defaultCurrency,
-                                defaultNightlyRate:
-                                  Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 0,
-                                paymentCollectionMode: draft.paymentCollectionMode,
-                                actorRole: ROLE_LABELS[activeRole],
-                              });
-                              setIcalDrafts((prev) => {
-                                const next = { ...prev };
-                                delete next[ch.id];
-                                return next;
-                              });
-                              onNotify(
-                                `Saved ${draft.defaultCurrency} & iCal settings for ${ch.channelName}`
-                              );
-                            } catch (err) {
-                              onNotify(
-                                err instanceof Error
-                                  ? err.message
-                                  : `Unable to save ${ch.channelName} settings`
-                              );
-                            } finally {
-                              setBusy(false);
+                          onClick={() => setShowChannelForm(false)}
+                          className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                          aria-label="Close form"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Channel Platform
+                          </label>
+                          <select
+                            value={newChannelName}
+                            onChange={(e) => {
+                              const val = e.target.value as OtaIntegrationRecord['channelName'];
+                              setNewChannelName(val);
+                              setNewDefaultCurrency(getDefaultOtaChannelCurrency(val));
+                            }}
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
+                          >
+                            <option value="Booking.com">Booking.com</option>
+                            <option value="Airbnb">Airbnb</option>
+                            <option value="Expedia">Expedia</option>
+                            <option value="VRBO">VRBO</option>
+                            <option value="Custom iCal">Custom iCal</option>
+                            <option value="Direct Website Engine">Direct Website Engine</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Room Mapping
+                          </label>
+                          <select
+                            value={newChannelSuite}
+                            onChange={(e) => setNewChannelSuite(e.target.value)}
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
+                          >
+                            <option value="All Rooms">All Rooms (Property-wide)</option>
+                            {sortedRooms.map((r) => (
+                              <option key={r.id} value={r.roomNumber}>
+                                {r.roomNumber} · {r.roomType}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Booking Currency
+                          </label>
+                          <select
+                            value={newDefaultCurrency}
+                            onChange={(e) =>
+                              setNewDefaultCurrency(e.target.value as ChannelCurrency)
                             }
-                          }}
-                          className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold shrink-0 cursor-pointer"
-                        >
-                          Save iCal
-                        </button>
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white font-semibold"
+                          >
+                            {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                              <option key={cur} value={cur}>
+                                {cur}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Inbound iCal URL (.ics)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="https://... or webcal://..."
+                            value={newIcalUrl}
+                            onChange={(e) => setNewIcalUrl(e.target.value)}
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Listing ID (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. BKG-ENUGU-88412"
+                            value={newListingId}
+                            onChange={(e) => setNewListingId(e.target.value)}
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Fallback Nightly Rate ({newDefaultCurrency})
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Optional fallback e.g. 120.00"
+                            value={newDefaultNightlyRate}
+                            onChange={(e) => setNewDefaultNightlyRate(e.target.value)}
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-medium text-slate-700 mb-1">
+                            Payment Collection
+                          </label>
+                          <select
+                            value={newCollectionMode}
+                            onChange={(e) =>
+                              setNewCollectionMode(e.target.value as OtaPaymentCollectionMode)
+                            }
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
+                          >
+                            <option value="ota_prepaid">Guest Paid to OTA (Prepaid)</option>
+                            <option value="hotel_collect">Pay at Property (Hotel Collect)</option>
+                          </select>
+                        </div>
+
+                        <div className="flex items-end">
+                          <label className="inline-flex items-center gap-2 h-10 text-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newAutoSync}
+                              onChange={(e) => setNewAutoSync(e.target.checked)}
+                            />
+                            <span>Enable auto-sync</span>
+                          </label>
+                        </div>
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-                        <span className="truncate font-mono-tabular pr-2">
-                          Last Sync:{' '}
-                          {ch.lastSyncedIso
-                            ? ch.lastSyncedIso.slice(0, 16).replace('T', ' ')
-                            : 'Never synced'}
-                        </span>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                         <button
                           type="button"
-                          onClick={() => handleCopy(channelExportUrl, `exp-${ch.id}`)}
-                          className="inline-flex items-center gap-1 text-emerald-700 hover:underline font-medium shrink-0 cursor-pointer"
+                          onClick={() => setShowChannelForm(false)}
+                          className="px-3.5 py-2 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium cursor-pointer"
                         >
-                          {copiedKey === `exp-${ch.id}` ? (
-                            <>
-                              <Check className="w-3 h-3" />
-                              <span>Copied Feed</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3" />
-                              <span>Export Feed</span>
-                            </>
-                          )}
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={busy}
+                          className="px-4 py-2 bg-[#061539] hover:bg-[#0d245d] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                        >
+                          Save &amp; Connect Channel
                         </button>
                       </div>
+                    </form>
+                  )}
+
+                  {/* Clean 2-Column Channel Cards */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {otaChannels.map((ch) => {
+                      const displayName = getDisplayChannelName(ch.channelName);
+                      const isIntlOta =
+                        displayName === 'Airbnb' ||
+                        displayName === 'Booking.com' ||
+                        displayName === 'Expedia' ||
+                        displayName === 'VRBO' ||
+                        displayName === 'Custom iCal';
+                      const effectiveDefaultCurrency: ChannelCurrency =
+                        isIntlOta && (!ch.defaultCurrency || ch.defaultCurrency === 'NGN')
+                          ? getDefaultOtaChannelCurrency(displayName)
+                          : ch.defaultCurrency || getDefaultOtaChannelCurrency(displayName);
+                      const effectiveCollectionMode: OtaPaymentCollectionMode =
+                        ch.paymentCollectionMode ||
+                        (ch.channelName === 'Direct Website Engine'
+                          ? 'hotel_collect'
+                          : 'ota_prepaid');
+                      const draft = icalDrafts[ch.id] ?? {
+                        url: ch.icalImportUrl || '',
+                        room: normalizeChannelRoom(ch.roomNumber),
+                        listingId: ch.propertyListingId || '',
+                        defaultCurrency: effectiveDefaultCurrency,
+                        defaultNightlyRate:
+                          ch.defaultNightlyRate && ch.defaultNightlyRate > 0
+                            ? String(ch.defaultNightlyRate)
+                            : '',
+                        paymentCollectionMode: effectiveCollectionMode,
+                      };
+                      const suiteParam = encodeURIComponent(
+                        !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
+                      );
+                      const channelExportUrl =
+                        ch.icalExportUrl ||
+                        (typeof window !== 'undefined'
+                          ? `${window.location.origin}/?ical=${encodeURIComponent(property.id)}&room=${suiteParam}`
+                          : `/?ical=${property.id}&room=${suiteParam}`);
+                      const isExpanded = expandedChannelId === ch.id;
+
+                      return (
+                        <div
+                          key={ch.id}
+                          className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4 transition-colors hover:border-slate-300"
+                        >
+                          {/* Top Row: Identity & Connection Status */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
+                                  ch.connected
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                    : 'bg-slate-50 border-slate-200 text-slate-400'
+                                }`}
+                              >
+                                <Globe className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <h2 className="font-display text-sm font-bold text-slate-900 truncate">
+                                  {displayName}
+                                </h2>
+                                <p className="text-xs text-slate-500 truncate mt-0.5">
+                                  {draft.room || 'All Rooms'} ·{' '}
+                                  <span className="font-mono-tabular font-semibold text-slate-700">
+                                    {draft.defaultCurrency}
+                                  </span>
+                                  {draft.url.trim() ? ' · iCal linked' : ' · No iCal URL'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <span
+                              className={`text-xs font-semibold shrink-0 ${
+                                ch.connected ? 'text-emerald-700' : 'text-rose-600'
+                              }`}
+                            >
+                              {ch.connected ? 'Connected' : 'Disconnected'}
+                            </span>
+                          </div>
+
+                          {/* Clean 3-Column Metadata Row */}
+                          <div className="grid grid-cols-3 gap-3 py-3 border-y border-slate-100 text-xs">
+                            <div className="min-w-0">
+                              <span className="block text-[11px] text-slate-400">Listing ID</span>
+                              <span className="font-mono-tabular font-medium text-slate-800 block truncate mt-0.5">
+                                {draft.listingId || '—'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="block text-[11px] text-slate-400">Imported</span>
+                              <span className="font-mono-tabular font-semibold text-slate-900 block mt-0.5">
+                                {ch.bookingsImported || 0} booking{(ch.bookingsImported || 0) === 1 ? '' : 's'}
+                              </span>
+                            </div>
+                            <div className="min-w-0">
+                              <span className="block text-[11px] text-slate-400">Last Synced</span>
+                              <span className="font-mono-tabular text-slate-700 block truncate mt-0.5">
+                                {ch.lastSyncedIso
+                                  ? ch.lastSyncedIso.slice(0, 16).replace('T', ' ')
+                                  : 'Not yet'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Expandable Configuration Drawer */}
+                          {isExpanded && (
+                            <div className="space-y-3 bg-slate-50/70 border border-slate-200/80 rounded-lg p-3.5 text-xs">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                    Room Mapping
+                                  </label>
+                                  <select
+                                    value={draft.room}
+                                    onChange={(e) =>
+                                      setIcalDrafts((prev) => ({
+                                        ...prev,
+                                        [ch.id]: { ...draft, room: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full h-9 border border-slate-200 rounded-lg px-2.5 bg-white"
+                                  >
+                                    <option value="All Rooms">All Rooms</option>
+                                    {sortedRooms.map((r) => (
+                                      <option key={r.id} value={r.roomNumber}>
+                                        {r.roomNumber} · {r.roomType}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                    Property Listing ID
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="OTA Listing ID"
+                                    value={draft.listingId}
+                                    onChange={(e) =>
+                                      setIcalDrafts((prev) => ({
+                                        ...prev,
+                                        [ch.id]: { ...draft, listingId: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2.5">
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                    Currency
+                                  </label>
+                                  <select
+                                    value={draft.defaultCurrency}
+                                    onChange={(e) =>
+                                      setIcalDrafts((prev) => ({
+                                        ...prev,
+                                        [ch.id]: {
+                                          ...draft,
+                                          defaultCurrency: e.target.value as ChannelCurrency,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full h-9 border border-slate-200 rounded-lg px-2 bg-white font-semibold"
+                                  >
+                                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                                      <option key={cur} value={cur}>
+                                        {cur}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                    Rate ({draft.defaultCurrency}/nt)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder={
+                                      draft.defaultCurrency === 'NGN' ? 'Room ₦' : 'e.g. 120'
+                                    }
+                                    value={draft.defaultNightlyRate}
+                                    onChange={(e) =>
+                                      setIcalDrafts((prev) => ({
+                                        ...prev,
+                                        [ch.id]: {
+                                          ...draft,
+                                          defaultNightlyRate: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                    Collection
+                                  </label>
+                                  <select
+                                    value={draft.paymentCollectionMode}
+                                    onChange={(e) =>
+                                      setIcalDrafts((prev) => ({
+                                        ...prev,
+                                        [ch.id]: {
+                                          ...draft,
+                                          paymentCollectionMode: e.target
+                                            .value as OtaPaymentCollectionMode,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full h-9 border border-slate-200 rounded-lg px-2 bg-white"
+                                  >
+                                    <option value="ota_prepaid">Paid to OTA</option>
+                                    <option value="hotel_collect">Pay at Hotel</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                  Inbound iCal Link (.ics)
+                                </label>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    placeholder="https://... or webcal://... (.ics)"
+                                    value={draft.url}
+                                    onChange={(e) =>
+                                      setIcalDrafts((prev) => ({
+                                        ...prev,
+                                        [ch.id]: { ...draft, url: e.target.value },
+                                      }))
+                                    }
+                                    className="flex-1 min-w-0 h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={async () => {
+                                      setBusy(true);
+                                      try {
+                                        const parsedRate = Number(
+                                          draft.defaultNightlyRate.replace(/,/g, '')
+                                        );
+                                        await updateOtaChannelIcal({
+                                          property,
+                                          channel: ch,
+                                          icalImportUrl: draft.url,
+                                          roomNumber: draft.room,
+                                          propertyListingId: draft.listingId,
+                                          defaultCurrency: draft.defaultCurrency,
+                                          defaultNightlyRate:
+                                            Number.isFinite(parsedRate) && parsedRate >= 0
+                                              ? parsedRate
+                                              : 0,
+                                          paymentCollectionMode: draft.paymentCollectionMode,
+                                          actorRole: ROLE_LABELS[activeRole],
+                                        });
+                                        setIcalDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[ch.id];
+                                          return next;
+                                        });
+                                        onNotify(`Saved iCal & currency settings for ${displayName}`);
+                                      } catch (err) {
+                                        onNotify(
+                                          formatChannelError(
+                                            err,
+                                            `Unable to save ${displayName} settings`
+                                          )
+                                        );
+                                      } finally {
+                                        setBusy(false);
+                                      }
+                                    }}
+                                    className="h-9 px-3.5 bg-[#061539] hover:bg-[#0d245d] text-white rounded-lg font-semibold shrink-0 cursor-pointer"
+                                  >
+                                    Save
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
+                                <div className="flex items-center gap-3">
+                                  <label
+                                    className={`inline-flex items-center gap-1.5 font-medium ${
+                                      ch.connected
+                                        ? 'text-slate-700 hover:text-slate-950 cursor-pointer'
+                                        : 'text-slate-400 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <Upload className="w-3.5 h-3.5" />
+                                    <span>Upload .ics</span>
+                                    <input
+                                      type="file"
+                                      disabled={!ch.connected}
+                                      accept=".ics,text/calendar"
+                                      className="sr-only"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        const reader = new FileReader();
+                                        reader.onload = () => {
+                                          const text =
+                                            typeof reader.result === 'string' ? reader.result : '';
+                                          if (text) void handleSyncSingleChannel(ch, text);
+                                        };
+                                        reader.readAsText(file);
+                                        e.target.value = '';
+                                      }}
+                                    />
+                                  </label>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopy(channelExportUrl, `exp-${ch.id}`)}
+                                    className="inline-flex items-center gap-1.5 text-emerald-700 hover:underline font-medium cursor-pointer"
+                                  >
+                                    {copiedKey === `exp-${ch.id}` ? (
+                                      <>
+                                        <Check className="w-3.5 h-3.5" />
+                                        <span>Copied Export Link</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Link2 className="w-3.5 h-3.5" />
+                                        <span>Copy Export Feed</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await deleteOtaChannel({
+                                        property,
+                                        channel: ch,
+                                        actorRole: ROLE_LABELS[activeRole],
+                                      });
+                                      onNotify(`Removed ${displayName}`);
+                                    } catch (err) {
+                                      onNotify(
+                                        formatChannelError(err, `Failed removing ${displayName}`)
+                                      );
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-800 font-medium cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Remove</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Bottom Action Row */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={
+                                  togglingChannelId === ch.id || syncingChannelId === ch.id
+                                }
+                                onClick={() => void handleToggleChannelConnection(ch)}
+                                className={`px-3 py-1.5 border rounded-lg font-semibold transition-colors disabled:opacity-50 cursor-pointer ${
+                                  ch.connected
+                                    ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
+                                    : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                                }`}
+                              >
+                                {togglingChannelId === ch.id
+                                  ? 'Updating...'
+                                  : ch.connected
+                                    ? 'Disconnect'
+                                    : 'Connect'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedChannelId((curr) => (curr === ch.id ? null : ch.id))
+                                }
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium cursor-pointer"
+                              >
+                                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
+                                <span>Configure</span>
+                                {isExpanded ? (
+                                  <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                                )}
+                              </button>
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={
+                                !ch.connected ||
+                                syncingChannelId === ch.id ||
+                                togglingChannelId === ch.id
+                              }
+                              onClick={() => void handleSyncSingleChannel(ch)}
+                              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 text-white rounded-lg font-semibold transition-colors cursor-pointer"
+                            >
+                              <RefreshCw
+                                className={`w-3.5 h-3.5 ${
+                                  syncingChannelId === ch.id ? 'animate-spin' : ''
+                                }`}
+                              />
+                              <span>
+                                {syncingChannelId === ch.id
+                                  ? 'Syncing...'
+                                  : ch.connected
+                                    ? 'Sync iCal'
+                                    : 'Paused'}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: IMPORT OTA RESERVATIONS CSV */}
+              {otaSubTab === 'csv' && (
+                <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5 text-xs">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                    <div>
+                      <h2 className="font-display text-base font-bold text-slate-900">
+                        Import OTA Reservations from CSV
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Upload Booking.com, Airbnb, Expedia, or VRBO CSV exports to save reservations directly to your property ledger in exact USD/original currency and converted ₦.
+                      </p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={handleDownloadCsvTemplate}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg font-semibold cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download Template</span>
+                    </button>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        disabled={togglingChannelId === ch.id || syncingChannelId === ch.id}
-                        onClick={() => void handleToggleChannelConnection(ch)}
-                        className={`px-2.5 py-1.5 border rounded-lg font-semibold transition-colors disabled:opacity-50 cursor-pointer ${
-                          ch.connected
-                            ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
-                            : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                        }`}
+                  {lastCsvImportSummary && (
+                    <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 text-emerald-900">
+                        <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <span>
+                          Saved{' '}
+                          <strong className="font-mono-tabular">
+                            {lastCsvImportSummary.created}
+                          </strong>{' '}
+                          new and{' '}
+                          <strong className="font-mono-tabular">
+                            {lastCsvImportSummary.updated}
+                          </strong>{' '}
+                          updated <strong>{lastCsvImportSummary.channel}</strong> reservation(s) to
+                          Reservations.
+                        </span>
+                      </div>
+                      {onNavigate && (
+                        <button
+                          type="button"
+                          onClick={() => onNavigate('reservations')}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-semibold cursor-pointer"
+                        >
+                          <span>View in Reservations</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1.5">
+                        OTA Platform
+                      </label>
+                      <select
+                        value={csvChannelName}
+                        onChange={(e) => {
+                          const val = e.target.value as OtaIntegrationRecord['channelName'];
+                          setCsvChannelName(val);
+                          setCsvDefaultCurrency(getDefaultOtaChannelCurrency(val));
+                        }}
+                        className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
                       >
-                        {togglingChannelId === ch.id
-                          ? 'Saving...'
-                          : ch.connected
-                            ? 'Disconnect'
-                            : 'Connect'}
-                      </button>
-                      <label
-                        title={
-                          ch.connected
-                            ? 'Upload .ics calendar exported from Booking.com / Airbnb'
-                            : 'Reconnect this channel before uploading an .ics file'
+                        <option value="Booking.com">Booking.com</option>
+                        <option value="Airbnb">Airbnb</option>
+                        <option value="Expedia">Expedia</option>
+                        <option value="VRBO">VRBO</option>
+                        <option value="Custom iCal">Custom iCal</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1.5">
+                        Default Currency
+                      </label>
+                      <select
+                        value={csvDefaultCurrency}
+                        onChange={(e) =>
+                          setCsvDefaultCurrency(e.target.value as ChannelCurrency)
                         }
-                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 rounded-lg font-medium ${
-                          ch.connected
-                            ? 'text-slate-700 hover:bg-slate-50 cursor-pointer'
-                            : 'text-slate-400 bg-slate-50 cursor-not-allowed'
-                        }`}
+                        className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white font-semibold"
                       >
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>.ics</span>
+                        {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                          <option key={cur} value={cur}>
+                            {cur}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1.5">
+                        CSV Export File
+                      </label>
+                      <label className="flex items-center justify-center gap-2 h-10 px-3 border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-lg font-semibold cursor-pointer transition-colors">
+                        <FileSpreadsheet className="w-4 h-4 text-[#061539]" />
+                        <span className="truncate">
+                          {csvFileName || 'Choose .csv file'}
+                        </span>
                         <input
                           type="file"
-                          disabled={!ch.connected}
-                          accept=".ics,text/calendar"
+                          accept=".csv,text/csv"
                           className="sr-only"
                           onChange={(e) => {
                             const file = e.target.files?.[0];
-                            if (!file) return;
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              const text = typeof reader.result === 'string' ? reader.result : '';
-                              if (text) void handleSyncSingleChannel(ch, text);
-                            };
-                            reader.readAsText(file);
+                            if (file) handleCsvFileSelected(file);
                             e.target.value = '';
                           }}
                         />
                       </label>
+                    </div>
+                  </div>
+
+                  {csvWarnings.length > 0 && (
+                    <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] space-y-0.5">
+                      {csvWarnings.slice(0, 4).map((w, idx) => (
+                        <p key={idx}>• {w}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {csvParsedRows.length > 0 && (
+                    <div className="space-y-4 pt-2">
+                      <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                        <table className="w-full text-left border-collapse text-xs min-w-[760px]">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                              <th className="py-2.5 px-4">Guest &amp; Ref</th>
+                              <th className="py-2.5 px-4">Stay Dates</th>
+                              <th className="py-2.5 px-4">Room</th>
+                              <th className="py-2.5 px-4 text-right">OTA Paid</th>
+                              <th className="py-2.5 px-4 text-right">Converted (₦)</th>
+                              <th className="py-2.5 px-4 text-right">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {csvParsedRows.slice(0, 15).map((row) => {
+                              const fx = getFxRateToNgn(
+                                row.currency,
+                                property.usdExchangeRateNgn
+                              );
+                              const paidOrig =
+                                row.otaPaidSourceAmount ?? row.sourceTotalAmount ?? 0;
+                              const paidNgn =
+                                row.currency === 'NGN'
+                                  ? Math.round(paidOrig)
+                                  : Math.round(paidOrig * fx);
+                              return (
+                                <tr key={`${row.rowNumber}-${row.externalRef}`}>
+                                  <td className="py-2.5 px-4">
+                                    <p className="font-semibold text-slate-900">
+                                      {row.guestName}
+                                    </p>
+                                    <p className="font-mono-tabular text-[11px] text-slate-500">
+                                      {row.externalRef}
+                                    </p>
+                                  </td>
+                                  <td className="py-2.5 px-4 font-mono-tabular text-slate-700 whitespace-nowrap">
+                                    {row.checkInDate} → {row.checkOutDate} ({row.nights}n)
+                                  </td>
+                                  <td className="py-2.5 px-4 text-slate-700">
+                                    {row.roomHint || 'Auto-assign'}
+                                  </td>
+                                  <td className="py-2.5 px-4 text-right font-mono-tabular font-bold text-[#061539] whitespace-nowrap">
+                                    {formatChannelCurrency(paidOrig, row.currency)}{' '}
+                                    {row.currency}
+                                  </td>
+                                  <td className="py-2.5 px-4 text-right font-mono-tabular font-semibold text-emerald-700 whitespace-nowrap">
+                                    {formatNgn(paidNgn)}
+                                  </td>
+                                  <td className="py-2.5 px-4 text-right capitalize text-slate-700">
+                                    {row.status}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs text-slate-600">
+                          Ready to save{' '}
+                          <strong className="text-slate-900">{csvParsedRows.length}</strong>{' '}
+                          {csvChannelName} reservation(s) into Reservations.
+                          {csvParsedRows.length > 15 ? ' (Showing first 15 rows)' : ''}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCsvParsedRows([]);
+                              setCsvWarnings([]);
+                              setCsvFileName('');
+                            }}
+                            className="px-3.5 py-2 border border-slate-200 rounded-lg font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                          <button
+                            type="button"
+                            disabled={csvImporting}
+                            onClick={() => void handleConfirmCsvImport()}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                          >
+                            {csvImporting
+                              ? 'Saving to Reservations...'
+                              : `Save ${csvParsedRows.length} to Reservations`}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: OUTBOUND EXPORT & SYNCED OTA BOOKINGS */}
+              {otaSubTab === 'ledger' && (
+                <div className="space-y-4">
+                  {/* Outbound iCal Feed Export Generator */}
+                  <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-[#061539]" />
+                        <h2 className="font-display text-sm font-bold text-slate-900">
+                          Outbound Property iCal Feed (.ics)
+                        </h2>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Paste this link into Booking.com, Airbnb, or VRBO to block reserved dates automatically.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                      <select
+                        value={exportSuiteFilter}
+                        onChange={(e) => setExportSuiteFilter(e.target.value)}
+                        className="h-9 border border-slate-200 rounded-lg px-3 bg-white"
+                      >
+                        <option value="ALL">All Rooms ({property.code})</option>
+                        {sortedRooms.map((r) => (
+                          <option key={r.id} value={r.roomNumber}>
+                            {r.roomNumber} · {r.roomType}
+                          </option>
+                        ))}
+                      </select>
+
                       <button
                         type="button"
-                        onClick={async () => {
-                          try {
-                            await deleteOtaChannel({
-                              property,
-                              channel: ch,
-                              actorRole: ROLE_LABELS[activeRole],
-                            });
-                            onNotify(`Removed ${ch.channelName}`);
-                          } catch (err) {
-                            onNotify(
-                              err instanceof Error ? err.message : `Failed removing ${ch.channelName}`
-                            );
-                          }
-                        }}
-                        title="Remove channel"
-                        className="p-1.5 border border-slate-200 rounded-lg text-slate-400 hover:text-rose-700 hover:border-rose-200 cursor-pointer"
+                        onClick={() => handleCopy(outboundFeedUrl, 'outbound-ical')}
+                        className="h-9 inline-flex items-center gap-1.5 px-3 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg font-medium text-slate-800 cursor-pointer"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        {copiedKey === 'outbound-ical' ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy Link</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadIcs(exportSuiteFilter)}
+                        className="h-9 inline-flex items-center gap-1.5 px-3.5 bg-[#061539] hover:bg-[#0d245d] text-white rounded-lg font-semibold cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download .ics</span>
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={!ch.connected || syncingChannelId === ch.id || togglingChannelId === ch.id}
-                      onClick={() => void handleSyncSingleChannel(ch)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold cursor-pointer"
-                    >
-                      <RefreshCw
-                        className={`w-3.5 h-3.5 ${syncingChannelId === ch.id ? 'animate-spin' : ''}`}
-                      />
-                      <span>
-                        {syncingChannelId === ch.id
-                          ? 'Syncing...'
-                          : ch.connected
-                            ? 'Sync Live iCal'
-                            : 'Disconnected'}
-                      </span>
-                    </button>
                   </div>
-                </div>
-              );
-            })}
-          </div>
 
-          {/* Synced OTA Reservations — Exact Original Booking Currency & Paid to OTA Ledger */}
-          {(() => {
-            const otaBookings = reservations
-              .filter((r) => isOtaBookingChannel(r.channel))
-              .sort((a, b) => b.checkInDate.localeCompare(a.checkInDate));
-            const usdOtaPaidTotal = otaBookings.reduce((sum, r) => {
-              const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-              return p.sourceCurrency === 'USD' ? sum + p.otaPaidSourceAmount : sum;
-            }, 0);
-            const expectedNgnTotal = otaBookings.reduce((sum, r) => {
-              const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-              return sum + p.expectedPayoutNgn;
-            }, 0);
-            const needsUsdResync = otaBookings.some((r) => {
-              const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-              const chDefault = getDefaultOtaChannelCurrency(r.channel);
-              return chDefault !== 'NGN' && p.sourceCurrency === 'NGN';
-            });
+                  {/* Synced OTA Reservations Table */}
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="font-display text-sm font-bold text-slate-900">
+                          OTA Reservations Ledger
+                        </h2>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Exact booking amounts in original currency alongside Naira payouts.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-4 text-xs font-mono-tabular">
+                        <div>
+                          <span className="text-slate-400 font-sans mr-1.5">OTA Paid:</span>
+                          <strong className="text-[#061539]">
+                            {formatUsd(usdOtaPaidTotal)} USD
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-sans mr-1.5">Exp. Payout:</span>
+                          <strong className="text-emerald-700">
+                            {formatNgn(expectedNgnTotal)}
+                          </strong>
+                        </div>
+                        {needsUsdResync && (
+                          <button
+                            type="button"
+                            disabled={syncingAllChannels}
+                            onClick={() => void handleSyncAllChannels()}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-sans font-semibold cursor-pointer"
+                          >
+                            <RefreshCw
+                              className={`w-3 h-3 ${syncingAllChannels ? 'animate-spin' : ''}`}
+                            />
+                            <span>Refresh USD</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
 
-            return (
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="font-display text-sm font-bold text-slate-900">
-                      Synced OTA Reservations — Original Currency &amp; Guest Paid to OTA
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Displays the exact guest booking amount captured in original currency (e.g.{' '}
-                      <span className="font-mono-tabular font-semibold text-blue-800">$200.00 USD</span>) alongside expected property payout in ₦.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular">
-                    <span className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 font-bold">
-                      OTA Paid (USD): {formatUsd(usdOtaPaidTotal)} USD
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 font-bold">
-                      Exp. Payout: {formatNgn(expectedNgnTotal)}
-                    </span>
-                    {needsUsdResync && (
-                      <button
-                        type="button"
-                        disabled={syncingAllChannels}
-                        onClick={() => void handleSyncAllChannels()}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-sans font-semibold cursor-pointer"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${syncingAllChannels ? 'animate-spin' : ''}`} />
-                        <span>Refresh USD Currency</span>
-                      </button>
+                    {otaBookings.length === 0 ? (
+                      <div className="px-5 py-10 text-center text-xs text-slate-500">
+                        No OTA bookings imported yet. Sync a connected iCal channel or import a CSV export to populate this ledger.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse min-w-[880px] text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                              <th className="py-2.5 px-4">Guest &amp; Ref</th>
+                              <th className="py-2.5 px-4">Channel</th>
+                              <th className="py-2.5 px-4">Room &amp; Dates</th>
+                              <th className="py-2.5 px-4 text-right">Booking Total</th>
+                              <th className="py-2.5 px-4 text-right">Paid to OTA</th>
+                              <th className="py-2.5 px-4 text-right">Expected Payout</th>
+                              <th className="py-2.5 px-4 text-right">Direct Paid</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {otaBookings.map((r) => {
+                              const pay = getReservationPaymentSummary(
+                                r,
+                                property.usdExchangeRateNgn
+                              );
+                              return (
+                                <tr key={r.id} className="hover:bg-slate-50/70">
+                                  <td className="py-3 px-4 whitespace-nowrap">
+                                    <p className="font-semibold text-slate-900">{r.guestName}</p>
+                                    <p className="font-mono-tabular text-[11px] text-slate-500">
+                                      {r.bookingRef}
+                                    </p>
+                                  </td>
+                                  <td className="py-3 px-4 whitespace-nowrap">
+                                    <span className="font-semibold text-slate-800">
+                                      {formatBookingSourceLabel(r.channel)}
+                                    </span>
+                                    <span className="ml-1.5 font-mono-tabular text-[11px] text-slate-500">
+                                      {pay.sourceCurrency}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-4 font-mono-tabular text-slate-700 whitespace-nowrap">
+                                    <span className="font-semibold text-slate-900">
+                                      {r.roomNumber || 'Unassigned'}
+                                    </span>{' '}
+                                    · {r.checkInDate} → {r.checkOutDate} ({r.nights}n)
+                                  </td>
+                                  <td className="py-3 px-4 text-right font-mono-tabular whitespace-nowrap">
+                                    <p className="font-bold text-slate-900">
+                                      {formatChannelCurrency(
+                                        pay.sourceTotalAmount,
+                                        pay.sourceCurrency
+                                      )}{' '}
+                                      {pay.sourceCurrency}
+                                    </p>
+                                    <p className="text-[10px] text-slate-500">
+                                      {pay.sourceCurrency === 'USD'
+                                        ? `≈ ${formatNgn(pay.totalAmount)}`
+                                        : `≈ ${formatUsd(pay.totalAmountUsd)} USD`}
+                                    </p>
+                                  </td>
+                                  <td className="py-3 px-4 text-right font-mono-tabular whitespace-nowrap">
+                                    <p className="font-bold text-[#061539]">
+                                      {formatChannelCurrency(
+                                        pay.otaPaidSourceAmount,
+                                        pay.sourceCurrency
+                                      )}{' '}
+                                      {pay.sourceCurrency}
+                                    </p>
+                                    <p className="text-[10px] text-slate-500">
+                                      ≈ {formatNgn(pay.otaPaidAmount)}
+                                    </p>
+                                  </td>
+                                  <td className="py-3 px-4 text-right font-mono-tabular whitespace-nowrap">
+                                    <p className="font-semibold text-emerald-700">
+                                      {formatNgn(pay.expectedPayoutNgn)}
+                                    </p>
+                                    <p className="text-[10px] text-slate-500">
+                                      ≈ {formatUsd(pay.expectedPayoutUsd)} USD
+                                    </p>
+                                  </td>
+                                  <td className="py-3 px-4 text-right font-mono-tabular text-slate-700 whitespace-nowrap">
+                                    <p>{formatNgn(pay.hotelPaidAmount)}</p>
+                                    {pay.hotelPaidAmount > 0 && (
+                                      <p className="text-[10px] text-slate-500">
+                                        ≈ {formatUsd(pay.hotelPaidUsd)} USD
+                                      </p>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     )}
                   </div>
                 </div>
-
-                {otaBookings.length === 0 ? (
-                  <div className="px-5 py-8 text-center text-xs text-slate-500">
-                    No OTA bookings imported yet. Paste an Airbnb or Booking.com iCal URL above and click <span className="font-semibold text-slate-800">Sync Live iCal</span> to capture bookings in USD.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[920px] text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                          <th className="py-2.5 px-4">Guest &amp; Ref</th>
-                          <th className="py-2.5 px-4">OTA Channel</th>
-                          <th className="py-2.5 px-4">Room &amp; Dates</th>
-                          <th className="py-2.5 px-4 text-right">Booking Total (Orig. Currency)</th>
-                          <th className="py-2.5 px-4 text-right">Guest Paid to OTA</th>
-                          <th className="py-2.5 px-4 text-right">Expected Payout (₦)</th>
-                          <th className="py-2.5 px-4 text-right">Direct at Property</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {otaBookings.map((r) => {
-                          const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-                          return (
-                            <tr key={r.id} className="hover:bg-slate-50/70">
-                              <td className="py-2.5 px-4 whitespace-nowrap">
-                                <p className="font-semibold text-slate-900">{r.guestName}</p>
-                                <p className="font-mono-tabular text-[11px] text-slate-500">
-                                  {r.bookingRef}
-                                </p>
-                              </td>
-                              <td className="py-2.5 px-4 whitespace-nowrap">
-                                <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-semibold text-[11px]">
-                                  {formatBookingSourceLabel(r.channel)}
-                                </span>
-                                <span className="ml-1.5 font-mono-tabular text-[10px] font-bold text-blue-700">
-                                  {pay.sourceCurrency}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-4 font-mono-tabular text-slate-700 whitespace-nowrap">
-                                <span className="font-semibold text-slate-900">
-                                  {r.roomNumber || 'Unassigned'}
-                                </span>{' '}
-                                · {r.checkInDate} → {r.checkOutDate} ({r.nights}n)
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono-tabular whitespace-nowrap">
-                                <p className="font-bold text-slate-900">
-                                  {formatChannelCurrency(pay.sourceTotalAmount, pay.sourceCurrency)}{' '}
-                                  {pay.sourceCurrency}
-                                </p>
-                                <p className="text-[10px] text-slate-500">
-                                  {pay.sourceCurrency === 'USD'
-                                    ? `≈ ${formatNgn(pay.totalAmount)}`
-                                    : `≈ ${formatUsd(pay.totalAmountUsd)} USD`}
-                                </p>
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono-tabular whitespace-nowrap">
-                                <p className="font-bold text-blue-800">
-                                  {formatChannelCurrency(pay.otaPaidSourceAmount, pay.sourceCurrency)}{' '}
-                                  {pay.sourceCurrency}
-                                </p>
-                                <p className="text-[10px] text-blue-600">
-                                  ≈ {formatNgn(pay.otaPaidAmount)}
-                                </p>
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono-tabular whitespace-nowrap">
-                                <p className="font-semibold text-emerald-700">
-                                  {formatNgn(pay.expectedPayoutNgn)}
-                                </p>
-                                <p className="text-[10px] text-slate-500">
-                                  ≈ {formatUsd(pay.expectedPayoutUsd)} USD
-                                </p>
-                              </td>
-                              <td className="py-2.5 px-4 text-right font-mono-tabular text-slate-700 whitespace-nowrap">
-                                <p>{formatNgn(pay.hotelPaidAmount)}</p>
-                                {pay.hotelPaidAmount > 0 && (
-                                  <p className="text-[10px] text-slate-500">
-                                    ≈ {formatUsd(pay.hotelPaidUsd)} USD
-                                  </p>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-        </div>
-      )}
+              )}
+            </div>
+          );
+        })()}
 
       {/* SECTION: MULTI-PROPERTY ADMIN */}
       {section === 'properties_admin' && (

@@ -3177,7 +3177,9 @@ export async function syncOtaChannelWorkflow(params: {
   const resolvedChannelSource =
     params.channel.channelName === 'Direct Website Engine'
       ? ('Direct Web' as const)
-      : params.channel.channelName;
+      : params.channel.channelName === 'Hotels.ng'
+        ? ('Booking.com' as const)
+        : params.channel.channelName;
 
   const parsedEvents = parseIcalEvents(rawIcs, resolvedChannelSource);
 
@@ -3911,13 +3913,29 @@ export async function importOtaCsvReservationsWorkflow(params: {
   otaChannels?: OtaIntegrationRecord[];
   actorRole: string;
 }): Promise<{ created: number; updated: number; skipped: number; totalRows: number }> {
-  const { uid } = getActorContext();
+  const { uid, email: actorEmail } = getActorContext();
   if (!params.rows.length) {
     throw new Error('No valid reservation rows found to import from CSV.');
   }
 
-  const resolvedChannelSource: ReservationRecord['channel'] =
-    params.channelName === 'Direct Website Engine' ? 'Direct Web' : params.channelName;
+  const normalizeChannel = (
+    ch: OtaIntegrationRecord['channelName'] | ReservationRecord['channel']
+  ): ReservationRecord['channel'] => {
+    if (ch === 'Direct Website Engine') return 'Direct Web';
+    if (ch === 'Hotels.ng') return 'Booking.com';
+    return ch;
+  };
+
+  const defaultResolvedChannelSource: ReservationRecord['channel'] = normalizeChannel(
+    params.channelName
+  );
+  const safeAuthorizedEmails = Array.from(
+    new Set(
+      [...(params.property.authorizedEmails || []), actorEmail]
+        .map((e) => (e || '').trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 25);
 
   let roomList = params.rooms ? params.rooms.map((r) => ({ ...r })) : [];
   if (roomList.length === 0) {
@@ -3989,9 +4007,15 @@ export async function importOtaCsvReservationsWorkflow(params: {
   let skipped = 0;
 
   for (const row of params.rows) {
+    const resolvedChannelSource: ReservationRecord['channel'] = row.channelOverride
+      ? normalizeChannel(row.channelOverride)
+      : defaultResolvedChannelSource;
     const assignedRoom = matchRoom(row.roomHint);
     const channelCurrency: ChannelCurrency = row.currency || params.defaultCurrency || 'USD';
     const fxRate = getFxRateToNgn(channelCurrency, params.property.usdExchangeRateNgn);
+    const safeNights = Math.max(1, Math.round(Number(row.nights) || 1));
+    const safeAdults = Math.max(1, Math.min(12, Math.round(Number(row.adults) || 1)));
+    const safeChildren = Math.max(0, Math.min(20, Math.round(Number(row.children) || 0)));
 
     const sourceTotalAmount =
       row.sourceTotalAmount && row.sourceTotalAmount > 0
@@ -3999,15 +4023,15 @@ export async function importOtaCsvReservationsWorkflow(params: {
         : row.otaPaidSourceAmount && row.otaPaidSourceAmount > 0
           ? Number(row.otaPaidSourceAmount.toFixed(2))
           : row.sourceNightlyRate && row.sourceNightlyRate > 0
-            ? Number((row.sourceNightlyRate * row.nights).toFixed(2))
+            ? Number((row.sourceNightlyRate * safeNights).toFixed(2))
             : channelCurrency === 'NGN'
-              ? assignedRoom.nightlyRateNgn * row.nights
-              : Number(((assignedRoom.nightlyRateNgn * row.nights) / fxRate).toFixed(2));
+              ? assignedRoom.nightlyRateNgn * safeNights
+              : Number(((assignedRoom.nightlyRateNgn * safeNights) / fxRate).toFixed(2));
 
     const sourceNightlyRate =
       row.sourceNightlyRate && row.sourceNightlyRate > 0
         ? Number(row.sourceNightlyRate.toFixed(2))
-        : Number((sourceTotalAmount / Math.max(1, row.nights)).toFixed(2));
+        : Number((sourceTotalAmount / safeNights).toFixed(2));
 
     const otaPaidSourceAmount =
       row.otaPaidSourceAmount !== undefined
@@ -4025,29 +4049,42 @@ export async function importOtaCsvReservationsWorkflow(params: {
         ? channelCurrency === 'NGN'
           ? Math.round(row.expectedPayoutSourceAmount)
           : Math.round(row.expectedPayoutSourceAmount * fxRate)
-        : channelCurrency === 'NGN'
-          ? Math.round(sourceTotalAmount)
-          : Math.round(sourceTotalAmount * fxRate);
+        : row.expectedPayoutNgn && row.expectedPayoutNgn > 0
+          ? Math.round(row.expectedPayoutNgn)
+          : channelCurrency === 'NGN'
+            ? Math.round(sourceTotalAmount)
+            : Math.round(sourceTotalAmount * fxRate);
 
-    const roomChargesNgn = expectedPayoutNgn > 0 ? expectedPayoutNgn : assignedRoom.nightlyRateNgn * row.nights;
-    const nightlyRateNgn = Math.max(1, Math.round(roomChargesNgn / Math.max(1, row.nights)));
+    const roomChargesNgn = Math.max(
+      0,
+      expectedPayoutNgn > 0 ? expectedPayoutNgn : assignedRoom.nightlyRateNgn * safeNights
+    );
+    const nightlyRateNgn = Math.max(0, Math.round(roomChargesNgn / safeNights));
     const hotelPaidNgn = Math.max(0, Math.round(row.directPaidNgn ?? 0));
     const otaCoveredFolio = otaPaidNgn > 0 ? Math.min(roomChargesNgn, otaPaidNgn) : 0;
-    const paidNgn = otaCoveredFolio + hotelPaidNgn;
+    const paidNgn = Math.max(0, otaCoveredFolio + hotelPaidNgn);
     const paymentStatus: PaymentStatusLabel =
       paidNgn <= 0 ? 'Unpaid' : paidNgn >= roomChargesNgn ? 'Paid' : 'Partial';
 
     const cleanChannelSlug = resolvedChannelSource.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const externalUid = `csv-${cleanChannelSlug}-${row.externalRef}`.slice(0, 160);
+    const rawRef = (row.externalRef || '').trim();
+    const paddedRef =
+      rawRef.length >= 4
+        ? rawRef
+        : `CSV-${rawRef || `${row.checkInDate.replace(/-/g, '')}-${row.rowNumber}`}`;
+    const bookingRef = paddedRef.slice(0, 32);
+    const externalUid = `csv-${cleanChannelSlug}-${bookingRef}`.slice(0, 160);
     const deterministicId = deterministicOtaReservationId(`csv-${cleanChannelSlug}`, externalUid);
-    const bookingRef = row.externalRef.slice(0, 32);
 
     const existing =
       byExternalUid.get(`${resolvedChannelSource}::${externalUid}`) ||
       byBookingRef.get(`${resolvedChannelSource}::${bookingRef.toUpperCase()}`);
 
-    const safeGuestName = row.guestName.trim().slice(0, 120);
+    const trimmedGuest = (row.guestName || '').trim();
+    const safeGuestName = (trimmedGuest.length >= 2 ? trimmedGuest : 'OTA Guest').slice(0, 120);
     const emailKey = (row.guestEmail || '').trim().toLowerCase();
+    const trimmedPhone = (row.guestPhone || '').trim();
+    const safeGuestDocPhone = trimmedPhone.length >= 6 ? trimmedPhone.slice(0, 32) : 'Not Provided';
 
     let guestId = existing?.guestId;
     if (!guestId) {
@@ -4060,15 +4097,15 @@ export async function importOtaCsvReservationsWorkflow(params: {
         const guestDoc: Omit<GuestRecord, 'id'> & Record<string, unknown> = {
           propertyId: params.property.id,
           fullName: safeGuestName,
-          ...(emailKey ? { email: emailKey } : {}),
-          phone: row.guestPhone?.trim().slice(0, 32) || 'Not Provided',
-          ...(row.guestCountry ? { country: row.guestCountry.slice(0, 80) } : {}),
+          ...(emailKey ? { email: emailKey.slice(0, 120) } : {}),
+          phone: safeGuestDocPhone,
+          ...(row.guestCountry ? { country: row.guestCountry.trim().slice(0, 80) } : {}),
           idType: 'International Passport',
           vipTier: 'Standard',
           totalStays: 1,
           lifetimeSpendNgn: roomChargesNgn,
           notes: `Imported via ${resolvedChannelSource} CSV`,
-          authorizedEmails: params.property.authorizedEmails,
+          authorizedEmails: safeAuthorizedEmails,
           ownerUid: uid,
           createdAt: now,
           updatedAt: now,
@@ -4090,7 +4127,7 @@ export async function importOtaCsvReservationsWorkflow(params: {
         continue;
       }
       const keptHotelPaid = Math.max(hotelPaidNgn, Math.round(existing.hotelPaidNgn ?? 0));
-      const mergedPaidNgn = Math.min(roomChargesNgn, otaPaidNgn) + keptHotelPaid;
+      const mergedPaidNgn = Math.max(0, Math.min(roomChargesNgn, otaPaidNgn) + keptHotelPaid);
       const mergedPaymentStatus: PaymentStatusLabel =
         mergedPaidNgn <= 0 ? 'Unpaid' : mergedPaidNgn >= roomChargesNgn ? 'Paid' : 'Partial';
       writes.push({
@@ -4098,14 +4135,14 @@ export async function importOtaCsvReservationsWorkflow(params: {
         ref: doc(db, 'properties', params.property.id, 'reservations', existing.id),
         data: {
           guestName: safeGuestName,
-          ...(row.guestPhone ? { guestPhone: row.guestPhone.slice(0, 32) } : {}),
+          ...(trimmedPhone ? { guestPhone: trimmedPhone.slice(0, 32) } : {}),
           ...(emailKey ? { guestEmail: emailKey.slice(0, 120) } : {}),
-          ...(row.guestCountry ? { guestCountry: row.guestCountry.slice(0, 80) } : {}),
+          ...(row.guestCountry ? { guestCountry: row.guestCountry.trim().slice(0, 80) } : {}),
           checkInDate: row.checkInDate,
           checkOutDate: row.checkOutDate,
-          nights: row.nights,
-          adults: row.adults,
-          children: row.children,
+          nights: safeNights,
+          adults: safeAdults,
+          children: safeChildren,
           sourceCurrency: channelCurrency,
           sourceNightlyRate,
           sourceTotalAmount,
@@ -4137,15 +4174,15 @@ export async function importOtaCsvReservationsWorkflow(params: {
         requestedRoomType: assignedRoom.roomType.slice(0, 64),
         guestId,
         guestName: safeGuestName,
-        ...(row.guestPhone ? { guestPhone: row.guestPhone.slice(0, 32) } : {}),
+        ...(trimmedPhone ? { guestPhone: trimmedPhone.slice(0, 32) } : {}),
         ...(emailKey ? { guestEmail: emailKey.slice(0, 120) } : {}),
-        ...(row.guestCountry ? { guestCountry: row.guestCountry.slice(0, 80) } : {}),
+        ...(row.guestCountry ? { guestCountry: row.guestCountry.trim().slice(0, 80) } : {}),
         checkInDate: row.checkInDate,
         checkOutDate: row.checkOutDate,
         bookedDate: todayIso,
-        nights: row.nights,
-        adults: row.adults,
-        children: row.children,
+        nights: safeNights,
+        adults: safeAdults,
+        children: safeChildren,
         channel: resolvedChannelSource,
         nightlyRateNgn,
         roomChargesNgn,
@@ -4165,7 +4202,7 @@ export async function importOtaCsvReservationsWorkflow(params: {
         status: row.status,
         paymentMethod: otaPaidNgn > 0 ? 'OTA Platform Payout' : 'Bank Transfer',
         externalUid,
-        authorizedEmails: params.property.authorizedEmails,
+        authorizedEmails: safeAuthorizedEmails,
         ownerUid: uid,
         createdAt: now,
         updatedAt: now,
@@ -4182,23 +4219,8 @@ export async function importOtaCsvReservationsWorkflow(params: {
     }
   }
 
-  // Update matching connected OTA channel stats without ever altering `connected` state
-  const matchingChannel = (params.otaChannels || []).find(
-    (c) => c.channelName === params.channelName
-  );
-  if (matchingChannel && created + updated > 0) {
-    writes.push({
-      kind: 'update',
-      ref: doc(db, 'properties', params.property.id, 'ota_channels', matchingChannel.id),
-      data: {
-        lastSyncedIso: new Date().toISOString(),
-        bookingsImported: (matchingChannel.bookingsImported || 0) + created,
-        updatedAt: now,
-      },
-    });
-  }
-
   try {
+    // Commit reservations and guests first so imported reservations always save reliably
     const CHUNK_SIZE = 350;
     for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
       const chunk = writes.slice(i, i + CHUNK_SIZE);
@@ -4210,13 +4232,30 @@ export async function importOtaCsvReservationsWorkflow(params: {
       await batch.commit();
     }
 
+    // Update matching OTA channel counters separately (non-blocking) without altering `connected` state
+    const matchingChannel = (params.otaChannels || []).find(
+      (c) =>
+        c.channelName === params.channelName ||
+        (params.channelName === 'Booking.com' && c.channelName === 'Hotels.ng')
+    );
+    if (matchingChannel && created + updated > 0) {
+      await updateDoc(
+        doc(db, 'properties', params.property.id, 'ota_channels', matchingChannel.id),
+        {
+          lastSyncedIso: new Date().toISOString(),
+          bookingsImported: (matchingChannel.bookingsImported || 0) + created,
+          updatedAt: serverTimestamp(),
+        }
+      ).catch(() => undefined);
+    }
+
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Channel Manager',
-      action: `Imported ${params.channelName} CSV (${created} new, ${updated} updated)`,
+      action: `Imported ${defaultResolvedChannelSource} CSV (${created} new, ${updated} updated)`,
       details: `${params.rows.length} rows processed · Default currency: ${params.defaultCurrency} · Skipped: ${skipped}`,
-      authorizedEmails: params.property.authorizedEmails,
+      authorizedEmails: safeAuthorizedEmails,
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `properties/${params.property.id}/reservations`);
@@ -4313,8 +4352,12 @@ export async function updateOtaChannelIcal(params: {
       : params.channel.propertyListingId;
   const urlChanged = cleanImportUrl !== (params.channel.icalImportUrl || '').trim();
 
+  const migratedChannelName =
+    params.channel.channelName === 'Hotels.ng' ? ('Booking.com' as const) : params.channel.channelName;
+
   try {
     await updateDoc(ref, {
+      ...(params.channel.channelName === 'Hotels.ng' ? { channelName: migratedChannelName } : {}),
       propertyListingId: cleanListingId,
       ...(params.commissionPct !== undefined
         ? { commissionPct: Math.max(0, Math.min(50, params.commissionPct)) }
@@ -4336,8 +4379,8 @@ export async function updateOtaChannelIcal(params: {
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Channel Manager',
-      action: `Updated OTA & iCal Settings on ${params.channel.channelName}`,
-      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${params.defaultCurrency || params.channel.defaultCurrency || 'NGN'} · ${cleanImportUrl || 'No inbound link'}`,
+      action: `Updated OTA & iCal Settings on ${migratedChannelName}`,
+      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${params.defaultCurrency || params.channel.defaultCurrency || 'USD'} · ${cleanImportUrl || 'No inbound link'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {

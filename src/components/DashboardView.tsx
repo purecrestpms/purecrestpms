@@ -199,11 +199,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         dot: 'bg-amber-500',
         badge: 'bg-amber-50 text-amber-800 border-amber-200',
       },
-      'Hotels.ng': {
-        bar: 'bg-gradient-to-r from-cyan-500 to-sky-600',
-        dot: 'bg-cyan-500',
-        badge: 'bg-cyan-50 text-cyan-800 border-cyan-200',
-      },
       VRBO: {
         bar: 'bg-gradient-to-r from-teal-500 to-emerald-500',
         dot: 'bg-teal-500',

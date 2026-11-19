@@ -472,7 +472,6 @@ export const PRIMARY_BOOKING_SOURCES: Array<{ value: BookingSourceOption; label:
   { value: 'Booking.com', label: 'Booking.com' },
   { value: 'Airbnb', label: 'Airbnb' },
   { value: 'Expedia', label: 'Expedia' },
-  { value: 'Hotels.ng', label: 'Hotels.ng' },
   { value: 'VRBO', label: 'VRBO' },
   { value: 'Custom iCal', label: 'Custom iCal' },
 ];
@@ -568,6 +567,7 @@ export interface ReservationRecord {
 export function formatBookingSourceLabel(channel: string): string {
   if (channel === 'Direct Walk-In' || channel === 'Walk-in') return 'Walk-in';
   if (channel === 'Direct Web' || channel === 'Website') return 'Website';
+  if (channel === 'Hotels.ng') return 'Booking.com';
   return channel;
 }
 
@@ -591,7 +591,6 @@ export function isOtaBookingChannel(channel: string | undefined): boolean {
 export function getDefaultOtaChannelCurrency(channelName: string | undefined): ChannelCurrency {
   const ch = String(channelName || '').trim().toLowerCase();
   if (
-    ch === 'hotels.ng' ||
     ch === 'direct website engine' ||
     ch === 'direct web' ||
     ch === 'direct walk-in' ||

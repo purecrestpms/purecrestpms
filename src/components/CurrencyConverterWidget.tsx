@@ -85,6 +85,19 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
     }
   };
 
+  const formatFxError = (err: unknown, fallback: string): string => {
+    if (!(err instanceof Error)) return fallback;
+    try {
+      const parsed = JSON.parse(err.message) as { error?: string };
+      if (parsed && typeof parsed.error === 'string') {
+        return parsed.error;
+      }
+    } catch {
+      // Plain error message
+    }
+    return err.message || fallback;
+  };
+
   const handleSyncLiveRate = async () => {
     setSyncingLive(true);
     setErrorMsg(null);
@@ -124,9 +137,10 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
       }
     } catch (err) {
       setErrorMsg(
-        err instanceof Error
-          ? err.message
-          : 'Unable to fetch live FX feed. Enter today’s desk rate manually.'
+        formatFxError(
+          err,
+          'Unable to fetch live FX feed. Enter today’s desk rate manually.'
+        )
       );
     } finally {
       setSyncingLive(false);
@@ -152,7 +166,7 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
       setStatusMsg(`Saved property desk rate: $1 = ₦${parsedRate.toLocaleString()}`);
       onNotify?.(`Saved daily USD rate: ₦${parsedRate.toLocaleString()}`);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unable to save daily rate.');
+      setErrorMsg(formatFxError(err, 'Unable to save daily rate.'));
     } finally {
       setSavingRate(false);
     }

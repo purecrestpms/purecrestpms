@@ -214,7 +214,7 @@ function detectChannelOverride(raw: string): ReservationRecord['channel'] | unde
   if (lower.includes('booking')) return 'Booking.com';
   if (lower.includes('expedia')) return 'Expedia';
   if (lower.includes('vrbo')) return 'VRBO';
-  if (lower.includes('hotels.ng') || lower.includes('hotelsng')) return 'Hotels.ng';
+  if (lower.includes('hotels.ng') || lower.includes('hotelsng')) return 'Booking.com';
   if (lower.includes('whatsapp')) return 'WhatsApp';
   if (lower.includes('phone')) return 'Phone';
   if (lower.includes('website') || lower.includes('web')) return 'Website';
@@ -416,14 +416,14 @@ export function parseOtaCsvText(
 }
 
 export function buildSampleOtaCsvTemplate(channelName?: string): string {
-  const isLocalNgn = (channelName || '').toLowerCase().includes('hotels.ng');
-  const currency = isLocalNgn ? 'NGN' : 'USD';
-  const rate1 = isLocalNgn ? '120000' : '100.00';
-  const paid1 = isLocalNgn ? '240000' : '200.00';
-  const earn1 = isLocalNgn ? '216000' : '194.00';
-  const rate2 = isLocalNgn ? '150000' : '95.00';
-  const paid2 = isLocalNgn ? '450000' : '285.00';
-  const earn2 = isLocalNgn ? '405000' : '242.25';
+  const isDirectNgn = (channelName || '').toLowerCase().includes('direct');
+  const currency = isDirectNgn ? 'NGN' : 'USD';
+  const rate1 = isDirectNgn ? '120000' : '100.00';
+  const paid1 = isDirectNgn ? '240000' : '200.00';
+  const earn1 = isDirectNgn ? '240000' : '194.00';
+  const rate2 = isDirectNgn ? '150000' : '95.00';
+  const paid2 = isDirectNgn ? '450000' : '285.00';
+  const earn2 = isDirectNgn ? '450000' : '242.25';
   return [
     'Confirmation code,Guest name,Contact,Email,Country,Listing,Start date,End date,Adults,Children,Currency,Nightly rate,Guest paid,Earnings,Status',
     `HM92XK48Q1,Adaeze Okafor,+1 404 555 0192,adaeze@example.com,United States,RM-1,2026-12-01,2026-12-03,2,0,${currency},${rate1},${paid1},${earn1},Confirmed`,

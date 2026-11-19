@@ -342,20 +342,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Primary Clean Menu (Dashboard → Reservations → Calendar → Rooms → Payments → Reports → Settings) */}
           <div className="space-y-1">
             {visiblePrimary.map((item) => renderNavButton(item, isCollapsed, true))}
-
-            {/* Direct Logout Action right beneath Primary Menu */}
-            <button
-              type="button"
-              onClick={onSignOut}
-              title={isCollapsed ? `Logout (${userEmail})` : undefined}
-              aria-label="Logout"
-              className={`w-full flex items-center ${
-                isCollapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5'
-              } rounded-lg text-[13px] font-medium text-[#28488a] hover:bg-rose-50 hover:text-rose-700 transition-colors whitespace-nowrap cursor-pointer`}
-            >
-              <LogOut className="w-4 h-4 shrink-0" />
-              {!isCollapsed && <span>Logout</span>}
-            </button>
           </div>
 
           {/* Secondary Operational Modules (neatly organized & collapsible) */}
@@ -489,6 +475,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </button>
           </div>
+
+          {/* Logout Action pinned cleanly at the bottom of the sidebar */}
+          <button
+            type="button"
+            onClick={onSignOut}
+            title={isCollapsed ? `Logout (${userEmail})` : undefined}
+            aria-label="Logout"
+            className={`w-full flex items-center ${
+              isCollapsed ? 'justify-center p-2' : 'justify-center gap-2 px-3 py-2'
+            } rounded-lg border border-slate-200 bg-white hover:bg-rose-50 hover:border-rose-200 text-xs font-semibold text-[#28488a] hover:text-rose-700 transition-colors whitespace-nowrap cursor-pointer`}
+          >
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            {!isCollapsed && <span>Logout</span>}
+          </button>
         </div>
       </div>
     );

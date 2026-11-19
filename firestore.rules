@@ -756,6 +756,9 @@ service cloud.firestore {
           isPchSuperAdmin() || (
             isPropertyAdmin(propertyId) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'roomCount', 'authorizedEmails', 'updatedAt'])
+          ) || (
+            isPropertyOperator(propertyId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'updatedAt'])
           )
         );
       allow delete: if isValidId(propertyId) && isPchSuperAdmin();
@@ -1027,16 +1030,16 @@ service cloud.firestore {
       match /ota_channels/{channelId} {
         allow get: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && request.auth.token.email in resource.data.authorizedEmails) || resource.data.ownerUid == request.auth.uid));
-        allow create: if isValidId(propertyId) && isValidId(channelId) && isPropertyAdmin(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId) &&
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(channelId) && isPropertyAdmin(propertyId) &&
+        allow update: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId) &&
           isValidOtaChannel(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isPchSuperAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['propertyListingId', 'commissionPct', 'autoSync', 'connected', 'disconnectedAtIso', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'paymentCollectionMode', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['channelName', 'propertyListingId', 'commissionPct', 'autoSync', 'connected', 'disconnectedAtIso', 'lastSyncedIso', 'bookingsImported', 'roomNumber', 'defaultCurrency', 'defaultNightlyRate', 'paymentCollectionMode', 'icalImportUrl', 'icalExportUrl', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyAdmin(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(channelId) && isPropertyOperator(propertyId);
       }
 
       // Subcollection: Blocked Dates (Calendar)

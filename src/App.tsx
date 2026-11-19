@@ -2199,6 +2199,7 @@ export default function App() {
                     handlePortalSelection(nextPortal);
                     notify(`Switched portal to ${nextPortal}`);
                   }}
+                  onNavigate={handleSelectSection}
                   onNotify={notify}
                 />
               )}
@@ -2249,6 +2250,70 @@ export default function App() {
             </PageErrorBoundary>
           )}
         </main>
+
+        <footer className="no-print border-t border-slate-200/80 bg-white/80 mt-auto">
+          <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2.5 gap-y-1">
+              <span className="font-semibold text-[#061539]">
+                {activeProperty?.name || cms.brand.pchPortalName || 'PCH PMS'}
+              </span>
+              <span className="text-slate-300" aria-hidden="true">
+                ·
+              </span>
+              <span>
+                © {new Date().getFullYear()} {cms.brand.pchPortalName || 'PCH PMS'} — Hospitality Management Suite
+              </span>
+            </div>
+
+            <nav aria-label="Footer navigation" className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+              {effectiveAllowedSections.includes('rooms') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSection('rooms')}
+                  className="hover:text-[#061539] transition-colors cursor-pointer"
+                >
+                  Rooms
+                </button>
+              )}
+              {effectiveAllowedSections.includes('reservations') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSection('reservations')}
+                  className="hover:text-[#061539] transition-colors cursor-pointer"
+                >
+                  Reservations
+                </button>
+              )}
+              {effectiveAllowedSections.includes('ota_channels') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSection('ota_channels')}
+                  className="hover:text-[#061539] transition-colors cursor-pointer"
+                >
+                  Channel Manager
+                </button>
+              )}
+              {effectiveAllowedSections.includes('profile') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSection('profile')}
+                  className="hover:text-[#061539] transition-colors cursor-pointer"
+                >
+                  Settings
+                </button>
+              )}
+              {effectiveAllowedSections.includes('training_help') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSection('training_help')}
+                  className="hover:text-[#061539] transition-colors cursor-pointer"
+                >
+                  Help &amp; Docs
+                </button>
+              )}
+            </nav>
+          </div>
+        </footer>
       </div>
 
       {/* Direct Portal Login Links & Switcher Modal (PCH Super Admin Only) */}
