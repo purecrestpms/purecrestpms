@@ -60,6 +60,20 @@ export function normalizeIsoDate(raw?: string | null): string {
       return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     }
   }
+  const dmyLike = val.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+  if (dmyLike) {
+    const first = Number(dmyLike[1]);
+    const second = Number(dmyLike[2]);
+    const year = Number(dmyLike[3]);
+    if (year >= 1900) {
+      // Disambiguate DD/MM/YYYY vs MM/DD/YYYY safely
+      const day = first > 12 ? first : second > 12 ? second : first;
+      const month = first > 12 ? second : second > 12 ? first : second;
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+  }
   const parsed = Date.parse(val);
   if (Number.isFinite(parsed)) {
     return new Date(parsed).toISOString().slice(0, 10);
@@ -154,8 +168,8 @@ export function matchesRoomRecord(
     if (normCand && normName && normCand === normName) {
       return true;
     }
-    // Match leading code like "RM-1 · Deluxe Studio" or "Room 1" against "RM-1"
-    const leadingSegment = rawCand.split(/[·|—–-](?=\s)/)[0]?.trim() || rawCand;
+    // Match leading code like "RM-1 · Deluxe Studio", "RM-1 (Deluxe)", or "Room 1" against "RM-1"
+    const leadingSegment = rawCand.split(/[·|—–(]|-(?=\s)/)[0]?.trim() || rawCand;
     const normLeading = normalizeRoomCode(leadingSegment);
     if (normLeading && normRoom && normLeading === normRoom) {
       return true;

@@ -101,7 +101,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const tomorrowIso = addDaysIso(todayIso, 1);
 
   const [calendarStart, setCalendarStart] = useState<string>(todayIso);
-  const [gridDaysCount, setGridDaysCount] = useState<14 | 30>(14);
+  const [gridDaysCount, setGridDaysCount] = useState<14 | 30 | 60>(30);
   const [cellClickMode, setCellClickMode] = useState<'book' | 'block'>('book');
   const [searchQuery, setSearchQuery] = useState('');
   const [sectionFilter, setSectionFilter] = useState<'ALL' | RoomSection>('ALL');
@@ -303,7 +303,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         const outIso = normalizeIsoDate(r.checkOutDate);
         const inIso = normalizeIsoDate(r.checkInDate);
         const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
-        const isCurrentOrFuture = r.status === 'checked_in' || effOut > todayIso;
+        const isCurrentOrFuture = r.status === 'checked_in' || effOut >= todayIso;
         if (!isCurrentOrFuture) return false;
         return !sortedRooms.some((room) => matchesRoomRecord(room, r.roomId, r.roomNumber));
       })
@@ -328,7 +328,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
           const outIso = normalizeIsoDate(r.checkOutDate);
           const inIso = normalizeIsoDate(r.checkInDate);
           const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
-          return r.status === 'checked_in' || effOut > todayIso;
+          return r.status === 'checked_in' || effOut >= todayIso;
         })
         .sort((a, b) =>
           normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
@@ -383,8 +383,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         const inIso = normalizeIsoDate(r.checkInDate);
         const outIso = normalizeIsoDate(r.checkOutDate);
         const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
-        // Keep all currently checked-in stays and all current/future reservations
-        if (r.status !== 'checked_in' && effOut <= todayIso) return false;
+        // Keep all currently checked-in stays and all current/future reservations (including same-day departures)
+        if (r.status !== 'checked_in' && effOut < todayIso) return false;
         if (!q) return true;
         return (
           r.guestName.toLowerCase().includes(q) ||
@@ -398,14 +398,28 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       );
   }, [activeReservations, q, todayIso]);
 
+  const syncedOtaReservations = useMemo(() => {
+    return activeReservations
+      .filter((r) => {
+        if (!isOtaBookingChannel(r.channel)) return false;
+        const inIso = normalizeIsoDate(r.checkInDate);
+        const outIso = normalizeIsoDate(r.checkOutDate);
+        const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
+        return r.status === 'checked_in' || effOut >= todayIso;
+      })
+      .sort((a, b) =>
+        normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
+      );
+  }, [activeReservations, todayIso]);
+
   const filteredBlocks = useMemo(() => {
     return blockedDates
       .filter((b) => {
         const bStart = normalizeIsoDate(b.startDate);
         const bEnd = normalizeIsoDate(b.endDate);
         const effEnd = bEnd > bStart ? bEnd : addDaysIso(bStart, 1);
-        // Keep all active & upcoming blocked dates
-        if (effEnd <= todayIso) return false;
+        // Keep all active & upcoming blocked dates (including those ending today)
+        if (effEnd < todayIso) return false;
         if (!q) return true;
         return (
           b.roomNumber.toLowerCase().includes(q) ||
@@ -990,7 +1004,69 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         </div>
       )}
 
-      {/* Advanced 14-Day / 30-Day Horizontal Availability Matrix */}
+      {/* Synced OTA / Airbnb Bookings Quick-Jump Strip */}
+      {syncedOtaReservations.length > 0 && (
+        <div className="bg-orange-50/75 border border-orange-200 rounded-xl px-4 py-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-orange-950">
+              <span className="w-2 h-2 rounded-full bg-orange-500" />
+              <span>
+                {syncedOtaReservations.length} Active OTA / Airbnb Reservation
+                {syncedOtaReservations.length === 1 ? '' : 's'} Synced on Calendar
+              </span>
+            </div>
+            <span className="text-[11px] text-orange-800">
+              Click any booking below to jump the calendar matrix directly to its dates
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {syncedOtaReservations.map((res) => {
+              const inIso = normalizeIsoDate(res.checkInDate) || res.checkInDate;
+              const outIso = normalizeIsoDate(res.checkOutDate) || res.checkOutDate;
+              const sourceLabel = formatBookingSourceLabel(res.channel);
+              const inVisibleGrid =
+                calendarDays.length > 0 &&
+                inIso <= calendarDays[calendarDays.length - 1] &&
+                outIso > calendarDays[0];
+              return (
+                <button
+                  key={res.id}
+                  type="button"
+                  onClick={() => {
+                    setCalendarStart(inIso);
+                    setOnlyShowAvailable(false);
+                    setSectionFilter('ALL');
+                    setRoomTypeFilter('ALL');
+                    setSearchQuery('');
+                  }}
+                  className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left text-[11px] transition-colors cursor-pointer ${
+                    inVisibleGrid
+                      ? 'bg-white border-orange-300 text-orange-950 hover:bg-orange-100/70'
+                      : 'bg-orange-100/80 border-orange-300 text-orange-950 hover:bg-orange-200/80'
+                  }`}
+                  title={`Jump calendar to ${res.guestName} (${sourceLabel}) · ${inIso} → ${outIso}`}
+                >
+                  <span className="font-bold text-orange-700">{sourceLabel}</span>
+                  <span className="font-mono-tabular font-semibold text-slate-900">
+                    {res.roomNumber || 'Unassigned'}
+                  </span>
+                  <span className="font-mono-tabular text-slate-600">
+                    {inIso} → {outIso}
+                  </span>
+                  <span className="text-slate-700 truncate max-w-[130px]">{res.guestName}</span>
+                  {!inVisibleGrid && (
+                    <span className="text-[10px] font-bold text-orange-700 underline">
+                      Jump
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Advanced 14-Day / 30-Day / 60-Day Horizontal Availability Matrix */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/70">
           <div className="flex flex-wrap items-center gap-3">
@@ -1024,6 +1100,17 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                 }`}
               >
                 30 Days
+              </button>
+              <button
+                type="button"
+                onClick={() => setGridDaysCount(60)}
+                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                  gridDaysCount === 60
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                60 Days
               </button>
             </div>
 
@@ -1100,7 +1187,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         <div className="overflow-x-auto">
           <table
             className={`w-full text-left border-collapse ${
-              gridDaysCount === 30 ? 'min-w-[1860px]' : 'min-w-[1040px]'
+              gridDaysCount === 60
+                ? 'min-w-[3480px]'
+                : gridDaysCount === 30
+                  ? 'min-w-[1860px]'
+                  : 'min-w-[1040px]'
             }`}
           >
             <thead>

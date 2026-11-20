@@ -115,6 +115,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
 
   const [openField, setOpenField] = useState<'none' | 'check_in' | 'check_out'>('none');
   const [clickNotice, setClickNotice] = useState<string | null>(null);
+  const [calendarScope, setCalendarScope] = useState<'focused' | 'all_rooms'>('focused');
 
   const initialAnchor = checkInDate || todayIso;
   const [viewYear, setViewYear] = useState<number>(() => Number(initialAnchor.slice(0, 4)) || new Date().getFullYear());
@@ -188,16 +189,20 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
 
   const monthCells = useMemo(() => getMonthGridDays(viewYear, viewMonth), [viewYear, viewMonth]);
 
+  const effectiveShowAllRooms = calendarScope === 'all_rooms' || (!room && !roomType);
+
   // Compute day-by-day availability for all 42 visible cells
   const cellStatuses = useMemo(() => {
-    const pool = room
-      ? [room]
-      : roomType
-        ? rooms.filter((r) => r.roomType === roomType)
-        : rooms;
+    const pool = effectiveShowAllRooms
+      ? rooms
+      : room
+        ? [room]
+        : roomType
+          ? rooms.filter((r) => r.roomType === roomType)
+          : rooms;
 
     return monthCells.map((cell) => {
-      if (room) {
+      if (!effectiveShowAllRooms && room) {
         return {
           ...cell,
           info: checkDayStatusForRoom({
@@ -241,7 +246,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
         if (matchedAnyInPool) return false;
         const isUnassigned = !r.roomId || String(r.roomNumber || '').trim().toLowerCase() === 'unassigned';
         if (!isUnassigned) return false;
-        if (roomType && (r.requestedRoomType || '').trim().toLowerCase() !== roomType.trim().toLowerCase()) {
+        if (!effectiveShowAllRooms && roomType && (r.requestedRoomType || '').trim().toLowerCase() !== roomType.trim().toLowerCase()) {
           return false;
         }
         const rIn = normalizeIsoDate(r.checkInDate);
@@ -263,6 +268,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
 
       const netOpen = Math.max(0, openCount - unassignedMatches.length);
       const bookedCount = Math.max(0, pool.length - netOpen);
+      const scopeLabel = effectiveShowAllRooms ? 'property rooms' : roomType || 'rooms';
       if (netOpen > 0) {
         return {
           ...cell,
@@ -272,8 +278,8 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
             label: `${netOpen}/${pool.length} open`,
             detail:
               otaBookingsCount > 0
-                ? `${netOpen} of ${pool.length} ${roomType || 'rooms'} open on ${formatPrettyDate(cell.iso)} (${otaBookingsCount} ${primaryOtaChannel || 'OTA'} booking${otaBookingsCount > 1 ? 's' : ''} active)`
-                : `${netOpen} of ${pool.length} ${roomType || 'rooms'} open on ${formatPrettyDate(cell.iso)}`,
+                ? `${netOpen} of ${pool.length} ${scopeLabel} open on ${formatPrettyDate(cell.iso)} (${otaBookingsCount} ${primaryOtaChannel || 'OTA'} booking${otaBookingsCount > 1 ? 's' : ''} active)`
+                : `${netOpen} of ${pool.length} ${scopeLabel} open on ${formatPrettyDate(cell.iso)}`,
             isOta: otaBookingsCount > 0,
             otaChannel: primaryOtaChannel,
             otaBookingsCount,
@@ -292,7 +298,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
           status: 'reserved' as const,
           available: false,
           label: otaBookingsCount > 0 ? `Booked (${primaryOtaChannel || 'OTA'})` : 'Unavailable',
-          detail: `All ${pool.length} ${roomType || 'rooms'} are unavailable on ${formatPrettyDate(cell.iso)}${otaSuffix}.`,
+          detail: `All ${pool.length} ${scopeLabel} are unavailable on ${formatPrettyDate(cell.iso)}${otaSuffix}.`,
           isOta: otaBookingsCount > 0,
           otaChannel: primaryOtaChannel,
           otaBookingsCount,
@@ -301,29 +307,48 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
         },
       };
     });
-  }, [monthCells, room, roomType, rooms, reservations, blockedDates, excludeReservationId]);
+  }, [monthCells, effectiveShowAllRooms, room, roomType, rooms, reservations, blockedDates, excludeReservationId]);
+
+  // All active current & future OTA / Airbnb bookings across the entire property
+  const allPropertyOtaBookings = useMemo(() => {
+    return reservations
+      .filter((r) => {
+        if (r.id === excludeReservationId) return false;
+        if (!isActiveBlockingReservation(r)) return false;
+        if (!isOtaBookingChannel(r.channel)) return false;
+        const rIn = normalizeIsoDate(r.checkInDate);
+        const rOutRaw = normalizeIsoDate(r.checkOutDate);
+        if (!rIn) return false;
+        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+        return r.status === 'checked_in' || rOut >= todayIso;
+      })
+      .sort((a, b) =>
+        normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
+      );
+  }, [reservations, excludeReservationId, todayIso]);
 
   // Count distinct active OTA / Airbnb bookings overlapping the currently displayed calendar month
   const monthOtaSummary = useMemo(() => {
     const firstIso = monthCells[0]?.iso || '';
     const lastIso = monthCells[monthCells.length - 1]?.iso || '';
-    if (!firstIso || !lastIso) return { total: 0, airbnb: 0 };
-    const pool = room
-      ? [room]
-      : roomType
-        ? rooms.filter((r) => r.roomType === roomType)
-        : rooms;
+    if (!firstIso || !lastIso) return { total: 0, airbnb: 0, propertyTotal: 0, propertyAirbnb: 0 };
+    const pool = effectiveShowAllRooms
+      ? rooms
+      : room
+        ? [room]
+        : roomType
+          ? rooms.filter((r) => r.roomType === roomType)
+          : rooms;
 
-    const matched = reservations.filter((r) => {
-      if (r.id === excludeReservationId) return false;
-      if (!isActiveBlockingReservation(r)) return false;
-      if (!isOtaBookingChannel(r.channel)) return false;
+    const inMonthAll = allPropertyOtaBookings.filter((r) => {
       const rIn = normalizeIsoDate(r.checkInDate);
       const rOutRaw = normalizeIsoDate(r.checkOutDate);
-      if (!rIn) return false;
       const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
-      const overlapsVisibleGrid = rIn <= lastIso && rOut > firstIso;
-      if (!overlapsVisibleGrid) return false;
+      return rIn <= lastIso && rOut > firstIso;
+    });
+
+    const matched = inMonthAll.filter((r) => {
+      if (effectiveShowAllRooms) return true;
       if (room) {
         return matchesRoomRecord(room, r.roomId, r.roomNumber);
       }
@@ -339,8 +364,16 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
     });
 
     const airbnb = matched.filter((r) => formatBookingSourceLabel(r.channel) === 'Airbnb').length;
-    return { total: matched.length, airbnb };
-  }, [monthCells, room, roomType, rooms, reservations, excludeReservationId]);
+    const propertyAirbnb = allPropertyOtaBookings.filter(
+      (r) => formatBookingSourceLabel(r.channel) === 'Airbnb'
+    ).length;
+    return {
+      total: matched.length,
+      airbnb,
+      propertyTotal: allPropertyOtaBookings.length,
+      propertyAirbnb,
+    };
+  }, [monthCells, effectiveShowAllRooms, room, roomType, rooms, allPropertyOtaBookings]);
 
   const nights = checkInDate && checkOutDate && checkOutDate > checkInDate
     ? diffNightsIso(checkInDate, checkOutDate)
@@ -352,13 +385,40 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
     setViewMonth(dt.getUTCMonth());
   };
 
+  const checkTargetDayAvailability = (dayIso: string) => {
+    if (room) {
+      return checkDayStatusForRoom({
+        room,
+        dayIso,
+        reservations,
+        blockedDates,
+        excludeReservationId,
+      });
+    }
+    const singleNight = checkRoomDateRangeAvailability({
+      room,
+      roomType,
+      rooms,
+      checkInDate: dayIso,
+      checkOutDate: addDaysIso(dayIso, 1),
+      reservations,
+      blockedDates,
+      excludeReservationId,
+    });
+    return {
+      available: singleNight.available,
+      detail: singleNight.message,
+    };
+  };
+
   const handleDayClick = (cell: (typeof cellStatuses)[number]) => {
     setClickNotice(null);
 
     if (openField === 'check_in' && !lockCheckIn) {
-      if (!cell.info.available) {
+      const targetDay = checkTargetDayAvailability(cell.iso);
+      if (!targetDay.available) {
         setClickNotice(
-          `${formatPrettyDate(cell.iso)} is unavailable — ${cell.info.detail}`
+          `${formatPrettyDate(cell.iso)} is unavailable — ${targetDay.detail}`
         );
         return;
       }
@@ -401,8 +461,9 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
           return;
         }
         // Treat clicking an earlier open date as starting a fresh check-in
-        if (!cell.info.available) {
-          setClickNotice(`${formatPrettyDate(cell.iso)} is unavailable — ${cell.info.detail}`);
+        const targetDay = checkTargetDayAvailability(cell.iso);
+        if (!targetDay.available) {
+          setClickNotice(`${formatPrettyDate(cell.iso)} is unavailable — ${targetDay.detail}`);
           return;
         }
         onChangeDates(cell.iso, addDaysIso(cell.iso, 1));
@@ -585,21 +646,41 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                 {openField === 'check_in' ? 'Step 1 · Select Check-In' : 'Step 2 · Select Check-Out'}
               </p>
               <p className="text-xs font-semibold truncate">
-                {room
-                  ? `${room.roomNumber} · ${room.roomType}`
-                  : roomType
-                    ? `${roomType} Availability`
-                    : 'Property Availability'}
+                {effectiveShowAllRooms
+                  ? 'All Property Rooms (Overview)'
+                  : room
+                    ? `${room.roomNumber} · ${room.roomType}`
+                    : roomType
+                      ? `${roomType} Availability`
+                      : 'Property Availability'}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setOpenField('none')}
-              className="p-1 rounded-lg hover:bg-white/15 text-white cursor-pointer"
-              aria-label="Close calendar"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {(room || roomType) && rooms.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCalendarScope((prev) => (prev === 'focused' ? 'all_rooms' : 'focused'))
+                  }
+                  className="px-2 py-0.5 rounded bg-white/15 hover:bg-white/25 text-[10px] font-bold text-white cursor-pointer whitespace-nowrap"
+                  title="Toggle between this room and all property rooms"
+                >
+                  {calendarScope === 'all_rooms'
+                    ? room
+                      ? room.roomNumber
+                      : 'This Type'
+                    : 'All Rooms'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setOpenField('none')}
+                className="p-1 rounded-lg hover:bg-white/15 text-white cursor-pointer"
+                aria-label="Close calendar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           <div className="p-3.5 space-y-3">
@@ -641,22 +722,70 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
               </button>
             </div>
 
-            {/* Synced Airbnb / OTA Live Indicator */}
-            {monthOtaSummary.total > 0 && (
-              <div className="rounded-lg bg-orange-50/80 border border-orange-200 px-2.5 py-1.5 text-[11px] font-medium text-orange-900 flex items-center justify-between gap-2">
-                <span>
-                  {monthOtaSummary.airbnb > 0
-                    ? `${monthOtaSummary.airbnb} Airbnb booking${monthOtaSummary.airbnb > 1 ? 's' : ''}`
-                    : `${monthOtaSummary.total} OTA booking${monthOtaSummary.total > 1 ? 's' : ''}`}{' '}
-                  synced in {MONTH_NAMES[viewMonth]}
-                  {monthOtaSummary.total > monthOtaSummary.airbnb && monthOtaSummary.airbnb > 0
-                    ? ` (+${monthOtaSummary.total - monthOtaSummary.airbnb} other OTA)`
-                    : ''}
-                </span>
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                  Synced
-                </span>
+            {/* Synced Airbnb / OTA Live Indicator (Property-wide + 1-click month jump) */}
+            {allPropertyOtaBookings.length > 0 && (
+              <div className="rounded-lg bg-orange-50/85 border border-orange-200 px-2.5 py-2 text-[11px] font-medium text-orange-950 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span>
+                    {monthOtaSummary.propertyAirbnb > 0
+                      ? `${monthOtaSummary.propertyAirbnb} Airbnb booking${monthOtaSummary.propertyAirbnb > 1 ? 's' : ''}`
+                      : `${monthOtaSummary.propertyTotal} OTA booking${monthOtaSummary.propertyTotal > 1 ? 's' : ''}`}{' '}
+                    synced
+                    {monthOtaSummary.propertyTotal > monthOtaSummary.propertyAirbnb &&
+                    monthOtaSummary.propertyAirbnb > 0
+                      ? ` (+${monthOtaSummary.propertyTotal - monthOtaSummary.propertyAirbnb} other OTA)`
+                      : ''}
+                    {monthOtaSummary.total > 0
+                      ? ` · ${monthOtaSummary.total} in ${MONTH_NAMES[viewMonth]}`
+                      : ''}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                    Synced
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {allPropertyOtaBookings.slice(0, 6).map((otaRes) => {
+                    const inIso = normalizeIsoDate(otaRes.checkInDate);
+                    const outIso = normalizeIsoDate(otaRes.checkOutDate);
+                    const isOtherRoom =
+                      Boolean(room) && !matchesRoomRecord(room!, otaRes.roomId, otaRes.roomNumber);
+                    return (
+                      <button
+                        key={otaRes.id}
+                        type="button"
+                        onClick={() => {
+                          if (inIso) {
+                            const y = Number(inIso.slice(0, 4));
+                            const m = Number(inIso.slice(5, 7)) - 1;
+                            if (!Number.isNaN(y) && !Number.isNaN(m) && m >= 0 && m <= 11) {
+                              setViewYear(y);
+                              setViewMonth(m);
+                            }
+                          }
+                          if (isOtherRoom) {
+                            setCalendarScope('all_rooms');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white hover:bg-orange-100 border border-orange-200 text-[10px] font-mono-tabular text-orange-950 cursor-pointer"
+                        title={`View ${formatBookingSourceLabel(otaRes.channel)} booking on ${otaRes.roomNumber || 'Unassigned'} (${inIso} → ${outIso})`}
+                      >
+                        <span className="font-bold text-orange-700">
+                          {otaRes.roomNumber || 'OTA'}
+                        </span>
+                        <span>
+                          {formatPrettyDate(inIso).replace(/,\s*\d{4}$/, '')}–
+                          {formatPrettyDate(outIso).replace(/,\s*\d{4}$/, '')}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {allPropertyOtaBookings.length > 6 && (
+                    <span className="text-[10px] text-orange-700 font-semibold self-center">
+                      +{allPropertyOtaBookings.length - 6} more
+                    </span>
+                  )}
+                </div>
               </div>
             )}
 

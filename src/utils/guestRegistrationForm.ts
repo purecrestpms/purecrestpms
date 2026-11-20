@@ -173,11 +173,11 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
 
   cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 95) + 8;
 
-  // Section 2: Identification & KYC Verification
+  // Section 2: Identification Details
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
-  doc.text('2. IDENTIFICATION & KYC DETAILS', margin, cursorY);
+  doc.text('2. IDENTIFICATION DETAILS', margin, cursorY);
 
   autoTable(doc, {
     startY: cursorY + 2.5,
@@ -199,7 +199,7 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     body: [
       ['ID Document Type', safeVal(guest.idType, 'NIN'), 'ID / Passport No.', safeVal(guest.idNumber)],
       [
-        'KYC Verification',
+        'ID Verification',
         guest.idVerified ? 'Verified by Front Desk' : 'Pending Verification',
         'Registration Date',
         generatedDate,
@@ -351,18 +351,18 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
   doc.save(`guest-registration-${safeSlug || 'form'}.pdf`);
 }
 
+export interface BlankGuestRegistrationPrintParams {
+  property: PropertyRecord;
+}
+
 /**
- * Prints a formatted Guest Registration Form using a hidden iframe
+ * Prints a clean, blank single-page A4 Guest Registration Form with empty fields
+ * for a guest to complete by hand at check-in, using a hidden iframe
  * (works cleanly inside embedded iframes without calling window.open).
  */
-export function printGuestRegistrationForm(params: GuestRegistrationExportParams): void {
-  const { property, guest, latestReservation, rooms = [] } = params;
-  const regNo = buildRegistrationNumber(property, guest);
-  const generatedDate = new Date().toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintParams): void {
+  const { property } = params;
+  const propertyName = property.name || 'Property Management System';
   const propAddress = [property.address, property.city, property.state]
     .filter(Boolean)
     .join(', ');
@@ -370,283 +370,400 @@ export function printGuestRegistrationForm(params: GuestRegistrationExportParams
     .filter((v): v is string => Boolean(v))
     .map(escapeHtml)
     .join(' &nbsp;|&nbsp; ');
-  const cityState = [guest.city, guest.state].filter(Boolean).join(', ') || '—';
-  const roomInfo = latestReservation ? getReservationRoomDisplay(latestReservation, rooms) : null;
-
-  const staySectionHtml = latestReservation
-    ? `
-      <tr>
-        <th>Booking Reference</th>
-        <td>${escapeHtml(safeVal(latestReservation.bookingRef))}</td>
-        <th>Reservation Status</th>
-        <td>${escapeHtml(RESERVATION_STATUS_LABELS[latestReservation.status] || latestReservation.status)}</td>
-      </tr>
-      <tr>
-        <th>Assigned Room</th>
-        <td>${escapeHtml(
-          roomInfo
-            ? roomInfo.isAssigned
-              ? `${roomInfo.roomNumberLabel} (${roomInfo.roomTypeLabel})`
-              : roomInfo.roomTypeLabel
-            : safeVal(latestReservation.roomNumber)
-        )}</td>
-        <th>Booking Source</th>
-        <td>${escapeHtml(formatBookingSourceLabel(latestReservation.channel))}</td>
-      </tr>
-      <tr>
-        <th>Check-In Date</th>
-        <td>${escapeHtml(safeVal(latestReservation.checkInDate))}</td>
-        <th>Check-Out Date</th>
-        <td>${escapeHtml(safeVal(latestReservation.checkOutDate))}</td>
-      </tr>
-      <tr>
-        <th>Nights / Occupancy</th>
-        <td>${latestReservation.nights} Night${latestReservation.nights === 1 ? '' : 's'} · ${latestReservation.adults} Adult${latestReservation.adults === 1 ? '' : 's'}${latestReservation.children ? `, ${latestReservation.children} Child` : ''}</td>
-        <th>Rate / Total</th>
-        <td>${escapeHtml(`${formatNgn(latestReservation.nightlyRateNgn)}/nt (${formatNgn(latestReservation.roomChargesNgn)})`)}</td>
-      </tr>
-    `
-    : `
-      <tr>
-        <th>Booking Reference</th>
-        <td>Walk-In / Guest Registration</td>
-        <th>Assigned Room</th>
-        <td>_______________________</td>
-      </tr>
-      <tr>
-        <th>Check-In Date</th>
-        <td>____ / ____ / ______</td>
-        <th>Check-Out Date</th>
-        <td>____ / ____ / ______</td>
-      </tr>
-      <tr>
-        <th>Adults / Children</th>
-        <td>______ / ______</td>
-        <th>Payment Method</th>
-        <td>_______________________</td>
-      </tr>
-    `;
 
   const html = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Guest Registration Form - ${escapeHtml(safeVal(guest.fullName, 'Guest'))}</title>
+  <title>Guest Registration Form - ${escapeHtml(propertyName)}</title>
   <style>
-    @page { size: A4 portrait; margin: 14mm; }
-    * { box-sizing: border-box; }
-    body {
+    @page {
+      size: A4 portrait;
+      margin: 9mm 11mm;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    html, body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      color: #0f172a;
+      padding: 0;
+      width: 100%;
       background: #ffffff;
+      color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
+    }
+    .page-sheet {
+      width: 100%;
+      max-height: 274mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      overflow: hidden;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      page-break-after: avoid;
+      break-after: avoid;
     }
     .header {
       background: #061539;
       color: #ffffff;
-      padding: 18px 20px;
-      border-bottom: 4px solid #f5b800;
+      padding: 13px 16px;
+      border-bottom: 3.5px solid #f5b800;
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
+      align-items: center;
+      gap: 14px;
     }
     .header h1 {
       margin: 0;
-      font-size: 18px;
+      font-size: 16px;
+      font-weight: 800;
       letter-spacing: 0.04em;
       text-transform: uppercase;
+      line-height: 1.2;
     }
     .header .contact {
-      margin-top: 5px;
-      font-size: 11px;
+      margin-top: 4px;
+      font-size: 9.5px;
       color: #cbd5e1;
+      line-height: 1.35;
     }
     .header .meta {
       text-align: right;
       white-space: nowrap;
+      flex-shrink: 0;
     }
     .header .meta .doc-title {
-      font-size: 12px;
-      font-weight: 700;
-      color: #f5b800;
-      letter-spacing: 0.08em;
-    }
-    .header .meta .sub {
-      font-size: 10.5px;
-      color: #e2e8f0;
-      margin-top: 4px;
-    }
-    .content { padding: 18px 0 8px; }
-    .section-title {
-      margin: 16px 0 6px;
       font-size: 11px;
+      font-weight: 800;
+      color: #f5b800;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+    .header .meta .blank-meta {
+      margin-top: 5px;
+      font-size: 9.5px;
+      color: #e2e8f0;
+      line-height: 1.5;
+    }
+    .instruction {
+      margin: 8px 0 2px;
+      font-size: 9.5px;
+      color: #475569;
+      font-style: italic;
+    }
+    .section {
+      margin-top: 9px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .section-title {
+      margin: 0 0 4px;
+      font-size: 10px;
       font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: #061539;
+      border-left: 3px solid #f5b800;
+      padding-left: 7px;
+      line-height: 1.25;
     }
-    .section-title:first-child { margin-top: 0; }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 11.5px;
+      table-layout: fixed;
+      font-size: 10px;
     }
     th, td {
-      border: 1px solid #cbd5e1;
-      padding: 7px 9px;
+      border: 1px solid #94a3b8;
+      padding: 5px 8px;
       text-align: left;
-      vertical-align: top;
+      vertical-align: middle;
     }
     th {
       background: #f8fafc;
       font-weight: 700;
       color: #334155;
       width: 19%;
+      font-size: 9.5px;
     }
-    td { width: 31%; color: #0f172a; }
+    td {
+      width: 31%;
+      height: 27px;
+      background: #ffffff;
+      color: #475569;
+    }
+    .checkbox-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px;
+      font-size: 9.5px;
+      color: #334155;
+    }
+    .checkbox-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .box {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      border: 1.2px solid #475569;
+      border-radius: 1.5px;
+      background: #ffffff;
+      flex-shrink: 0;
+    }
+    .hint {
+      color: #94a3b8;
+      font-size: 9px;
+      letter-spacing: 0.04em;
+    }
     .notes-box {
-      border: 1px solid #cbd5e1;
-      padding: 10px 12px;
-      font-size: 11.5px;
-      min-height: 44px;
-      color: #1e293b;
-      white-space: pre-wrap;
+      border: 1px solid #94a3b8;
+      padding: 6px 10px 8px;
+      background: #ffffff;
+    }
+    .write-line {
+      height: 20px;
+      border-bottom: 1px dashed #cbd5e1;
+    }
+    .write-line:last-child {
+      border-bottom: none;
+      height: 16px;
     }
     .declaration {
-      margin-top: 16px;
+      margin-top: 10px;
       background: #f8fafc;
       border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      padding: 10px 12px;
-      font-size: 10.5px;
-      line-height: 1.5;
-      color: #475569;
+      border-radius: 4px;
+      padding: 7px 10px;
+      font-size: 9px;
+      line-height: 1.45;
+      color: #334155;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     .declaration strong {
       display: block;
       color: #061539;
-      margin-bottom: 4px;
-      font-size: 10.5px;
-      letter-spacing: 0.04em;
+      margin-bottom: 2px;
+      font-size: 9.5px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
     }
     .signatures {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 36px;
-      margin-top: 38px;
+      gap: 32px;
+      margin-top: 26px;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     .sig-block {
-      border-top: 1px solid #64748b;
-      padding-top: 6px;
-      font-size: 11px;
+      border-top: 1px solid #475569;
+      padding-top: 5px;
+      font-size: 9.5px;
     }
-    .sig-block strong { display: block; color: #0f172a; }
-    .sig-block span { color: #64748b; font-size: 10px; }
+    .sig-block strong {
+      display: block;
+      color: #061539;
+      font-weight: 700;
+    }
+    .sig-block .sig-sub {
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 9px;
+    }
     .footer {
-      margin-top: 26px;
-      padding-top: 8px;
-      border-top: 1px solid #e2e8f0;
+      margin-top: 12px;
+      padding-top: 6px;
+      border-top: 1px solid #cbd5e1;
       display: flex;
       justify-content: space-between;
-      font-size: 10px;
+      font-size: 8.5px;
       color: #64748b;
     }
   </style>
 </head>
 <body>
-  <div class="header">
+  <div class="page-sheet">
     <div>
-      <h1>${escapeHtml(property.name || 'Property Management System')}</h1>
-      ${propContact ? `<div class="contact">${propContact}</div>` : ''}
-    </div>
-    <div class="meta">
-      <div class="doc-title">GUEST REGISTRATION CARD</div>
-      <div class="sub">Form No: ${escapeHtml(regNo)}</div>
-      <div class="sub">Date: ${escapeHtml(generatedDate)}</div>
-    </div>
-  </div>
-
-  <div class="content">
-    <div class="section-title">1. Personal &amp; Contact Details</div>
-    <table>
-      <tbody>
-        <tr>
-          <th>Full Name</th>
-          <td>${escapeHtml(safeVal(guest.fullName))}</td>
-          <th>Phone Number</th>
-          <td>${escapeHtml(safeVal(guest.phone))}</td>
-        </tr>
-        <tr>
-          <th>Email Address</th>
-          <td>${escapeHtml(safeVal(guest.email))}</td>
-          <th>Guest Tier</th>
-          <td>${escapeHtml(safeVal(guest.vipTier, 'Standard'))}</td>
-        </tr>
-        <tr>
-          <th>Street Address</th>
-          <td>${escapeHtml(safeVal(guest.address))}</td>
-          <th>City / State</th>
-          <td>${escapeHtml(cityState)}</td>
-        </tr>
-        <tr>
-          <th>Country</th>
-          <td>${escapeHtml(safeVal(guest.country || guest.nationality, 'Nigeria'))}</td>
-          <th>Nationality</th>
-          <td>${escapeHtml(safeVal(guest.nationality || guest.country, 'Nigeria'))}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="section-title">2. Identification &amp; KYC Details</div>
-    <table>
-      <tbody>
-        <tr>
-          <th>ID Document Type</th>
-          <td>${escapeHtml(safeVal(guest.idType, 'NIN'))}</td>
-          <th>ID / Passport No.</th>
-          <td>${escapeHtml(safeVal(guest.idNumber))}</td>
-        </tr>
-        <tr>
-          <th>KYC Verification</th>
-          <td>${guest.idVerified ? 'Verified by Front Desk' : 'Pending Verification'}</td>
-          <th>Registration Date</th>
-          <td>${escapeHtml(generatedDate)}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="section-title">3. Stay &amp; Reservation Information</div>
-    <table>
-      <tbody>
-        ${staySectionHtml}
-      </tbody>
-    </table>
-
-    <div class="section-title">4. Guest Preferences &amp; Front Desk Notes</div>
-    <div class="notes-box">${escapeHtml(safeVal(guest.notes, 'No special requests or notes recorded.'))}</div>
-
-    <div class="declaration">
-      <strong>GUEST DECLARATION &amp; HOUSE POLICY</strong>
-      I confirm that the registration information provided above is accurate and agree to abide by the house rules, check-out times, and payment terms of ${escapeHtml(property.name)}. Standard check-in is 2:00 PM and check-out is 12:00 PM unless an approved extension is arranged with Front Desk.
-    </div>
-
-    <div class="signatures">
-      <div class="sig-block">
-        <strong>Guest Signature &amp; Date</strong>
-        <span>${escapeHtml(safeVal(guest.fullName, 'Guest Name'))}</span>
+      <div class="header">
+        <div>
+          <h1>${escapeHtml(propertyName)}</h1>
+          ${propContact ? `<div class="contact">${propContact}</div>` : ''}
+        </div>
+        <div class="meta">
+          <div class="doc-title">GUEST REGISTRATION FORM</div>
+          <div class="blank-meta">
+            Date: _____ / _____ / 20_____ &nbsp;&nbsp;|&nbsp;&nbsp; Room No.: __________
+          </div>
+        </div>
       </div>
-      <div class="sig-block">
-        <strong>Front Desk Officer Signature &amp; Date</strong>
-        <span>${escapeHtml(property.name || 'Front Desk')}</span>
+
+      <div class="instruction">
+        Please complete all sections clearly in BLOCK LETTERS upon check-in.
+      </div>
+
+      <div class="section">
+        <div class="section-title">1. Personal &amp; Contact Details</div>
+        <table>
+          <tbody>
+            <tr>
+              <th>Surname / Last Name</th>
+              <td></td>
+              <th>First &amp; Other Names</th>
+              <td></td>
+            </tr>
+            <tr>
+              <th>Phone Number</th>
+              <td></td>
+              <th>Email Address</th>
+              <td></td>
+            </tr>
+            <tr>
+              <th>Residential Address</th>
+              <td colspan="3"></td>
+            </tr>
+            <tr>
+              <th>City / State</th>
+              <td></td>
+              <th>Nationality / Country</th>
+              <td></td>
+            </tr>
+            <tr>
+              <th>Date of Birth</th>
+              <td><span class="hint">DD / MM / YYYY</span></td>
+              <th>Gender</th>
+              <td>
+                <div class="checkbox-row">
+                  <span class="checkbox-item"><span class="box"></span> Male</span>
+                  <span class="checkbox-item"><span class="box"></span> Female</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <th>Emergency Contact</th>
+              <td></td>
+              <th>Emergency Phone</th>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-title">2. Identification Details</div>
+        <table>
+          <tbody>
+            <tr>
+              <th>ID Document Type</th>
+              <td colspan="3">
+                <div class="checkbox-row">
+                  <span class="checkbox-item"><span class="box"></span> NIN</span>
+                  <span class="checkbox-item"><span class="box"></span> International Passport</span>
+                  <span class="checkbox-item"><span class="box"></span> Driver's License</span>
+                  <span class="checkbox-item"><span class="box"></span> Voter's Card</span>
+                  <span class="checkbox-item"><span class="box"></span> Other: _______________</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <th>ID / Passport Number</th>
+              <td></td>
+              <th>Issuing Country</th>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-title">3. Stay &amp; Booking Details</div>
+        <table>
+          <tbody>
+            <tr>
+              <th>Check-In Date</th>
+              <td><span class="hint">DD / MM / 20____</span></td>
+              <th>Check-Out Date</th>
+              <td><span class="hint">DD / MM / 20____</span></td>
+            </tr>
+            <tr>
+              <th>Room Category</th>
+              <td></td>
+              <th>Number of Nights</th>
+              <td></td>
+            </tr>
+            <tr>
+              <th>Occupancy</th>
+              <td><span class="hint">Adults: ______ &nbsp;&nbsp; Children: ______</span></td>
+              <th>Vehicle Plate No.</th>
+              <td></td>
+            </tr>
+            <tr>
+              <th>Booking Channel</th>
+              <td colspan="3">
+                <div class="checkbox-row">
+                  <span class="checkbox-item"><span class="box"></span> Walk-In</span>
+                  <span class="checkbox-item"><span class="box"></span> Direct</span>
+                  <span class="checkbox-item"><span class="box"></span> Booking.com</span>
+                  <span class="checkbox-item"><span class="box"></span> Airbnb</span>
+                  <span class="checkbox-item"><span class="box"></span> Expedia</span>
+                  <span class="checkbox-item"><span class="box"></span> Corporate</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <th>Payment Method</th>
+              <td colspan="3">
+                <div class="checkbox-row">
+                  <span class="checkbox-item"><span class="box"></span> Bank Transfer</span>
+                  <span class="checkbox-item"><span class="box"></span> POS / Card</span>
+                  <span class="checkbox-item"><span class="box"></span> Cash</span>
+                  <span class="checkbox-item"><span class="box"></span> Online / OTA</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-title">4. Special Requests / Additional Notes</div>
+        <div class="notes-box">
+          <div class="write-line"></div>
+          <div class="write-line"></div>
+          <div class="write-line"></div>
+        </div>
+      </div>
+
+      <div class="declaration">
+        <strong>Guest Declaration &amp; House Policy</strong>
+        I confirm that the information provided on this registration form is true and accurate, and I agree to abide by the house rules, security regulations, and payment terms of ${escapeHtml(propertyName)}. Standard check-in is 2:00 PM and check-out is 12:00 PM unless an approved extension is arranged with Front Desk.
       </div>
     </div>
 
-    <div class="footer">
-      <span>${escapeHtml(property.name)} · Official Guest Registration Form</span>
-      <span>Form ${escapeHtml(regNo)}</span>
+    <div>
+      <div class="signatures">
+        <div class="sig-block">
+          <strong>Guest Signature</strong>
+          <div class="sig-sub">Date: _____ / _____ / 20_____</div>
+        </div>
+        <div class="sig-block">
+          <strong>Front Desk Officer Signature</strong>
+          <div class="sig-sub">Name / Date: _______________________________</div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <span>${escapeHtml(propertyName)} · Official Guest Registration Form</span>
+        <span>Front Desk Copy</span>
+      </div>
     </div>
   </div>
 </body>

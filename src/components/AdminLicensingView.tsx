@@ -17,7 +17,6 @@ import {
   Plus,
   RefreshCw,
   Shield,
-  SlidersHorizontal,
   Trash2,
   Upload,
   UserPlus,
@@ -215,6 +214,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         room: string;
         listingId: string;
         commissionPct: string;
+        autoSync: boolean;
       }
     >
   >({});
@@ -570,14 +570,16 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     const nextListingId = draft.listingId.trim() || channel.propertyListingId;
     const parsedPct = Number(draft.commissionPct);
     const nextCommission = Number.isFinite(parsedPct)
-      ? Math.max(0, Math.min(50, parsedPct))
+      ? Math.max(0, Math.min(50, Number(parsedPct.toFixed(2))))
       : currentCommission;
+    const nextAutoSync = Boolean(draft.autoSync);
 
     const isDirty =
       nextUrl !== (channel.icalImportUrl || '').trim() ||
       nextRoom !== normalizeChannelRoom(channel.roomNumber) ||
       nextListingId !== (channel.propertyListingId || '').trim() ||
-      nextCommission !== currentCommission ||
+      Math.abs(nextCommission - currentCommission) > 0.001 ||
+      nextAutoSync !== Boolean(channel.autoSync) ||
       channel.defaultCurrency !== propertyCurrency;
 
     if (!isDirty) return channel;
@@ -589,9 +591,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
       commissionPct: nextCommission,
+      autoSync: nextAutoSync,
       defaultCurrency: propertyCurrency,
       defaultNightlyRate: 0,
       paymentCollectionMode: inferredMode,
+      recalculateExistingPayouts: true,
       actorRole: ROLE_LABELS[activeRole],
     });
     setIcalDrafts((prev) => {
@@ -605,6 +609,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
       commissionPct: nextCommission,
+      autoSync: nextAutoSync,
       defaultCurrency: propertyCurrency,
       defaultNightlyRate: 0,
       paymentCollectionMode: inferredMode,
@@ -1066,7 +1071,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                             type="number"
                             min={0}
                             max={50}
-                            step={0.5}
+                            step={0.1}
                             placeholder="e.g. 15"
                             value={newCommissionPct}
                             onChange={(e) => setNewCommissionPct(e.target.value)}
@@ -1147,7 +1152,36 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                         room: normalizeChannelRoom(ch.roomNumber),
                         listingId: ch.propertyListingId || '',
                         commissionPct: String(effectiveCommission),
+                        autoSync: Boolean(ch.autoSync),
                       };
+                      const resolvedSource =
+                        ch.channelName === 'Direct Website Engine'
+                          ? 'Direct Web'
+                          : ch.channelName === 'Hotels.ng'
+                            ? 'Booking.com'
+                            : ch.channelName;
+                      const normalizedChRoom = normalizeChannelRoom(ch.roomNumber);
+                      const isSpecificRoomMap =
+                        Boolean(normalizedChRoom) && normalizedChRoom !== 'All Rooms';
+                      const liveChannelBookingsCount = reservations.filter((r) => {
+                        if (r.channel !== resolvedSource || r.status === 'cancelled') return false;
+                        if (isSpecificRoomMap) {
+                          return (
+                            (r.roomNumber || '').trim().toLowerCase() ===
+                              normalizedChRoom.toLowerCase() ||
+                            r.roomId === normalizedChRoom
+                          );
+                        }
+                        return true;
+                      }).length;
+                      const displayImportedCount = Math.max(
+                        liveChannelBookingsCount,
+                        ch.bookingsImported || 0
+                      );
+                      const parsedDraftFee = Number(draft.commissionPct);
+                      const previewFeePct = Number.isFinite(parsedDraftFee)
+                        ? Math.max(0, Math.min(50, parsedDraftFee))
+                        : effectiveCommission;
                       const suiteParam = encodeURIComponent(
                         !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
                       );
@@ -1181,9 +1215,14 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 </h2>
                                 <p className="text-xs text-slate-500 truncate mt-0.5">
                                   {draft.room || 'All Rooms'} ·{' '}
-                                  <span className="font-mono-tabular font-semibold text-slate-700">
-                                    {draft.commissionPct || '0'}% fee
-                                  </span>{' '}
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedChannelId(ch.id)}
+                                    title="Click to edit OTA booking fee percentage"
+                                    className="font-mono-tabular font-semibold text-[#1c46be] hover:underline cursor-pointer"
+                                  >
+                                    {draft.commissionPct || '0'}% OTA fee
+                                  </button>{' '}
                                   · {propertyCurrency}
                                   {draft.url.trim() ? ' · iCal linked' : ' · No iCal URL'}
                                 </p>
@@ -1208,9 +1247,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                               </span>
                             </div>
                             <div>
-                              <span className="block text-[11px] text-slate-400">Imported</span>
+                              <span className="block text-[11px] text-slate-400">Synced Bookings</span>
                               <span className="font-mono-tabular font-semibold text-slate-900 block mt-0.5">
-                                {ch.bookingsImported || 0} booking{(ch.bookingsImported || 0) === 1 ? '' : 's'}
+                                {displayImportedCount} booking{displayImportedCount === 1 ? '' : 's'}
                               </span>
                             </div>
                             <div className="min-w-0">
@@ -1223,10 +1262,46 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                             </div>
                           </div>
 
-                          {/* Expandable Configuration Drawer */}
+                          {/* Expandable Edit iCal & Booking Fee Drawer */}
                           {isExpanded && (
-                            <div className="space-y-3 bg-slate-50/70 border border-slate-200/80 rounded-lg p-3.5 text-xs">
+                            <div className="space-y-3.5 bg-slate-50/70 border border-slate-200/80 rounded-lg p-4 text-xs">
+                              <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/70">
+                                <span className="font-display font-bold text-[#061539] text-xs">
+                                  Edit {displayName} iCal &amp; Booking Fee
+                                </span>
+                                <span className="font-mono-tabular text-[11px] text-slate-600">
+                                  OTA keeps {previewFeePct}% · Net payout{' '}
+                                  <strong className="text-emerald-700">
+                                    {Number((100 - previewFeePct).toFixed(2))}%
+                                  </strong>
+                                </span>
+                              </div>
+
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                    OTA Booking Fee (%)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={50}
+                                    step={0.1}
+                                    placeholder="e.g. 15"
+                                    value={draft.commissionPct}
+                                    onChange={(e) =>
+                                      setIcalDrafts((prev) => ({
+                                        ...prev,
+                                        [ch.id]: {
+                                          ...draft,
+                                          commissionPct: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full h-9 border border-slate-300 focus:border-[#1c46be] focus:outline-none rounded-lg px-2.5 font-mono-tabular bg-white"
+                                  />
+                                </div>
+
                                 <div>
                                   <label className="block text-[11px] font-medium text-slate-600 mb-1">
                                     Room Mapping
@@ -1267,104 +1342,45 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                     className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
                                   />
                                 </div>
-
-                                <div>
-                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                                    Booking Commission (%)
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={50}
-                                    step={0.5}
-                                    placeholder="e.g. 15"
-                                    value={draft.commissionPct}
-                                    onChange={(e) =>
-                                      setIcalDrafts((prev) => ({
-                                        ...prev,
-                                        [ch.id]: {
-                                          ...draft,
-                                          commissionPct: e.target.value,
-                                        },
-                                      }))
-                                    }
-                                    className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
-                                  />
-                                </div>
                               </div>
 
                               <div>
                                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
                                   Inbound iCal Link (.ics)
                                 </label>
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="text"
-                                    placeholder="https://... or webcal://... (.ics)"
-                                    value={draft.url}
-                                    onChange={(e) =>
-                                      setIcalDrafts((prev) => ({
-                                        ...prev,
-                                        [ch.id]: { ...draft, url: e.target.value },
-                                      }))
-                                    }
-                                    className="flex-1 min-w-0 h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
-                                  />
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={async () => {
-                                      setBusy(true);
-                                      try {
-                                        const parsedPct = Number(draft.commissionPct);
-                                        const safePct = Number.isFinite(parsedPct)
-                                          ? Math.max(0, Math.min(50, parsedPct))
-                                          : effectiveCommission;
-                                        await updateOtaChannelIcal({
-                                          property,
-                                          channel: ch,
-                                          icalImportUrl: draft.url,
-                                          roomNumber: draft.room,
-                                          propertyListingId: draft.listingId,
-                                          commissionPct: safePct,
-                                          defaultCurrency: propertyCurrency,
-                                          defaultNightlyRate: 0,
-                                          paymentCollectionMode:
-                                            ch.channelName === 'Direct Website Engine'
-                                              ? 'hotel_collect'
-                                              : 'ota_prepaid',
-                                          actorRole: ROLE_LABELS[activeRole],
-                                        });
-                                        setIcalDrafts((prev) => {
-                                          const next = { ...prev };
-                                          delete next[ch.id];
-                                          return next;
-                                        });
-                                        onNotify(
-                                          `Saved iCal & commission (${safePct}%) settings for ${displayName}`
-                                        );
-                                      } catch (err) {
-                                        onNotify(
-                                          formatChannelError(
-                                            err,
-                                            `Unable to save ${displayName} settings`
-                                          )
-                                        );
-                                      } finally {
-                                        setBusy(false);
+                                <input
+                                  type="text"
+                                  placeholder="https://... or webcal://... (.ics)"
+                                  value={draft.url}
+                                  onChange={(e) =>
+                                    setIcalDrafts((prev) => ({
+                                      ...prev,
+                                      [ch.id]: { ...draft, url: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
+                                />
+                                <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+                                  <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={draft.autoSync}
+                                      onChange={(e) =>
+                                        setIcalDrafts((prev) => ({
+                                          ...prev,
+                                          [ch.id]: { ...draft, autoSync: e.target.checked },
+                                        }))
                                       }
-                                    }}
-                                    className="h-9 px-3.5 bg-[#061539] hover:bg-[#0d245d] text-white rounded-lg font-semibold shrink-0 cursor-pointer"
-                                  >
-                                    Save
-                                  </button>
+                                    />
+                                    <span>Auto-sync every 10 minutes</span>
+                                  </label>
+                                  <span className="text-[11px] text-slate-500">
+                                    Currency matches {property.name} ({propertyCurrency})
+                                  </span>
                                 </div>
-                                <p className="text-[11px] text-slate-500 mt-1.5">
-                                  Rates &amp; currency automatically match {property.name}&apos;s active currency ({propertyCurrency}).
-                                </p>
                               </div>
 
-                              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-slate-200/70">
                                 <div className="flex items-center gap-3">
                                   <label
                                     className={`inline-flex items-center gap-1.5 font-medium ${
@@ -1412,29 +1428,101 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                       </>
                                     )}
                                   </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        await deleteOtaChannel({
+                                          property,
+                                          channel: ch,
+                                          actorRole: ROLE_LABELS[activeRole],
+                                        });
+                                        onNotify(`Removed ${displayName}`);
+                                      } catch (err) {
+                                        onNotify(
+                                          formatChannelError(err, `Failed removing ${displayName}`)
+                                        );
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-800 font-medium cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Remove</span>
+                                  </button>
                                 </div>
 
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    try {
-                                      await deleteOtaChannel({
-                                        property,
-                                        channel: ch,
-                                        actorRole: ROLE_LABELS[activeRole],
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIcalDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[ch.id];
+                                        return next;
                                       });
-                                      onNotify(`Removed ${displayName}`);
-                                    } catch (err) {
-                                      onNotify(
-                                        formatChannelError(err, `Failed removing ${displayName}`)
-                                      );
-                                    }
-                                  }}
-                                  className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-800 font-medium cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>Remove</span>
-                                </button>
+                                      setExpandedChannelId(null);
+                                    }}
+                                    className="h-9 px-3 border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 rounded-lg font-medium cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={async () => {
+                                      setBusy(true);
+                                      try {
+                                        const parsedPct = Number(draft.commissionPct);
+                                        const safePct = Number.isFinite(parsedPct)
+                                          ? Math.max(0, Math.min(50, Number(parsedPct.toFixed(2))))
+                                          : effectiveCommission;
+                                        const res = await updateOtaChannelIcal({
+                                          property,
+                                          channel: ch,
+                                          icalImportUrl: draft.url,
+                                          roomNumber: draft.room,
+                                          propertyListingId: draft.listingId,
+                                          commissionPct: safePct,
+                                          autoSync: draft.autoSync,
+                                          defaultCurrency: propertyCurrency,
+                                          defaultNightlyRate: 0,
+                                          paymentCollectionMode:
+                                            ch.channelName === 'Direct Website Engine'
+                                              ? 'hotel_collect'
+                                              : 'ota_prepaid',
+                                          recalculateExistingPayouts: true,
+                                          actorRole: ROLE_LABELS[activeRole],
+                                        });
+                                        setIcalDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[ch.id];
+                                          return next;
+                                        });
+                                        setExpandedChannelId(null);
+                                        onNotify(
+                                          `Saved ${displayName} (${safePct}% OTA fee)${
+                                            res.updatedReservationsCount > 0
+                                              ? ` · Recalculated expected payout on ${res.updatedReservationsCount} reservation${res.updatedReservationsCount === 1 ? '' : 's'}`
+                                              : ''
+                                          }`
+                                        );
+                                      } catch (err) {
+                                        onNotify(
+                                          formatChannelError(
+                                            err,
+                                            `Unable to save ${displayName} settings`
+                                          )
+                                        );
+                                      } finally {
+                                        setBusy(false);
+                                      }
+                                    }}
+                                    className="h-9 px-4 bg-[#061539] hover:bg-[#0d245d] disabled:opacity-50 text-white rounded-lg font-semibold shrink-0 cursor-pointer"
+                                  >
+                                    {busy ? 'Saving...' : 'Save Changes'}
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -1466,14 +1554,18 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 onClick={() =>
                                   setExpandedChannelId((curr) => (curr === ch.id ? null : ch.id))
                                 }
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium cursor-pointer"
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 border rounded-lg font-semibold cursor-pointer transition-colors ${
+                                  isExpanded
+                                    ? 'border-[#1c46be] bg-[#1c46be]/5 text-[#1c46be]'
+                                    : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                                }`}
                               >
-                                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
-                                <span>Configure</span>
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>{isExpanded ? 'Close Edit' : 'Edit iCal / Fee'}</span>
                                 {isExpanded ? (
-                                  <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                                  <ChevronUp className="w-3.5 h-3.5" />
                                 ) : (
-                                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                                  <ChevronDown className="w-3.5 h-3.5" />
                                 )}
                               </button>
                             </div>

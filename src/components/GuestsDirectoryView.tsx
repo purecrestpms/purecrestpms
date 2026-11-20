@@ -505,27 +505,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  const fullName = `${newFirstName.trim()} ${newLastName.trim()}`.trim();
-                  printGuestRegistrationForm({
-                    property,
-                    guest: {
-                      fullName,
-                      phone: newPhone.trim(),
-                      email: newEmail.trim(),
-                      address: newAddress.trim(),
-                      city: newCity.trim(),
-                      state: newState.trim(),
-                      country: newCountry.trim() || 'Nigeria',
-                      nationality: newCountry.trim() || 'Nigeria',
-                      idType: newIdType,
-                      idNumber: newIdNumber.trim(),
-                      vipTier: newVipTier,
-                      notes: newNotes.trim(),
-                    },
-                    rooms,
-                  });
-                }}
+                onClick={() => printGuestRegistrationForm({ property })}
                 className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5 text-[#061539]" />
@@ -682,11 +662,8 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
               </div>
             </div>
 
-            {/* Section 3: KYC Identification & Preferences */}
+            {/* Identification & Notes */}
             <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3.5">
-              <h3 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
-                3. KYC Identification & VIP Preferences
-              </h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -830,19 +807,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => {
-                const primaryStay =
-                  selectedEnriched.activeStay ||
-                  selectedEnriched.upcomingStay ||
-                  selectedEnriched.stays[0] ||
-                  null;
-                printGuestRegistrationForm({
-                  property,
-                  guest: buildFormDataFromGuest(g),
-                  latestReservation: primaryStay,
-                  rooms,
-                });
-              }}
+              onClick={() => printGuestRegistrationForm({ property })}
               className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5 text-[#061539]" />
@@ -1402,14 +1367,24 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
             Guest directory, KYC records, VIP tiers, and stay history for {property.name}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreateForm}
-          className="h-10 inline-flex items-center gap-2 px-4 rounded-lg bg-[#1c46be] hover:bg-[#16389c] text-white text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>Register Guest</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => printGuestRegistrationForm({ property })}
+            className="h-10 inline-flex items-center gap-2 px-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Printer className="w-4 h-4 text-[#061539]" />
+            <span>Print Registration Form</span>
+          </button>
+          <button
+            type="button"
+            onClick={openCreateForm}
+            className="h-10 inline-flex items-center gap-2 px-4 rounded-lg bg-[#1c46be] hover:bg-[#16389c] text-white text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Register Guest</span>
+          </button>
+        </div>
       </div>
 
       {/* 4 Clean KPI Cards (No decorative icons, tabular numerals) */}

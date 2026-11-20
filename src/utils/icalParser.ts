@@ -2,6 +2,7 @@ import { BookingSourceOption, ChannelCurrency } from '../types/pms';
 
 export interface ParsedIcalEvent {
   uid: string;
+  rawUid?: string;
   checkInDate: string; // YYYY-MM-DD
   checkOutDate: string; // YYYY-MM-DD
   nights: number;
@@ -135,21 +136,60 @@ function extractAdultsAndChildren(
   return { adults, children };
 }
 
+const NON_BOOKING_REF_WORDS = new Set([
+  'RESERVED',
+  'RESERVATION',
+  'CONFIRMED',
+  'CANCELLED',
+  'CANCELED',
+  'BOOKING',
+  'BOOKED',
+  'AIRBNB',
+  'EXPEDIA',
+  'VRBO',
+  'AVAILABLE',
+  'UNAVAILABLE',
+  'CLOSED',
+  'BLOCKED',
+  'GUEST',
+  'NONE',
+  'NULL',
+  'HTTP',
+  'HTTPS',
+  'DETAILS',
+  'HOSTING',
+]);
+
+function isValidOtaBookingRefToken(token: string): boolean {
+  const clean = token.trim().replace(/[^A-Za-z0-9-]/g, '').toUpperCase();
+  if (clean.length < 4 || clean.length > 32) return false;
+  if (NON_BOOKING_REF_WORDS.has(clean)) return false;
+  // Real OTA refs almost always include at least one digit (e.g., HM1234ABCD, 4829104821)
+  return /\d/.test(clean);
+}
+
 function extractOtaBookingRef(text: string, summary: string, xRef: string): string | undefined {
   if (xRef.trim().length >= 4) {
-    return xRef.trim().replace(/[^A-Za-z0-9-]/g, '').toUpperCase().slice(0, 32);
+    const cleaned = xRef.trim().replace(/[^A-Za-z0-9-]/g, '').toUpperCase().slice(0, 32);
+    if (isValidOtaBookingRefToken(cleaned)) return cleaned;
   }
   const combined = `${summary}\n${text}`;
   const detailCode = combined.match(/reservations\/details\/([A-Z0-9-]{5,24})/i);
-  if (detailCode) return detailCode[1].toUpperCase().slice(0, 32);
+  if (detailCode && isValidOtaBookingRefToken(detailCode[1])) {
+    return detailCode[1].toUpperCase().slice(0, 32);
+  }
 
   const labelCode = combined.match(
     /(?:Confirmation\s*(?:Code|Number|No|#)?|Booking\s*(?:Ref|Reference|ID|Code)|Reservation\s*(?:Code|ID)|Ref(?:erence)?)\s*[:=#-]\s*([A-Z0-9-]{4,28})/i
   );
-  if (labelCode) return labelCode[1].toUpperCase().slice(0, 32);
+  if (labelCode && isValidOtaBookingRefToken(labelCode[1])) {
+    return labelCode[1].toUpperCase().slice(0, 32);
+  }
 
   const hmMatch = combined.match(/\b(HM[A-Z0-9]{6,14})\b/i);
-  if (hmMatch) return hmMatch[1].toUpperCase().slice(0, 32);
+  if (hmMatch && isValidOtaBookingRefToken(hmMatch[1])) {
+    return hmMatch[1].toUpperCase().slice(0, 32);
+  }
 
   return undefined;
 }
@@ -535,6 +575,7 @@ export function parseIcalEvents(
 ): ParsedIcalEvent[] {
   const lines = unfoldIcalLines(rawIcs);
   const events: ParsedIcalEvent[] = [];
+  const seenUidCounts = new Map<string, number>();
 
   let calendarName = '';
   let calendarMethod = '';
@@ -616,8 +657,19 @@ export function parseIcalEvents(
           const cleanDesc = unescapeIcalText(description);
           const cleanLocation = unescapeIcalText(location);
           const cleanCalName = unescapeIcalText(calendarName);
-          const stableUid =
+          const baseUid =
             uid.trim() || `${channelName}-${checkIn}-${checkOut}-${cleanSummary.slice(0, 24)}`;
+          const occurrenceCount = seenUidCounts.get(baseUid) || 0;
+          seenUidCounts.set(baseUid, occurrenceCount + 1);
+          const uniqueRawUid =
+            occurrenceCount === 0
+              ? baseUid
+              : `${baseUid}::${checkIn}::${checkOut}${occurrenceCount > 1 ? `::${occurrenceCount}` : ''}`;
+          // Keep full uniqueness even if a raw UID exceeds 155 chars by preserving both prefix & suffix
+          const storedUid =
+            uniqueRawUid.length <= 155
+              ? uniqueRawUid
+              : `${uniqueRawUid.slice(0, 95)}..${uniqueRawUid.slice(-58)}`;
           const guestNames = extractGuestNames(cleanSummary, cleanDesc, attendeeCn, channelName);
           const combinedText = `${cleanSummary}\n${cleanDesc}`;
           const occupancy = extractAdultsAndChildren(combinedText, xAdults, xChildren);
@@ -640,7 +692,8 @@ export function parseIcalEvents(
           const countryMatch = cleanDesc.match(/(?:Guest\s*)?Country\s*[:=-]\s*([^\n|;,]{2,70})/i);
 
           events.push({
-            uid: stableUid.slice(0, 155),
+            uid: storedUid,
+            rawUid: uniqueRawUid,
             checkInDate: checkIn,
             checkOutDate: checkOut,
             nights,

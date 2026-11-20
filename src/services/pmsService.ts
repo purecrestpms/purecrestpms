@@ -3858,16 +3858,14 @@ export async function syncOtaChannelWorkflow(params: {
     throw new Error('No rooms exist in this property to assign imported OTA bookings.');
   }
 
-  let existingReservations = params.reservations ? [...params.reservations] : [];
-  if (existingReservations.length === 0) {
-    const resSnap = await getDocs(
-      collection(db, 'properties', params.property.id, 'reservations')
-    );
-    existingReservations = resSnap.docs.map((d) => ({
-      id: d.id,
-      ...(d.data() as Omit<ReservationRecord, 'id'>),
-    }));
-  }
+  // Always read live reservations from Firestore so sequential/multi-room OTA syncs never work on stale state
+  const resSnap = await getDocs(
+    collection(db, 'properties', params.property.id, 'reservations')
+  );
+  const existingReservations: ReservationRecord[] = resSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<ReservationRecord, 'id'>),
+  }));
 
   const guestsSnap = await getDocs(collection(db, 'properties', params.property.id, 'guests'));
   const existingGuests: GuestRecord[] = guestsSnap.docs.map((d) => ({
@@ -4198,6 +4196,8 @@ export async function syncOtaChannelWorkflow(params: {
     return guestId;
   };
 
+  const processedReservationIds = new Set<string>();
+
   for (const ev of parsedEvents) {
     // Ignore events exported by this property's own PMS feed to avoid circular duplicates
     if (ev.uid.endsWith('@richgates-pms') || ev.uid.endsWith('@pchpms.com')) {
@@ -4205,7 +4205,8 @@ export async function syncOtaChannelWorkflow(params: {
       continue;
     }
 
-    const deterministicId = deterministicOtaReservationId(params.channel.id, ev.uid);
+    const uidSeed = ev.rawUid || ev.uid;
+    let deterministicId = deterministicOtaReservationId(params.channel.id, uidSeed);
     const byUidCandidate = byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`);
     const byRefCandidate = ev.otaBookingRef
       ? byBookingRef.get(`${resolvedChannelSource}::${ev.otaBookingRef.toUpperCase()}`)
@@ -4217,10 +4218,25 @@ export async function syncOtaChannelWorkflow(params: {
         matchesRoomRecord(rm, cand.roomId, cand.roomNumber)
       );
     };
-    const existing =
+    const rawMatchedExisting =
       byId.get(deterministicId) ||
       (belongsToThisChannelRoom(byUidCandidate) ? byUidCandidate : undefined) ||
       (belongsToThisChannelRoom(byRefCandidate) ? byRefCandidate : undefined);
+
+    // Guard: never let two distinct VEVENTs in the same feed overwrite each other
+    let existing = rawMatchedExisting;
+    if (existing && processedReservationIds.has(existing.id)) {
+      deterministicId = deterministicOtaReservationId(
+        params.channel.id,
+        `${uidSeed}::${ev.checkInDate}::${ev.checkOutDate}`
+      );
+      existing = byId.get(deterministicId);
+      if (existing && processedReservationIds.has(existing.id)) {
+        skipped += 1;
+        continue;
+      }
+    }
+    processedReservationIds.add(existing ? existing.id : deterministicId);
 
     const safeGuestName = (ev.guestName || `${resolvedChannelSource} Guest`).trim().slice(0, 120);
     const safeAdults = Math.max(1, Math.min(20, ev.adults ?? 2));
@@ -4308,6 +4324,7 @@ export async function syncOtaChannelWorkflow(params: {
         existing.sourceCurrency !== pricing.sourceCurrency ||
         ((existing.otaPaidSourceAmount ?? 0) === 0 && pricing.otaPaidSourceAmount > 0) ||
         ((existing.sourceTotalAmount ?? 0) === 0 && pricing.sourceTotalAmount > 0) ||
+        Math.abs((existing.expectedPayoutNgn ?? 0) - pricing.expectedPayoutNgn) > 1 ||
         (channelDefaultRateSet &&
           (Math.abs((existing.sourceNightlyRate ?? 0) - pricing.sourceNightlyRate) > 0.01 ||
             Math.abs((existing.sourceTotalAmount ?? 0) - pricing.sourceTotalAmount) > 0.01));
@@ -4555,16 +4572,20 @@ export async function syncOtaChannelWorkflow(params: {
     created += 1;
   }
 
-  const totalActiveChannelBookings = existingReservations.filter(
-    (r) => r.channel === resolvedChannelSource && Boolean(r.externalUid) && r.status !== 'cancelled'
-  ).length;
+  const totalActiveChannelBookings = existingReservations.filter((r) => {
+    if (r.channel !== resolvedChannelSource || r.status === 'cancelled') return false;
+    if (mappedRoomsFromChannel.length > 0) {
+      return mappedRoomsFromChannel.some((rm) => matchesRoomRecord(rm, r.roomId, r.roomNumber));
+    }
+    return true;
+  }).length;
 
   writes.push({
     kind: 'update',
     ref,
     data: {
       lastSyncedIso: new Date().toISOString(),
-      bookingsImported: Math.max(totalActiveChannelBookings, params.channel.bookingsImported + created),
+      bookingsImported: totalActiveChannelBookings,
       ...(params.channel.defaultCurrency !== propertyCurrency
         ? { defaultCurrency: propertyCurrency }
         : {}),
@@ -4572,11 +4593,33 @@ export async function syncOtaChannelWorkflow(params: {
     },
   });
 
+  // Deduplicate/merge multiple queued writes targeting the same Firestore document path
+  const mergedWritesMap = new Map<string, QueuedWrite>();
+  for (const op of writes) {
+    const existingOp = mergedWritesMap.get(op.ref.path);
+    if (!existingOp) {
+      mergedWritesMap.set(op.ref.path, { kind: op.kind, ref: op.ref, data: { ...op.data } });
+    } else if (existingOp.kind === 'set' || op.kind === 'set') {
+      mergedWritesMap.set(op.ref.path, {
+        kind: 'set',
+        ref: op.ref,
+        data: { ...existingOp.data, ...op.data },
+      });
+    } else {
+      mergedWritesMap.set(op.ref.path, {
+        kind: 'update',
+        ref: op.ref,
+        data: { ...existingOp.data, ...op.data },
+      });
+    }
+  }
+  const deduplicatedWrites = Array.from(mergedWritesMap.values());
+
   try {
     // Commit in chunks <= 350 to stay well under Firestore's 500-operation batch limit
     const CHUNK_SIZE = 350;
-    for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
-      const chunk = writes.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < deduplicatedWrites.length; i += CHUNK_SIZE) {
+      const chunk = deduplicatedWrites.slice(i, i + CHUNK_SIZE);
       const batch = writeBatch(db);
       for (const op of chunk) {
         if (op.kind === 'set') {
@@ -5115,11 +5158,13 @@ export async function updateOtaChannelIcal(params: {
   roomNumber: string;
   propertyListingId?: string;
   commissionPct?: number;
+  autoSync?: boolean;
   defaultCurrency?: ChannelCurrency;
   defaultNightlyRate?: number;
   paymentCollectionMode?: OtaPaymentCollectionMode;
+  recalculateExistingPayouts?: boolean;
   actorRole: string;
-}) {
+}): Promise<{ updatedReservationsCount: number }> {
   const ref = doc(db, 'properties', params.property.id, 'ota_channels', params.channel.id);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const rawRoom = (params.roomNumber || '').trim();
@@ -5135,14 +5180,22 @@ export async function updateOtaChannelIcal(params: {
 
   const migratedChannelName =
     params.channel.channelName === 'Hotels.ng' ? ('Booking.com' as const) : params.channel.channelName;
+  const safeCommissionPct =
+    params.commissionPct !== undefined
+      ? Math.max(0, Math.min(50, Number(Number(params.commissionPct).toFixed(2))))
+      : params.channel.commissionPct;
+  const commissionChanged =
+    params.commissionPct !== undefined &&
+    Math.abs(safeCommissionPct - Number(params.channel.commissionPct ?? 0)) > 0.001;
+
+  let updatedReservationsCount = 0;
 
   try {
     await updateDoc(ref, {
       ...(params.channel.channelName === 'Hotels.ng' ? { channelName: migratedChannelName } : {}),
       propertyListingId: cleanListingId,
-      ...(params.commissionPct !== undefined
-        ? { commissionPct: Math.max(0, Math.min(50, params.commissionPct)) }
-        : {}),
+      ...(params.commissionPct !== undefined ? { commissionPct: safeCommissionPct } : {}),
+      ...(params.autoSync !== undefined ? { autoSync: Boolean(params.autoSync) } : {}),
       ...(params.defaultCurrency !== undefined ? { defaultCurrency: params.defaultCurrency } : {}),
       ...(params.defaultNightlyRate !== undefined
         ? { defaultNightlyRate: Math.max(0, Number(params.defaultNightlyRate)) }
@@ -5156,17 +5209,102 @@ export async function updateOtaChannelIcal(params: {
       ...(urlChanged ? { lastSyncedIso: '' } : {}),
       updatedAt: serverTimestamp(),
     });
+
+    // When OTA booking commission % is corrected, recalculate expected payout on existing non-manually-edited reservations for this channel
+    const shouldRecalculate =
+      (params.recalculateExistingPayouts ?? true) &&
+      commissionChanged &&
+      migratedChannelName !== 'Direct Website Engine';
+
+    if (shouldRecalculate) {
+      const resolvedChannelSource: ReservationRecord['channel'] = migratedChannelName;
+      const [resSnap, roomsSnap] = await Promise.all([
+        getDocs(collection(db, 'properties', params.property.id, 'reservations')),
+        getDocs(collection(db, 'properties', params.property.id, 'rooms')),
+      ]);
+      const propRooms = roomsSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<RoomRecord, 'id'>),
+      }));
+      const isSpecificRoom =
+        Boolean(normalizedRoom) &&
+        normalizedRoom.toLowerCase() !== 'all rooms' &&
+        normalizedRoom.toLowerCase() !== 'all suites' &&
+        normalizedRoom.toLowerCase() !== 'all';
+      const mappedRooms = isSpecificRoom
+        ? propRooms.filter((rm) => matchesRoomRecord(rm, normalizedRoom, normalizedRoom))
+        : [];
+
+      const updates: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
+      const now = serverTimestamp();
+
+      for (const snapDoc of resSnap.docs) {
+        const res = { id: snapDoc.id, ...(snapDoc.data() as Omit<ReservationRecord, 'id'>) };
+        if (res.channel !== resolvedChannelSource) continue;
+        if (res.status === 'cancelled' || res.status === 'no_show') continue;
+        if (res.paymentManuallyEdited) continue;
+        if (mappedRooms.length > 0 && !mappedRooms.some((rm) => matchesRoomRecord(rm, res.roomId, res.roomNumber))) {
+          continue;
+        }
+
+        // Compute gross booking total in NGN from source total, otaPaidNgn, or nightlyRate * nights
+        const fx = getFxRateToNgn(
+          (res.sourceCurrency as ChannelCurrency) || (params.property.currency as ChannelCurrency) || 'NGN',
+          params.property.usdExchangeRateNgn
+        );
+        const grossFromSource =
+          typeof res.sourceTotalAmount === 'number' && res.sourceTotalAmount > 0
+            ? res.sourceCurrency && res.sourceCurrency !== 'NGN'
+              ? Math.round(res.sourceTotalAmount * (res.fxRateToNgn || fx))
+              : Math.round(res.sourceTotalAmount)
+            : 0;
+        const grossNgn =
+          grossFromSource > 0
+            ? grossFromSource
+            : typeof res.otaPaidNgn === 'number' && res.otaPaidNgn > 0
+              ? Math.round(res.otaPaidNgn)
+              : Math.round((res.nightlyRateNgn || 0) * Math.max(1, res.nights || 1));
+
+        if (grossNgn <= 0) continue;
+        const nextExpectedPayoutNgn = Math.max(0, Math.round(grossNgn * (1 - safeCommissionPct / 100)));
+        if (Math.abs((res.expectedPayoutNgn ?? 0) - nextExpectedPayoutNgn) <= 1) continue;
+
+        const patch: Record<string, unknown> = {
+          expectedPayoutNgn: nextExpectedPayoutNgn,
+          updatedAt: now,
+        };
+        if (res.paymentCollectionMode === 'ota_prepaid' && res.otaPayoutStatus !== 'received') {
+          patch.roomChargesNgn = nextExpectedPayoutNgn;
+        }
+        updates.push({
+          ref: doc(db, 'properties', params.property.id, 'reservations', res.id),
+          data: patch,
+        });
+      }
+
+      const CHUNK_SIZE = 350;
+      for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
+        const batch = writeBatch(db);
+        for (const item of updates.slice(i, i + CHUNK_SIZE)) {
+          batch.update(item.ref, item.data);
+        }
+        await batch.commit();
+      }
+      updatedReservationsCount = updates.length;
+    }
+
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Channel Manager',
       action: `Updated OTA & iCal Settings on ${migratedChannelName}`,
-      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${params.commissionPct ?? params.channel.commissionPct ?? 0}% commission · ${params.defaultCurrency || params.property.currency || 'NGN'} · ${cleanImportUrl || 'No inbound link'}`,
+      details: `Listing ${cleanListingId} · ${normalizedRoom} · ${safeCommissionPct}% OTA fee · ${params.defaultCurrency || params.property.currency || 'NGN'}${updatedReservationsCount > 0 ? ` · Recalculated ${updatedReservationsCount} reservation payout(s)` : ''}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
+  return { updatedReservationsCount };
 }
 
 export async function deleteOtaChannel(params: {
