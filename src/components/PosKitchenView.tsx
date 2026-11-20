@@ -1,12 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import {
+  BedDouble,
   Check,
   ChefHat,
   Download,
+  LayoutDashboard,
   Minus,
   Pencil,
   Plus,
   Printer,
+  Receipt,
   ShoppingBag,
   ShoppingCart,
   Trash2,
@@ -33,6 +36,7 @@ import {
   ReservationRecord,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
+import { PurchaseInvoiceData, PurchaseInvoiceModal } from './PurchaseInvoiceModal';
 
 interface PosKitchenViewProps {
   property: PropertyRecord;
@@ -124,16 +128,51 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   const [purRestockQty, setPurRestockQty] = useState(0);
   const [savingPurchase, setSavingPurchase] = useState(false);
 
-  // Receipt printing modal state
+  // Receipt & Purchase Invoice modal state
   const [receiptOrder, setReceiptOrder] = useState<PosOrderRecord | null>(null);
+  const [purchaseInvoice, setPurchaseInvoice] = useState<PurchaseInvoiceData | null>(null);
+
+  // Top-level independent POS module tabs: Terminal & Menu vs POS Dashboard
+  const [posModuleTab, setPosModuleTab] = useState<'terminal' | 'dashboard'>('terminal');
 
   // View toggle between Menu + KDS and Purchases Log
   const [activeSubTab, setActiveSubTab] = useState<'kds' | 'purchases'>('kds');
 
   const inHouseGuests = useMemo(
-    () => reservations.filter((r) => r.status === 'checked_in'),
+    () =>
+      reservations
+        .filter((r) => r.status === 'checked_in')
+        .sort((a, b) => (a.roomNumber || '').localeCompare(b.roomNumber || '', undefined, { numeric: true })),
     [reservations]
   );
+
+  const selectedInHouseGuest = useMemo(
+    () => (chargeTarget !== 'walkin' ? inHouseGuests.find((r) => r.id === chargeTarget) : undefined),
+    [chargeTarget, inHouseGuests]
+  );
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  const posDashboardMetrics = useMemo(() => {
+    const todayOrders = posOrders.filter((o) => (o.orderDate || '') === todayIso);
+    const todayRevenue = todayOrders.reduce((s, o) => s + (o.totalNgn || 0), 0);
+    const allTimeRevenue = posOrders.reduce((s, o) => s + (o.totalNgn || 0), 0);
+    const billedToRoomsTotal = posOrders
+      .filter((o) => o.paymentStatus === 'room_folio' || o.paymentMethod === 'Room Folio')
+      .reduce((s, o) => s + (o.totalNgn || 0), 0);
+    const activeKitchenCount = posOrders.filter((o) => o.kitchenStatus !== 'served').length;
+    const directPaidTotal = posOrders
+      .filter((o) => o.paymentStatus !== 'room_folio' && o.paymentMethod !== 'Room Folio')
+      .reduce((s, o) => s + (o.totalNgn || 0), 0);
+    return {
+      todayOrdersCount: todayOrders.length,
+      todayRevenue,
+      allTimeRevenue,
+      billedToRoomsTotal,
+      activeKitchenCount,
+      directPaidTotal,
+    };
+  }, [posOrders, todayIso]);
 
   const visibleMenu = useMemo(() => {
     const q = searchMenu.trim().toLowerCase();
@@ -218,6 +257,25 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     }
   };
 
+  const handlePaymentMethodChange = (nextMethod: PosOrderRecord['paymentMethod']) => {
+    setPaymentMethod(nextMethod);
+    if (nextMethod === 'Room Folio') {
+      if (chargeTarget === 'walkin' && inHouseGuests.length > 0) {
+        setChargeTarget(inHouseGuests[0].id);
+        setServiceType('Room Service');
+      }
+    } else if (chargeTarget !== 'walkin') {
+      // Allow settled walk-in / direct payment even if an in-house guest orders and pays immediately
+    }
+  };
+
+  const handleSelectInHouseGuestForBilling = (res: ReservationRecord) => {
+    setChargeTarget(res.id);
+    setPaymentMethod('Room Folio');
+    setServiceType('Room Service');
+    setPosModuleTab('terminal');
+  };
+
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
@@ -229,11 +287,17 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           ? inHouseGuests[0]
           : undefined;
 
-    const effectiveMethod: PosOrderRecord['paymentMethod'] = linkedRes
-      ? 'Room Folio'
-      : paymentMethod === 'Room Folio'
-        ? 'Cash NGN'
-        : paymentMethod;
+    if (paymentMethod === 'Room Folio' && !linkedRes) {
+      onNotify('No checked-in guest selected for Bill to Room. Select an active in-house guest.');
+      return;
+    }
+
+    const effectiveMethod: PosOrderRecord['paymentMethod'] =
+      paymentMethod === 'Room Folio' && linkedRes
+        ? 'Room Folio'
+        : paymentMethod === 'Room Folio'
+          ? 'Cash NGN'
+          : paymentMethod;
 
     const targetLabel = linkedRes
       ? `Room ${linkedRes.roomNumber} (${linkedRes.guestName})`
@@ -260,8 +324,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       });
 
       onNotify(
-        linkedRes
-          ? `Charged ${formatNgn(totalNgn)} to Room ${linkedRes.roomNumber} Folio & sent to Kitchen`
+        effectiveMethod === 'Room Folio' && linkedRes
+          ? `Billed ${formatNgn(totalNgn)} to Room ${linkedRes.roomNumber} (${linkedRes.guestName}) & sent to Kitchen`
           : `Settled ${formatNgn(totalNgn)} (${effectiveMethod}) & placed order`
       );
       setCart([]);
@@ -369,7 +433,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     setSavingPurchase(true);
     try {
       const linkedInv = purInvId ? inventoryItems.find((i) => i.id === purInvId) : undefined;
-      await recordPosPurchaseWorkflow({
+      const recorded = await recordPosPurchaseWorkflow({
         property,
         itemDescription: purItemDesc,
         supplierName: purSupplier,
@@ -383,6 +447,36 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       });
       onNotify(`Recorded POS purchase ${formatNgn(purAmount)} (${purItemDesc.trim()})`);
       setPurchaseModalOpen(false);
+      if (recorded) {
+        setPurchaseInvoice({
+          invoiceNumber: recorded.reference,
+          date: recorded.entryDate,
+          title: 'Purchase Invoice',
+          subtitle: 'Purchase recorded — view, print, or save PDF invoice',
+          partyLabel: 'Supplier / Vendor',
+          partyName: recorded.supplierName,
+          category: recorded.category,
+          paymentMethod: recorded.paymentMethod,
+          status: 'Paid',
+          items: [
+            {
+              description: recorded.itemDescription,
+              quantity: Math.max(1, purRestockQty || 1),
+              unitCostNgn:
+                purRestockQty > 0
+                  ? Math.round(recorded.amountNgn / Math.max(1, purRestockQty))
+                  : recorded.amountNgn,
+              totalNgn: recorded.amountNgn,
+            },
+          ],
+          subtotalNgn: recorded.amountNgn,
+          vatNgn: 0,
+          totalNgn: recorded.amountNgn,
+          notes: linkedInv
+            ? `Linked Store Inventory restock: ${linkedInv.name} (+${purRestockQty} ${linkedInv.unit})`
+            : undefined,
+        });
+      }
       setPurItemDesc('');
       setPurSupplier('');
       setPurAmount(15000);
@@ -478,10 +572,14 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Payment Method: ${ord.paymentMethod}`, 5, y);
+    doc.text(
+      `Payment Method: ${ord.paymentMethod === 'Room Folio' ? 'Bill to Room' : ord.paymentMethod}`,
+      5,
+      y
+    );
     y += 4;
     doc.text(
-      `Status: ${ord.paymentStatus === 'room_folio' ? 'Posted to Room Folio' : ord.paymentStatus.toUpperCase()}`,
+      `Status: ${ord.paymentStatus === 'room_folio' ? 'Billed to Room Account' : ord.paymentStatus.toUpperCase()}`,
       5,
       y
     );
@@ -501,18 +599,44 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   return (
     <>
       <div className="no-print space-y-6">
-        {/* Clean Header Row (Inspired by IMG_2077.png) */}
+        {/* Clean Header Row with Independent Restaurant POS Module Navigation */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="font-display text-2xl font-bold text-slate-900">
-              {cms.pages.pos_kitchen.title || 'Point of Sale'}
+              {cms.pages.pos_kitchen.title || 'Restaurant POS'}
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              {cms.pages.pos_kitchen.subtitle}
+              {cms.pages.pos_kitchen.subtitle || 'Independent Restaurant Point of Sale, Menu, Dashboard & Room Billing'}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setPosModuleTab('terminal')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  posModuleTab === 'terminal'
+                    ? 'bg-[#0b5d34] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <UtensilsCrossed className="w-3.5 h-3.5" />
+                <span>POS Menu &amp; Terminal</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPosModuleTab('dashboard')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  posModuleTab === 'dashboard'
+                    ? 'bg-[#0b5d34] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span>POS Dashboard</span>
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => setPurchaseModalOpen(true)}
@@ -534,10 +658,254 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           </div>
         </div>
 
-        {/* Main Two-Column POS Layout: Left Menu + History (7 cols), Right Order Ticket (5 cols) */}
+        {/* POS DASHBOARD VIEW (Independent Restaurant POS Analytics & In-House Room Accounts) */}
+        {posModuleTab === 'dashboard' ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Today&apos;s POS Sales
+                </p>
+                <p className="font-mono-tabular text-2xl font-bold text-[#0b5d34]">
+                  {formatNgn(posDashboardMetrics.todayRevenue)}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {posDashboardMetrics.todayOrdersCount} order{posDashboardMetrics.todayOrdersCount === 1 ? '' : 's'} today
+                </p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Billed to Guest Rooms
+                </p>
+                <p className="font-mono-tabular text-2xl font-bold text-[#1c46be]">
+                  {formatNgn(posDashboardMetrics.billedToRoomsTotal)}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {inHouseGuests.length} current in-house guest{inHouseGuests.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Direct POS Payments
+                </p>
+                <p className="font-mono-tabular text-2xl font-bold text-slate-900">
+                  {formatNgn(posDashboardMetrics.directPaidTotal)}
+                </p>
+                <p className="text-[11px] text-slate-500">Cash, Card POS &amp; Transfer</p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Active Kitchen Tickets
+                </p>
+                <p className="font-mono-tabular text-2xl font-bold text-amber-700">
+                  {posDashboardMetrics.activeKitchenCount}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {posOrders.length} total POS orders · {effectiveMenu.length} menu items
+                </p>
+              </div>
+            </div>
+
+            {/* Live In-House Guests linked with PMS */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <BedDouble className="w-4 h-4 text-[#0b5d34]" />
+                  <h2 className="font-display text-sm font-bold text-slate-900">
+                    Current In-House Guests (Bill to Room)
+                  </h2>
+                </div>
+                <span className="font-mono-tabular text-xs font-semibold text-emerald-700">
+                  {inHouseGuests.length} checked-in
+                </span>
+              </div>
+              {inHouseGuests.length === 0 ? (
+                <p className="text-xs text-slate-500 p-6 text-center">
+                  No guests are currently checked in. Checked-in guests appear here automatically for room billing.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-600">
+                        <th className="py-3 px-4">Room</th>
+                        <th className="py-3 px-4">Guest Name</th>
+                        <th className="py-3 px-4">Reservation Ref</th>
+                        <th className="py-3 px-4">Stay Dates</th>
+                        <th className="py-3 px-4 text-right">POS Room Charges</th>
+                        <th className="py-3 px-4 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {inHouseGuests.map((guestRes) => (
+                        <tr key={guestRes.id} className="hover:bg-slate-50">
+                          <td className="py-3 px-4 font-bold text-slate-900">
+                            Room {guestRes.roomNumber}
+                          </td>
+                          <td className="py-3 px-4 font-medium text-slate-800">
+                            {guestRes.guestName}
+                          </td>
+                          <td className="py-3 px-4 font-mono-tabular text-slate-600">
+                            {guestRes.bookingRef}
+                          </td>
+                          <td className="py-3 px-4 font-mono-tabular text-slate-600">
+                            {guestRes.checkInDate} → {guestRes.checkOutDate}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular font-bold text-[#1c46be]">
+                            {formatNgn(guestRes.posChargesNgn || 0)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectInHouseGuestForBilling(guestRes)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] text-white font-semibold cursor-pointer whitespace-nowrap"
+                            >
+                              <Receipt className="w-3.5 h-3.5" />
+                              <span>Bill to Room</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Recent POS Orders & Print Invoices */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+                <h2 className="font-display text-sm font-bold text-slate-900">
+                  Recent Restaurant POS Orders
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setPosModuleTab('terminal')}
+                  className="text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+                >
+                  Open POS Terminal →
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-600">
+                      <th className="py-3 px-4">Order #</th>
+                      <th className="py-3 px-4">Date</th>
+                      <th className="py-3 px-4">Room / Table</th>
+                      <th className="py-3 px-4">Items</th>
+                      <th className="py-3 px-4">Payment</th>
+                      <th className="py-3 px-4 text-right">Total</th>
+                      <th className="py-3 px-4 text-right">Invoice</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {posOrders.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-slate-500">
+                          No restaurant POS transactions recorded yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      posOrders.slice(0, 20).map((ord) => (
+                        <tr key={ord.id} className="hover:bg-slate-50">
+                          <td className="py-3 px-4 font-mono-tabular font-bold text-slate-900">
+                            {ord.orderNumber}
+                          </td>
+                          <td className="py-3 px-4 font-mono-tabular text-slate-600">
+                            {ord.orderDate}
+                          </td>
+                          <td className="py-3 px-4 font-medium text-slate-800">
+                            {ord.tableOrRoom}
+                          </td>
+                          <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
+                            {ord.itemsSummary}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                ord.paymentMethod === 'Room Folio' || ord.paymentStatus === 'room_folio'
+                                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              {ord.paymentMethod === 'Room Folio' ? 'Bill to Room' : ord.paymentMethod}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono-tabular font-bold text-slate-900">
+                            {formatNgn(ord.totalNgn)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => setReceiptOrder(ord)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-100 text-slate-800 font-semibold cursor-pointer whitespace-nowrap"
+                            >
+                              <Printer className="w-3 h-3" />
+                              <span>Print Invoice</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : (
+        /* Main Two-Column POS Layout: Left Menu + In-House Guests + History (7 cols), Right Order Ticket (5 cols) */
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-          {/* Left Column: Category Tabs, Search & Interactive Menu Grid */}
+          {/* Left Column: Current In-House Guests Bar, Category Tabs, Search & Interactive Menu Grid */}
           <div className="xl:col-span-7 space-y-5">
+            {/* Automatic PMS In-House Guests Quick-Select Strip */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                  <BedDouble className="w-4 h-4 text-[#0b5d34]" />
+                  <span>Current In-House Guests ({inHouseGuests.length})</span>
+                </div>
+                <span className="text-[11px] text-slate-500">
+                  Click any guest to Bill to Room
+                </span>
+              </div>
+              {inHouseGuests.length === 0 ? (
+                <p className="text-[11px] text-slate-500">
+                  No checked-in guests at the moment — orders default to Walk-in settlement.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {inHouseGuests.map((guestRes) => {
+                    const isSelected = chargeTarget === guestRes.id;
+                    return (
+                      <button
+                        key={guestRes.id}
+                        type="button"
+                        onClick={() => handleSelectInHouseGuestForBilling(guestRes)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#0b5d34] border-[#0b5d34] text-white font-semibold'
+                            : 'bg-slate-50 border-slate-200 text-slate-800 hover:border-[#0b5d34] hover:bg-emerald-50/60'
+                        }`}
+                      >
+                        <span className="font-mono-tabular font-bold">Rm {guestRes.roomNumber}</span>
+                        <span>·</span>
+                        <span className="max-w-[130px] truncate">{guestRes.guestName}</span>
+                        {(guestRes.posChargesNgn || 0) > 0 && (
+                          <span
+                            className={`font-mono-tabular text-[10px] px-1.5 py-0.5 rounded ${
+                              isSelected ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-800'
+                            }`}
+                          >
+                            {formatNgn(guestRes.posChargesNgn)}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-1.5">
                 {categories.map((cat) => (
@@ -726,7 +1094,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
                         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 text-xs">
                           <span className="font-mono-tabular font-semibold text-slate-900">
-                            {formatNgn(ord.totalNgn)} · {ord.paymentMethod}
+                            {formatNgn(ord.totalNgn)} ·{' '}
+                            {ord.paymentMethod === 'Room Folio' ? 'Bill to Room' : ord.paymentMethod}
                           </span>
 
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -810,9 +1179,43 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                             {entry.reference ? ` · ${entry.reference}` : ''}
                           </p>
                         </div>
-                        <span className="font-mono-tabular font-bold text-rose-700 shrink-0">
-                          -{formatNgn(entry.amountNgn)}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="font-mono-tabular font-bold text-rose-700">
+                            -{formatNgn(entry.amountNgn)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const [descPart, supplierPart] = entry.description.split(' — ');
+                              setPurchaseInvoice({
+                                invoiceNumber: entry.reference || entry.id,
+                                date: entry.entryDate,
+                                title: 'Purchase Invoice',
+                                subtitle: 'Recorded F&B / Supply Purchase Invoice',
+                                partyLabel: 'Supplier / Vendor',
+                                partyName: supplierPart || entry.category,
+                                category: entry.category,
+                                paymentMethod: entry.paymentMethod,
+                                status: 'Paid',
+                                items: [
+                                  {
+                                    description: descPart || entry.description,
+                                    quantity: 1,
+                                    unitCostNgn: entry.amountNgn,
+                                    totalNgn: entry.amountNgn,
+                                  },
+                                ],
+                                subtotalNgn: entry.amountNgn,
+                                vatNgn: entry.vatNgn || 0,
+                                totalNgn: entry.amountNgn,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-semibold cursor-pointer whitespace-nowrap"
+                          >
+                            <Printer className="w-3 h-3" />
+                            <span>Print Invoice</span>
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -838,7 +1241,9 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block font-medium text-slate-700 mb-1">Charge to</label>
+                <label className="block font-medium text-slate-700 mb-1">
+                  Charge to (In-House Guest / Walk-in)
+                </label>
                 <select
                   value={chargeTarget}
                   onChange={(e) => handleChargeTargetChange(e.target.value)}
@@ -847,10 +1252,19 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   <option value="walkin">Walk-in / Direct Settlement</option>
                   {inHouseGuests.map((res) => (
                     <option key={res.id} value={res.id}>
-                      Rm {res.roomNumber} · {res.guestName}
+                      Rm {res.roomNumber} · {res.guestName} ({res.bookingRef})
                     </option>
                   ))}
                 </select>
+                {selectedInHouseGuest && (
+                  <p className="mt-1.5 text-[11px] font-medium text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1.5">
+                    Linked to active reservation{' '}
+                    <span className="font-mono-tabular font-bold">
+                      {selectedInHouseGuest.bookingRef}
+                    </span>{' '}
+                    · Room {selectedInHouseGuest.roomNumber} ({selectedInHouseGuest.guestName})
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
@@ -1037,7 +1451,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <select
                   value={paymentMethod}
                   onChange={(e) =>
-                    setPaymentMethod(e.target.value as PosOrderRecord['paymentMethod'])
+                    handlePaymentMethodChange(e.target.value as PosOrderRecord['paymentMethod'])
                   }
                   className="border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-medium bg-white"
                 >
@@ -1045,7 +1459,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   <option value="Card POS">Card POS</option>
                   <option value="Bank Transfer">Bank Transfer</option>
                   <option value="Room Folio" disabled={inHouseGuests.length === 0}>
-                    Room Folio
+                    Bill to Room {inHouseGuests.length === 0 ? '(No In-House)' : ''}
                   </option>
                 </select>
 
@@ -1055,7 +1469,13 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
                 >
                   <Check className="w-3.5 h-3.5" />
-                  <span>{submitting ? 'Placing...' : 'Place'}</span>
+                  <span>
+                    {submitting
+                      ? 'Placing...'
+                      : paymentMethod === 'Room Folio'
+                        ? 'Bill to Room'
+                        : 'Place Order'}
+                  </span>
                 </button>
               </div>
 
@@ -1070,6 +1490,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
             </div>
           </form>
         </div>
+        )}
 
         {/* Add / Edit POS Menu Item Modal */}
         {menuModalOpen && canManageMenu && (
@@ -1442,12 +1863,18 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     <span className="font-mono-tabular">{formatNgn(receiptOrder.vatNgn)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-sm text-slate-900 pt-1 border-t border-slate-200">
-                    <span>Total Paid</span>
+                    <span>
+                      {receiptOrder.paymentStatus === 'room_folio' ? 'Total Billed to Room' : 'Total Paid'}
+                    </span>
                     <span className="font-mono-tabular">{formatNgn(receiptOrder.totalNgn)}</span>
                   </div>
                   <div className="flex justify-between text-[11px] text-slate-500 pt-1">
                     <span>Payment Method</span>
-                    <span className="font-semibold text-slate-800">{receiptOrder.paymentMethod}</span>
+                    <span className="font-semibold text-slate-800">
+                      {receiptOrder.paymentMethod === 'Room Folio'
+                        ? 'Bill to Room'
+                        : receiptOrder.paymentMethod}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1459,7 +1886,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Print Receipt</span>
+                  <span>Print Invoice</span>
                 </button>
                 <button
                   type="button"
@@ -1467,7 +1894,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>PDF Receipt</span>
+                  <span>Download PDF</span>
                 </button>
               </div>
             </div>
@@ -1532,14 +1959,26 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               <span>{formatNgn(receiptOrder.totalNgn)}</span>
             </div>
             <p className="pt-1">
-              <strong>Method:</strong> {receiptOrder.paymentMethod} (
-              {receiptOrder.paymentStatus === 'room_folio' ? 'Posted to Room Folio' : 'Paid'})
+              <strong>Method:</strong>{' '}
+              {receiptOrder.paymentMethod === 'Room Folio'
+                ? 'Bill to Room'
+                : receiptOrder.paymentMethod}{' '}
+              ({receiptOrder.paymentStatus === 'room_folio' ? 'Billed to Room Account' : 'Paid'})
             </p>
           </div>
           <p className="text-center text-[10px] mt-4">
             {cms.brand.folioFooterNote || `Thank you for choosing ${property.name}.`}
           </p>
         </div>
+      )}
+
+      {purchaseInvoice && (
+        <PurchaseInvoiceModal
+          property={property}
+          invoice={purchaseInvoice}
+          onClose={() => setPurchaseInvoice(null)}
+          onNotify={onNotify}
+        />
       )}
     </>
   );

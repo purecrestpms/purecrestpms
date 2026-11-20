@@ -90,17 +90,11 @@ const RESERVATION_SUB_ITEMS: SubMenuItem[] = [
 
 const ROOM_SUB_ITEMS: SubMenuItem[] = [
   { id: 'rooms', label: 'All Rooms', icon: BedDouble },
-  { id: 'maintenance', label: 'Maintenance', icon: Wrench },
-  { id: 'inventory', label: 'Store Inventory', icon: Package },
-  { id: 'procurement', label: 'Procurement & POs', icon: ShoppingCart },
 ];
 
 const GUEST_SUB_ITEMS: SubMenuItem[] = [
   { id: 'guests', label: 'Guest Directory', icon: Users },
   { id: 'invoices', label: 'Invoices & Receipts', icon: FileText },
-  { id: 'shifts_attendance', label: 'Shifts & Attendance', icon: Clock },
-  { id: 'payroll', label: 'Monthly Payroll', icon: Wallet },
-  { id: 'shift_daily_report', label: 'Shift Daily Report', icon: ClipboardList },
 ];
 
 const PchHouseLogo: React.FC<{ className?: string }> = ({ className = 'w-9 h-9' }) => (
@@ -436,8 +430,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const renderPropertySidebarNav = (isCollapsed: boolean) => {
     const showDistribution = canSee('ota_channels') || canSee('calendar');
+    const showStaffManagement =
+      canSee('shifts_attendance') || canSee('payroll') || canSee('shift_daily_report');
+    const showRestaurantPos = canSee('pos_kitchen');
     const showReports = canSee('reports');
     const showAdminGroup =
+      canSee('procurement') ||
+      canSee('inventory') ||
+      canSee('maintenance') ||
       canSee('user_management') ||
       canSee('staff') ||
       canSee('profile') ||
@@ -506,19 +506,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </button>
           )}
-          {canSee('pos_kitchen') && (
-            <button
-              type="button"
-              onClick={() => handleNavClick('pos_kitchen')}
-              title={isCollapsed ? 'Point of Sale (POS)' : undefined}
-              className={navItemClass(activeSection === 'pos_kitchen', isCollapsed)}
-            >
-              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-                <ChefHat className={iconClass(activeSection === 'pos_kitchen')} />
-                {!isCollapsed && <span className="truncate">POS</span>}
-              </span>
-            </button>
-          )}
           {canSee('housekeeping') && (
             <button
               type="button"
@@ -546,6 +533,78 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           )}
         </div>
+
+        {/* RESTAURANT POS (Independent Module) */}
+        {showRestaurantPos && (
+          <div className="pt-2.5 border-t border-slate-100 space-y-0.5">
+            {!isCollapsed && (
+              <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Restaurant POS
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => handleNavClick('pos_kitchen')}
+              title={isCollapsed ? 'Restaurant POS' : undefined}
+              className={navItemClass(activeSection === 'pos_kitchen', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <ChefHat className={iconClass(activeSection === 'pos_kitchen')} />
+                {!isCollapsed && <span className="truncate">Restaurant POS</span>}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* STAFF MANAGEMENT */}
+        {showStaffManagement && (
+          <div className="pt-2.5 border-t border-slate-100 space-y-0.5">
+            {!isCollapsed && (
+              <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Staff Management
+              </p>
+            )}
+            {canSee('shifts_attendance') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('shifts_attendance')}
+                title={isCollapsed ? 'Shifts & Attendance' : undefined}
+                className={navItemClass(activeSection === 'shifts_attendance', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Clock className={iconClass(activeSection === 'shifts_attendance')} />
+                  {!isCollapsed && <span className="truncate">Shifts &amp; Attendance</span>}
+                </span>
+              </button>
+            )}
+            {canSee('payroll') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('payroll')}
+                title={isCollapsed ? 'Monthly Payroll' : undefined}
+                className={navItemClass(activeSection === 'payroll', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Wallet className={iconClass(activeSection === 'payroll')} />
+                  {!isCollapsed && <span className="truncate">Monthly Payroll</span>}
+                </span>
+              </button>
+            )}
+            {canSee('shift_daily_report') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('shift_daily_report')}
+                title={isCollapsed ? 'Shift Daily Reports' : undefined}
+                className={navItemClass(activeSection === 'shift_daily_report', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <ClipboardList className={iconClass(activeSection === 'shift_daily_report')} />
+                  {!isCollapsed && <span className="truncate">Shift Daily Reports</span>}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* DISTRIBUTION */}
         {showDistribution && (
@@ -659,6 +718,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 Administration
               </p>
+            )}
+            {canSee('procurement') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('procurement')}
+                title={isCollapsed ? 'Procurement' : undefined}
+                className={navItemClass(activeSection === 'procurement', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <ShoppingCart className={iconClass(activeSection === 'procurement')} />
+                  {!isCollapsed && <span className="truncate">Procurement</span>}
+                </span>
+              </button>
+            )}
+            {canSee('inventory') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('inventory')}
+                title={isCollapsed ? 'Store Inventory' : undefined}
+                className={navItemClass(activeSection === 'inventory', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Package className={iconClass(activeSection === 'inventory')} />
+                  {!isCollapsed && <span className="truncate">Store Inventory</span>}
+                </span>
+              </button>
+            )}
+            {canSee('maintenance') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('maintenance')}
+                title={isCollapsed ? 'Maintenance' : undefined}
+                className={navItemClass(activeSection === 'maintenance', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Wrench className={iconClass(activeSection === 'maintenance')} />
+                  {!isCollapsed && <span className="truncate">Maintenance</span>}
+                </span>
+              </button>
             )}
             {canSee('user_management') && (
               <button

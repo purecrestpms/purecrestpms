@@ -414,12 +414,13 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
   const handleDayClick = (cell: (typeof cellStatuses)[number]) => {
     setClickNotice(null);
 
+    if (cell.iso < todayIso) {
+      return;
+    }
+
     if (openField === 'check_in' && !lockCheckIn) {
       const targetDay = checkTargetDayAvailability(cell.iso);
       if (!targetDay.available) {
-        setClickNotice(
-          `${formatPrettyDate(cell.iso)} is unavailable — ${targetDay.detail}`
-        );
         return;
       }
       const nextOut =
@@ -484,9 +485,6 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
       });
 
       if (!rangeTest.available) {
-        setClickNotice(
-          `Cannot check out on ${formatPrettyDate(cell.iso)}: ${rangeTest.message}`
-        );
         return;
       }
 
@@ -722,15 +720,14 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
               </button>
             </div>
 
-            {/* Synced Airbnb / OTA Live Indicator (Property-wide + 1-click month jump) */}
+            {/* Active Airbnb / OTA Bookings Strip (Property-wide + 1-click month jump) */}
             {allPropertyOtaBookings.length > 0 && (
               <div className="rounded-lg bg-orange-50/85 border border-orange-200 px-2.5 py-2 text-[11px] font-medium text-orange-950 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <span>
                     {monthOtaSummary.propertyAirbnb > 0
                       ? `${monthOtaSummary.propertyAirbnb} Airbnb booking${monthOtaSummary.propertyAirbnb > 1 ? 's' : ''}`
-                      : `${monthOtaSummary.propertyTotal} OTA booking${monthOtaSummary.propertyTotal > 1 ? 's' : ''}`}{' '}
-                    synced
+                      : `${monthOtaSummary.propertyTotal} OTA booking${monthOtaSummary.propertyTotal > 1 ? 's' : ''}`}
                     {monthOtaSummary.propertyTotal > monthOtaSummary.propertyAirbnb &&
                     monthOtaSummary.propertyAirbnb > 0
                       ? ` (+${monthOtaSummary.propertyTotal - monthOtaSummary.propertyAirbnb} other OTA)`
@@ -741,7 +738,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                   </span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                    Synced
+                    Active
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1">
@@ -820,6 +817,7 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                   cell.iso > checkInDate &&
                   cell.iso < checkOutDate;
                 const isToday = cell.iso === todayIso;
+                const isPastDate = cell.iso < todayIso;
 
                 const isReservedLike =
                   cell.info.status === 'reserved' ||
@@ -828,14 +826,15 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                 const isOtaBooked = Boolean(cell.info.isOta);
                 const isBlocked = cell.info.status === 'blocked';
                 const isOoo = cell.info.status === 'out_of_order';
-                const isUnavailable = !cell.info.available;
+                const isUnavailable = !cell.info.available || isPastDate;
 
                 // Turnover rule: when picking check-out, a reserved/blocked day can still be a valid check-out
                 // if all nights strictly before it are free
                 const canBeTurnoverCheckout =
+                  !isPastDate &&
                   openField === 'check_out' &&
                   cell.iso > checkInDate &&
-                  isUnavailable &&
+                  !cell.info.available &&
                   checkRoomDateRangeAvailability({
                     room,
                     roomType,
@@ -847,69 +846,94 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                     excludeReservationId,
                   }).available;
 
+                const crossesUnavailableOnCheckout =
+                  !isPastDate &&
+                  openField === 'check_out' &&
+                  cell.iso > checkInDate &&
+                  !canBeTurnoverCheckout &&
+                  !checkRoomDateRangeAvailability({
+                    room,
+                    roomType,
+                    rooms,
+                    checkInDate,
+                    checkOutDate: cell.iso,
+                    reservations,
+                    blockedDates,
+                    excludeReservationId,
+                  }).available;
+
+                const isUnselectable =
+                  isPastDate ||
+                  (openField === 'check_in' && !lockCheckIn && !cell.info.available) ||
+                  (openField === 'check_out' &&
+                    ((cell.iso <= checkInDate && (lockCheckIn || !cell.info.available)) ||
+                      (cell.iso > checkInDate && !canBeTurnoverCheckout && (!cell.info.available || crossesUnavailableOnCheckout))));
+
                 let tileClass =
-                  'bg-white text-slate-800 hover:bg-emerald-50 hover:border-emerald-500 border-transparent';
+                  'bg-white text-slate-800 hover:bg-emerald-50 hover:border-emerald-500 border-transparent cursor-pointer';
 
                 if (isCheckIn || isCheckOut) {
                   tileClass =
                     mode === 'block'
-                      ? 'bg-rose-700 text-white font-extrabold border-rose-700 shadow-2xs'
-                      : 'bg-[#0c562c] text-white font-extrabold border-[#0c562c] shadow-2xs';
+                      ? 'bg-rose-700 text-white font-extrabold border-rose-700 shadow-2xs cursor-pointer'
+                      : 'bg-[#0c562c] text-white font-extrabold border-[#0c562c] shadow-2xs cursor-pointer';
+                } else if (isUnselectable) {
+                  tileClass =
+                    'bg-slate-100 text-slate-400 border-slate-200/80 line-through decoration-slate-400/80 cursor-not-allowed';
+                } else if (canBeTurnoverCheckout) {
+                  tileClass =
+                    'bg-slate-50 text-slate-700 border-emerald-400 border-dashed hover:bg-emerald-50 cursor-pointer';
                 } else if (isInRange) {
                   tileClass = isUnavailable
-                    ? 'bg-rose-200 text-rose-900 border-rose-400 font-bold'
+                    ? 'bg-slate-200 text-slate-500 border-slate-300 font-semibold cursor-not-allowed'
                     : mode === 'block'
-                      ? 'bg-rose-100 text-rose-900 border-rose-200 font-semibold'
-                      : 'bg-emerald-100 text-emerald-950 border-emerald-200 font-semibold';
-                } else if (isBlocked || isOoo) {
-                  tileClass = canBeTurnoverCheckout
-                    ? 'bg-rose-50 text-rose-800 border-rose-300 border-dashed hover:bg-emerald-50'
-                    : 'bg-rose-100/90 text-rose-700 border-rose-200 line-through decoration-rose-500/70';
-                } else if (isReservedLike && isOtaBooked) {
-                  tileClass = canBeTurnoverCheckout
-                    ? 'bg-orange-50 text-orange-900 border-orange-300 border-dashed hover:bg-emerald-50'
-                    : 'bg-orange-100/90 text-orange-950 border-orange-300 font-semibold';
-                } else if (isReservedLike) {
-                  tileClass = canBeTurnoverCheckout
-                    ? 'bg-amber-50 text-amber-900 border-amber-300 border-dashed hover:bg-emerald-50'
-                    : 'bg-amber-100/90 text-amber-900 border-amber-300/80';
+                      ? 'bg-rose-100 text-rose-900 border-rose-200 font-semibold cursor-pointer'
+                      : 'bg-emerald-100 text-emerald-950 border-emerald-200 font-semibold cursor-pointer';
                 } else if (isOtaBooked) {
                   // Room-type mode: some rooms booked on Airbnb/OTA, others still open
                   tileClass =
-                    'bg-orange-50/60 text-slate-800 border-orange-200 hover:bg-emerald-50 hover:border-emerald-500';
+                    'bg-orange-50/60 text-slate-800 border-orange-200 hover:bg-emerald-50 hover:border-emerald-500 cursor-pointer';
                 }
 
                 return (
                   <button
                     key={cell.iso}
                     type="button"
-                    onClick={() => handleDayClick(cell)}
+                    disabled={isUnselectable}
+                    aria-disabled={isUnselectable}
+                    onClick={() => {
+                      if (!isUnselectable) handleDayClick(cell);
+                    }}
                     title={
-                      canBeTurnoverCheckout
-                        ? `Check-out allowed (morning turnover) · Next booking starts ${formatPrettyDate(cell.iso)}`
-                        : cell.info.detail
+                      isPastDate
+                        ? 'Past date — unavailable'
+                        : canBeTurnoverCheckout
+                          ? `Check-out allowed (morning turnover) · Next booking starts ${formatPrettyDate(cell.iso)}`
+                          : isUnselectable
+                            ? `Unavailable — ${cell.info.detail}`
+                            : cell.info.detail
                     }
-                    className={`relative h-9 rounded-lg border text-xs font-mono-tabular flex flex-col items-center justify-center transition-all cursor-pointer ${tileClass} ${
+                    className={`relative h-9 rounded-lg border text-xs font-mono-tabular flex flex-col items-center justify-center transition-all ${tileClass} ${
                       !cell.inMonth ? 'opacity-40' : ''
                     } ${isToday && !isCheckIn && !isCheckOut ? 'ring-1 ring-[#1c46be]' : ''}`}
                   >
                     <span className="leading-none">{cell.dayNum}</span>
-                    {!isCheckIn && !isCheckOut && isOtaBooked && (
-                      <span className="w-1.5 h-1.5 rounded-full mt-0.5 bg-orange-600" />
-                    )}
-                    {!isCheckIn && !isCheckOut && !isOtaBooked && isReservedLike && (
+                    {!isCheckIn && !isCheckOut && !isPastDate && isOtaBooked && (
                       <span
                         className={`w-1.5 h-1.5 rounded-full mt-0.5 ${
-                          cell.info.status === 'checked_in'
-                            ? 'bg-emerald-600'
-                            : cell.info.status === 'pending'
-                              ? 'bg-violet-600'
-                              : 'bg-amber-600'
+                          isUnselectable ? 'bg-slate-400' : 'bg-orange-600'
                         }`}
                       />
                     )}
-                    {!isCheckIn && !isCheckOut && (isBlocked || isOoo) && (
-                      <span className="w-1.5 h-1.5 rounded-full mt-0.5 bg-rose-600" />
+                    {!isCheckIn && !isCheckOut && !isPastDate && !isOtaBooked && isReservedLike && (
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full mt-0.5 ${
+                          isUnselectable ? 'bg-slate-400' : 'bg-amber-600'
+                        }`}
+                      />
+                    )}
+                    {!isCheckIn && !isCheckOut && !isPastDate && (isBlocked || isOoo) && (
+                      <span className="w-1.5 h-1.5 rounded-full mt-0.5 bg-slate-400" />
                     )}
                   </button>
                 );
@@ -927,16 +951,12 @@ export const AvailabilityDateRangePicker: React.FC<AvailabilityDateRangePickerPr
                 Selected
               </span>
               <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded bg-slate-200 border border-slate-300" />
+                Unavailable (Greyed)
+              </span>
+              <span className="inline-flex items-center gap-1">
                 <span className="w-2.5 h-2.5 rounded bg-orange-200 border border-orange-400" />
                 Airbnb / OTA
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded bg-amber-200 border border-amber-400" />
-                Reserved
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded bg-rose-200 border border-rose-400" />
-                Blocked
               </span>
             </div>
           </div>

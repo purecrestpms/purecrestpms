@@ -2701,8 +2701,19 @@ export async function recordPosPurchaseWorkflow(params: {
       details: `${params.itemDescription.trim()} (${params.supplierName.trim()}) · ₦${cleanAmount.toLocaleString('en-NG')}`,
       authorizedEmails: params.property.authorizedEmails,
     });
+    return {
+      id: ledId,
+      reference: refLabel,
+      entryDate: params.entryDate || new Date().toISOString().slice(0, 10),
+      itemDescription: params.itemDescription.trim(),
+      supplierName: params.supplierName.trim(),
+      category: params.category,
+      amountNgn: cleanAmount,
+      paymentMethod: params.paymentMethod || 'Cash NGN',
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `properties/${params.property.id}/ledger_entries/${ledId}`);
+    return undefined;
   }
 }
 
@@ -2759,10 +2770,19 @@ export async function submitPosOrderWorkflow(params: {
   batch.set(doc(db, 'properties', params.property.id, 'pos_orders', id), payload);
 
   if (isRoomFolio && params.linkedReservation) {
-    batch.update(doc(db, 'properties', params.property.id, 'reservations', params.linkedReservation.id), {
-      posChargesNgn: params.linkedReservation.posChargesNgn + totalNgn,
+    const nextPosCharges = (params.linkedReservation.posChargesNgn || 0) + totalNgn;
+    const resUpdate: Record<string, unknown> = {
+      posChargesNgn: nextPosCharges,
       updatedAt: now,
-    });
+    };
+    if (typeof params.linkedReservation.amountDueAtPropertyNgn === 'number') {
+      resUpdate.amountDueAtPropertyNgn =
+        Math.max(0, params.linkedReservation.amountDueAtPropertyNgn) + totalNgn;
+    }
+    batch.update(
+      doc(db, 'properties', params.property.id, 'reservations', params.linkedReservation.id),
+      resUpdate
+    );
   } else {
     const ledId = cleanId('led');
     batch.set(doc(db, 'properties', params.property.id, 'ledger_entries', ledId), {
@@ -3059,8 +3079,20 @@ export async function createPurchaseOrder(params: {
       details: `${params.itemName} x${params.quantity} from ${params.supplierName} (₦${totalCostNgn.toLocaleString('en-NG')})`,
       authorizedEmails: params.property.authorizedEmails,
     });
+    return {
+      id,
+      poNumber,
+      supplierName: params.supplierName,
+      itemName: params.itemName,
+      quantity: params.quantity,
+      unitCostNgn: params.unitCostNgn,
+      totalCostNgn,
+      expectedDate: params.expectedDate,
+      status: 'approved' as const,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, ref.path);
+    return undefined;
   }
 }
 

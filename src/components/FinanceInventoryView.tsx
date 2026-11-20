@@ -49,6 +49,7 @@ import {
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 import { ReservationPaymentModal } from './ReservationPaymentModal';
+import { PurchaseInvoiceData, PurchaseInvoiceModal } from './PurchaseInvoiceModal';
 
 function formatPdfNgn(amount: number): string {
   return `NGN ${Math.round(amount).toLocaleString('en-US')}`;
@@ -370,6 +371,8 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
     window.print();
   };
 
+  const [invoiceModal, setInvoiceModal] = useState<PurchaseInvoiceData | null>(null);
+
   const handleAddLedger = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim() || description.trim().length < 2) {
@@ -377,24 +380,51 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       return;
     }
     setActionError(null);
+    const entryDate = new Date().toISOString().slice(0, 10);
+    const reference = `MAN-${Math.floor(100 + Math.random() * 899)}`;
+    const cleanAmt = Math.max(0, amountNgn);
+    const vatAmt = entryType === 'revenue' ? Math.round(cleanAmt * 0.075) : 0;
+    const cleanDesc = description.trim();
     try {
       await createLedgerEntry({
         property,
         entry: {
-          entryDate: new Date().toISOString().slice(0, 10),
+          entryDate,
           entryType,
           category,
-          reference: `MAN-${Math.floor(100 + Math.random() * 899)}`,
-          description: description.trim(),
-          amountNgn: Math.max(0, amountNgn),
-          vatNgn: entryType === 'revenue' ? Math.round(amountNgn * 0.075) : 0,
+          reference,
+          description: cleanDesc,
+          amountNgn: cleanAmt,
+          vatNgn: vatAmt,
           paymentMethod,
         },
         actorRole,
       });
-      onNotify(`Posted ${entryType} entry (${formatNgn(amountNgn)})`);
+      onNotify(`Posted ${entryType} entry (${formatNgn(cleanAmt)})`);
       setShowLedgerForm(false);
       setDescription('');
+      setInvoiceModal({
+        invoiceNumber: reference,
+        date: entryDate,
+        title: entryType === 'expense' ? 'Purchase / Expense Invoice' : 'Transaction Receipt',
+        subtitle: 'Transaction saved — view, print, or download PDF invoice',
+        partyLabel: entryType === 'expense' ? 'Payee / Expense' : 'Payer / Revenue Source',
+        partyName: cleanDesc,
+        category,
+        paymentMethod,
+        status: 'Posted',
+        items: [
+          {
+            description: cleanDesc,
+            quantity: 1,
+            unitCostNgn: cleanAmt,
+            totalNgn: cleanAmt,
+          },
+        ],
+        subtotalNgn: cleanAmt,
+        vatNgn: vatAmt,
+        totalNgn: cleanAmt,
+      });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     }
@@ -554,19 +584,46 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
     const linked = inventoryItems.find((i) => i.id === poItemId);
     const name = linked ? linked.name : 'General Supplies';
     const sup = poSupplier.trim() || linked?.supplierName || 'Ogbete Wholesale Ltd';
+    const qty = Math.max(1, poQty);
+    const unitCost = Math.max(0, poUnitCost || linked?.unitCostNgn || 10000);
     try {
-      await createPurchaseOrder({
+      const createdPo = await createPurchaseOrder({
         property,
         supplierName: sup,
         item: linked,
         itemName: name,
-        quantity: Math.max(1, poQty),
-        unitCostNgn: Math.max(0, poUnitCost || linked?.unitCostNgn || 10000),
+        quantity: qty,
+        unitCostNgn: unitCost,
         expectedDate: poExpectedDate,
         actorRole,
       });
       onNotify(`Issued Purchase Order for ${name}`);
       setShowPoForm(false);
+      if (createdPo) {
+        setInvoiceModal({
+          invoiceNumber: createdPo.poNumber,
+          date: new Date().toISOString().slice(0, 10),
+          title: 'Purchase Order Invoice',
+          subtitle: 'Purchase order issued — print or save PDF immediately',
+          partyLabel: 'Supplier',
+          partyName: createdPo.supplierName,
+          category: 'Procurement',
+          paymentMethod: 'Supplier Account / Bank Transfer',
+          status: 'Approved',
+          items: [
+            {
+              description: createdPo.itemName,
+              quantity: createdPo.quantity,
+              unitCostNgn: createdPo.unitCostNgn,
+              totalNgn: createdPo.totalCostNgn,
+            },
+          ],
+          subtotalNgn: createdPo.totalCostNgn,
+          vatNgn: 0,
+          totalNgn: createdPo.totalCostNgn,
+          notes: `Expected delivery date: ${createdPo.expectedDate}`,
+        });
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     }
@@ -1114,6 +1171,40 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                         <div className="inline-flex items-center gap-1.5">
                           <button
                             type="button"
+                            onClick={() =>
+                              setInvoiceModal({
+                                invoiceNumber: entry.reference || entry.id,
+                                date: entry.entryDate,
+                                title:
+                                  entry.entryType === 'expense'
+                                    ? 'Purchase / Expense Invoice'
+                                    : 'Transaction Receipt',
+                                subtitle: 'Financial ledger transaction invoice',
+                                partyLabel: entry.entryType === 'expense' ? 'Payee / Expense' : 'Source',
+                                partyName: entry.description,
+                                category: entry.category,
+                                paymentMethod: entry.paymentMethod,
+                                status: 'Recorded',
+                                items: [
+                                  {
+                                    description: entry.description,
+                                    quantity: 1,
+                                    unitCostNgn: entry.amountNgn,
+                                    totalNgn: entry.amountNgn,
+                                  },
+                                ],
+                                subtotalNgn: entry.amountNgn,
+                                vatNgn: entry.vatNgn || 0,
+                                totalNgn: entry.amountNgn,
+                              })
+                            }
+                            className="inline-flex items-center gap-1 px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded cursor-pointer"
+                          >
+                            <Printer className="w-3 h-3" />
+                            <span>Invoice</span>
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => openEditLedgerModal(entry)}
                             className="inline-flex items-center gap-1 px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded cursor-pointer"
                           >
@@ -1505,32 +1596,90 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                           {formatNgn(po.totalCostNgn)}
                         </td>
                         <td className="py-3 px-4">
-                          {po.status !== 'received' && po.status !== 'cancelled' ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {po.status !== 'received' && po.status !== 'cancelled' ? (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setActionError(null);
+                                  try {
+                                    await receivePurchaseOrderWorkflow({
+                                      property,
+                                      po,
+                                      linkedItem: linkedInv,
+                                      actorRole,
+                                    });
+                                    onNotify(`Received ${po.poNumber} into Store & Posted Expense`);
+                                    setInvoiceModal({
+                                      invoiceNumber: po.poNumber,
+                                      date: new Date().toISOString().slice(0, 10),
+                                      title: 'Purchase Receipt Invoice',
+                                      subtitle: 'Stock received & expense posted to ledger',
+                                      partyLabel: 'Supplier',
+                                      partyName: po.supplierName,
+                                      category: 'Procurement',
+                                      paymentMethod: 'Bank Transfer / Supplier Account',
+                                      status: 'Received & Paid',
+                                      items: [
+                                        {
+                                          description: po.itemName,
+                                          quantity: po.quantity,
+                                          unitCostNgn: po.unitCostNgn,
+                                          totalNgn: po.totalCostNgn,
+                                        },
+                                      ],
+                                      subtotalNgn: po.totalCostNgn,
+                                      vatNgn: 0,
+                                      totalNgn: po.totalCostNgn,
+                                    });
+                                  } catch (err) {
+                                    setActionError(err instanceof Error ? err.message : String(err));
+                                  }
+                                }}
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium whitespace-nowrap cursor-pointer"
+                              >
+                                Receive Stock &amp; Post Ledger
+                              </button>
+                            ) : (
+                              <span className="font-medium text-emerald-700 capitalize">
+                                {po.status}
+                              </span>
+                            )}
                             <button
                               type="button"
-                              onClick={async () => {
-                                setActionError(null);
-                                try {
-                                  await receivePurchaseOrderWorkflow({
-                                    property,
-                                    po,
-                                    linkedItem: linkedInv,
-                                    actorRole,
-                                  });
-                                  onNotify(`Received ${po.poNumber} into Store & Posted Expense`);
-                                } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
-                                }
-                              }}
-                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium whitespace-nowrap cursor-pointer"
+                              onClick={() =>
+                                setInvoiceModal({
+                                  invoiceNumber: po.poNumber,
+                                  date: po.expectedDate || new Date().toISOString().slice(0, 10),
+                                  title:
+                                    po.status === 'received'
+                                      ? 'Purchase Receipt Invoice'
+                                      : 'Purchase Order Invoice',
+                                  subtitle: `Supplier purchase invoice (${po.status})`,
+                                  partyLabel: 'Supplier',
+                                  partyName: po.supplierName,
+                                  category: 'Procurement',
+                                  paymentMethod: 'Supplier Account / Bank Transfer',
+                                  status: po.status === 'received' ? 'Received & Paid' : po.status,
+                                  items: [
+                                    {
+                                      description: po.itemName,
+                                      quantity: po.quantity,
+                                      unitCostNgn: po.unitCostNgn,
+                                      totalNgn: po.totalCostNgn,
+                                    },
+                                  ],
+                                  subtotalNgn: po.totalCostNgn,
+                                  vatNgn: 0,
+                                  totalNgn: po.totalCostNgn,
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded font-medium whitespace-nowrap cursor-pointer"
                             >
-                              Receive Stock &amp; Post Ledger
+                              <Printer className="w-3 h-3" />
+                              <span>Print Invoice</span>
                             </button>
-                          ) : (
-                            <span className="font-medium text-emerald-700 capitalize">
-                              {po.status}
-                            </span>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1819,6 +1968,15 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
             />
           );
         })()}
+
+      {invoiceModal && (
+        <PurchaseInvoiceModal
+          property={property}
+          invoice={invoiceModal}
+          onClose={() => setInvoiceModal(null)}
+          onNotify={onNotify}
+        />
+      )}
     </div>
   );
 };

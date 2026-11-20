@@ -768,6 +768,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     }
   }, [checkoutTarget?.id]);
 
+  useEffect(() => {
+    setActionError(null);
+    setBookingError(null);
+  }, [section]);
+
   const sortedRooms = sortRoomsByNumber(rooms);
   const bookableRooms = sortedRooms.filter((r) => r.occupancyStatus === 'vacant');
   const uniqueRoomTypes = Array.from(
@@ -2446,8 +2451,36 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (!selectedRoomId && bookableRooms[0]) setSelectedRoomId(bookableRooms[0].id);
+                  const currentRoomObj = selectedRoomId
+                    ? sortedRooms.find((r) => r.id === selectedRoomId)
+                    : undefined;
+                  const currentRoomStillOpen =
+                    currentRoomObj &&
+                    checkRoomDateRangeAvailability({
+                      room: currentRoomObj,
+                      checkInDate,
+                      checkOutDate,
+                      reservations,
+                      blockedDates,
+                    }).available;
+                  if (!currentRoomStillOpen) {
+                    const firstOpen = sortedRooms.find(
+                      (r) =>
+                        checkRoomDateRangeAvailability({
+                          room: r,
+                          checkInDate,
+                          checkOutDate,
+                          reservations,
+                          blockedDates,
+                        }).available
+                    );
+                    setSelectedRoomId(firstOpen ? firstOpen.id : '');
+                    if (firstOpen) {
+                      setNewRequestedRoomType(firstOpen.roomType);
+                    }
+                  }
                   setBookingError(null);
+                  setActionError(null);
                   setShowBookingForm((v) => !v);
                 }}
                 className="h-10 inline-flex items-center gap-1.5 px-4 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer shadow-xs"
@@ -6338,7 +6371,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 space-y-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <h4 className="font-display text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                                3. Payments &amp; Settlement
+                                3. Payment
                               </h4>
                               <span className="text-[11px] font-mono-tabular font-semibold text-emerald-800">
                                 1 USD = ₦{(property.usdExchangeRateNgn || 1600).toLocaleString()}
@@ -7768,8 +7801,22 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   </div>
 
                   {bookingError && (
-                    <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
-                      {bookingError}
+                    <div
+                      role="alert"
+                      className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-start justify-between gap-3"
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <span className="leading-snug font-medium">{bookingError}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setBookingError(null)}
+                        aria-label="Dismiss alert"
+                        className="text-rose-700 hover:text-rose-950 shrink-0 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
                   )}
 
@@ -7790,6 +7837,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       checkInDate={checkInDate}
                       checkOutDate={checkOutDate}
                       onChangeDates={(val, safeOut) => {
+                        setBookingError(null);
                         setCheckInDate(val);
                         setCheckOutDate(safeOut);
                         const nextNights = diffNights(val, safeOut);
@@ -8344,7 +8392,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 space-y-4 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <h3 className="font-display text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                        3. Payments &amp; Settlement
+                        3. Payment
                       </h3>
                       <span className="text-[11px] font-mono-tabular font-semibold text-emerald-800">
                         Internal FX: 1 USD = ₦{internalUsdRate.toLocaleString()}
@@ -8674,69 +8722,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           placeholder="0"
                           className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900"
                         />
-                      </div>
-                    </div>
-
-                    {/* Separated Live Payment Summary Strip */}
-                    <div
-                      className={`grid grid-cols-2 ${isOta ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-2.5 pt-2.5 border-t border-emerald-200/70`}
-                    >
-                      {isOta && (
-                        <div className="bg-white border border-blue-200 rounded-lg px-3 py-2">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-800">
-                            {formatPaymentCollectionLabel(bookingCollectionMode)}
-                          </p>
-                          <p className="font-mono-tabular text-sm font-bold text-blue-800 mt-0.5">
-                            {isCollectedByOtaNew
-                              ? activeCur !== 'NGN' && otaPaidSrc > 0
-                                ? `${formatChannelCurrency(otaPaidSrc, activeCur)} ${activeCur}`
-                                : formatNgn(otaPaidNgnEst || expectedPayoutEst)
-                              : '₦0'}
-                          </p>
-                          <p className="font-mono-tabular text-[10px] text-slate-500">
-                            {isCollectedByOtaNew
-                              ? `OTA Payout: ${bookingOtaPayoutStatus === 'received' ? 'Received' : 'Pending'}`
-                              : 'Collect directly at property'}
-                          </p>
-                        </div>
-                      )}
-                      <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          {isCollectedByOtaNew ? 'Expected OTA Payout' : 'Stay Room Total'}
-                        </p>
-                        <p className="font-mono-tabular text-sm font-bold text-slate-900 mt-0.5">
-                          {formatNgn(expectedPayoutEst)}
-                        </p>
-                        <p className="font-mono-tabular text-[10px] text-slate-500">
-                          ≈ {formatUsd(convertNgnToUsd(expectedPayoutEst, internalUsdRate))} USD
-                        </p>
-                      </div>
-                      <div className="bg-white border border-emerald-200 rounded-lg px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800">
-                          Money Received by Hotel
-                        </p>
-                        <p className="font-mono-tabular text-sm font-bold text-emerald-700 mt-0.5">
-                          {formatNgn(hotelMoneyReceivedEst)}
-                        </p>
-                        <p className="font-mono-tabular text-[10px] text-slate-500">
-                          {paymentMethod}
-                        </p>
-                      </div>
-                      <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          Amount Due at Property
-                        </p>
-                        <p
-                          className={`font-mono-tabular text-sm font-bold mt-0.5 ${
-                            estBalanceDue > 0 ? 'text-rose-700' : 'text-emerald-700'
-                          }`}
-                        >
-                          {formatNgn(estBalanceDue)}{' '}
-                          <span className="text-[11px] font-semibold">({estPayStatus})</span>
-                        </p>
-                        <p className="font-mono-tabular text-[10px] text-slate-500">
-                          ≈ {formatUsd(estBalanceUsd)} USD
-                        </p>
                       </div>
                     </div>
                   </div>

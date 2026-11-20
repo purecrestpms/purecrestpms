@@ -562,8 +562,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
       onNotify?.(
         failedCount > 0
-          ? `OTA sync finished with ${failedCount} feed warning(s): ${totalImported} new, ${totalUpdated} updated (${totalEvents} feed events).`
-          : `OTA calendars synced: ${totalImported} new booking(s), ${totalUpdated} updated across ${totalEvents} feed event(s).`
+          ? `Channel refresh finished with ${failedCount} feed warning(s): ${totalImported} new, ${totalUpdated} updated (${totalEvents} feed events).`
+          : `Channel calendars refreshed: ${totalImported} new booking(s), ${totalUpdated} updated across ${totalEvents} feed event(s).`
       );
     } finally {
       setSyncingOta(false);
@@ -838,7 +838,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Live room tape synchronized with Direct, Airbnb, Booking.com &amp; blocked dates
+              Live room schedule across Direct, Airbnb, Booking.com &amp; blocked dates
             </p>
           </div>
 
@@ -898,7 +898,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 disabled:opacity-60 text-blue-800 text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${syncingOta ? 'animate-spin' : ''}`} />
-                <span>{syncingOta ? 'Syncing OTA…' : 'Sync OTA Now'}</span>
+                <span>{syncingOta ? 'Refreshing…' : 'Refresh Channels'}</span>
               </button>
             )}
 
@@ -918,7 +918,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="px-5 py-2.5 bg-slate-50/70 border-b border-slate-100 space-y-2">
             <div className="flex flex-wrap items-center gap-2 text-[11px]">
               <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
-                Synced Bookings:
+                Channel Bookings:
               </span>
               {channelSummaryCounts.map(([chLabel, count]) => (
                 <span
@@ -1033,7 +1033,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <td
                             key={day.iso}
                             className={`p-0.5 align-top border-r border-slate-100 ${
-                              day.isToday ? 'bg-emerald-50/30' : ''
+                              day.isToday
+                                ? 'bg-emerald-50/30'
+                                : day.iso < todayIso
+                                  ? 'bg-slate-100/80'
+                                  : ''
                             }`}
                           >
                             {matchingRes.length > 0 ? (

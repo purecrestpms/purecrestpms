@@ -723,11 +723,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       }
       if (failedNames.length > 0) {
         onNotify(
-          `Synced ${connectedIcalChannels.length - failedNames.length}/${connectedIcalChannels.length} OTA feeds (${totalEvents} events; ${totalCreated} new, ${totalUpdated} updated). Failed: ${failedNames.join(', ')}.`
+          `Refreshed ${connectedIcalChannels.length - failedNames.length}/${connectedIcalChannels.length} channel feeds (${totalEvents} events; ${totalCreated} new, ${totalUpdated} updated). Failed: ${failedNames.join(', ')}.`
         );
       } else {
         onNotify(
-          `Synced ${connectedIcalChannels.length} OTA channel${connectedIcalChannels.length === 1 ? '' : 's'} (${totalEvents} events checked · ${totalCreated} new, ${totalUpdated} updated)`
+          `Refreshed ${connectedIcalChannels.length} OTA channel${connectedIcalChannels.length === 1 ? '' : 's'} (${totalEvents} events checked · ${totalCreated} new, ${totalUpdated} updated)`
         );
       }
     } finally {
@@ -759,7 +759,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-900 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncingOta ? 'animate-spin' : ''}`} />
-              <span>{syncingOta ? 'Syncing OTA...' : `Sync OTA Now (${connectedIcalChannels.length})`}</span>
+              <span>{syncingOta ? 'Refreshing Channels...' : `Refresh Channels (${connectedIcalChannels.length})`}</span>
             </button>
           )}
           <button
@@ -839,7 +839,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             </span>
           </div>
           <p className="mt-1 text-[11px] text-slate-500">
-            Synced PMS &amp; channel reservations
+            Live PMS &amp; channel reservations
           </p>
         </div>
 
@@ -1088,7 +1088,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
               <span className="w-2 h-2 rounded-full bg-orange-500" />
               <span>
                 {syncedOtaReservations.length} Active OTA / Airbnb Reservation
-                {syncedOtaReservations.length === 1 ? '' : 's'} Synced on Calendar
+                {syncedOtaReservations.length === 1 ? '' : 's'} on Calendar
               </span>
             </div>
             <span className="text-[11px] text-orange-800">
@@ -1534,19 +1534,36 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                             return (
                               <td
                                 key={day}
-                                title={`${room.roomNumber} is currently Out of Order / Maintenance`}
-                                className="p-1 border-r border-slate-100 last:border-r-0 align-middle"
+                                title={`${room.roomNumber} is currently Out of Order — unavailable`}
+                                className="p-1 border-r border-slate-100 last:border-r-0 align-middle bg-slate-100/80"
                               >
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setCalendarNotice(
-                                      `${room.roomNumber} (${room.roomType}) is currently Out of Order and unavailable for booking on ${day}. Update room status in Rooms before booking.`
-                                    )
-                                  }
-                                  className="w-full py-2 rounded bg-slate-200 text-slate-600 text-[10px] font-semibold truncate cursor-not-allowed"
+                                  disabled
+                                  aria-disabled="true"
+                                  className="w-full py-2 rounded bg-slate-200/80 text-slate-400 text-[10px] font-semibold truncate cursor-not-allowed"
                                 >
                                   OOO
+                                </button>
+                              </td>
+                            );
+                          }
+
+                          const isPastDay = day < todayIso;
+                          if (isPastDay) {
+                            return (
+                              <td
+                                key={day}
+                                title={`${day} is in the past — unavailable for selection`}
+                                className="p-1 border-r border-slate-100 last:border-r-0 align-middle bg-slate-100/70"
+                              >
+                                <button
+                                  type="button"
+                                  disabled
+                                  aria-disabled="true"
+                                  className="w-full py-2 rounded border border-slate-200 bg-slate-100 text-slate-300 text-[10px] font-medium cursor-not-allowed"
+                                >
+                                  —
                                 </button>
                               </td>
                             );
