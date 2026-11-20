@@ -78,14 +78,17 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
   const effectiveRoomCharges = effectiveNightlyRate * reservation.nights;
   const totalFolio =
     effectiveRoomCharges + reservation.posChargesNgn + (reservation.lateCheckoutFeeNgn || 0);
-  const balanceDue = Math.max(0, totalFolio - paySummary.amountPaid);
+  const balanceDue =
+    paySummary.paymentCollectionMode === 'ota_prepaid'
+      ? paySummary.amountDueAtPropertyNgn
+      : Math.max(0, totalFolio - paySummary.hotelPaidAmount);
 
   const [paymentReceivedNgn, setPaymentReceivedNgn] = useState<number>(balanceDue);
   const [paymentMethod, setPaymentMethod] = useState<ReservationRecord['paymentMethod']>(
     reservation.paymentMethod || 'Bank Transfer'
   );
   const [paymentConfirmed, setPaymentConfirmed] = useState<boolean>(
-    (balanceDue === 0 && paySummary.amountPaid > 0) ||
+    (balanceDue === 0 && paySummary.hotelPaidAmount > 0) ||
       (paySummary.paymentCollectionMode === 'ota_prepaid' && balanceDue === 0)
   );
 
@@ -119,7 +122,10 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           reservation.nights +
         reservation.posChargesNgn +
         (reservation.lateCheckoutFeeNgn || 0);
-      const nextDue = Math.max(0, nextCharges - paySummary.amountPaid);
+      const nextDue =
+        paySummary.paymentCollectionMode === 'ota_prepaid'
+          ? paySummary.amountDueAtPropertyNgn
+          : Math.max(0, nextCharges - paySummary.hotelPaidAmount);
       setPaymentReceivedNgn(nextDue);
       setRoomReadyConfirmed(
         nextRoom.housekeepingStatus === 'clean' || nextRoom.housekeepingStatus === 'inspected'
@@ -251,15 +257,13 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
               <span>Step 1 — Confirm Payment</span>
             </div>
             <div className="flex items-center gap-2">
-              {paySummary.paymentCollectionMode === 'ota_prepaid' &&
-                balanceDue === 0 &&
-                paySummary.otaPaidAmount > 0 && (
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                    OTA Prepaid via {reservation.channel} — ₦0 due at front desk
-                  </span>
-                )}
+              {paySummary.paymentCollectionMode === 'ota_prepaid' && balanceDue === 0 && (
+                <span className="text-[11px] font-semibold text-emerald-700">
+                  Paid to OTA ({reservation.channel}) · ₦0 due at property
+                </span>
+              )}
               <span className="font-mono-tabular text-[11px] font-semibold text-slate-700">
-                Outstanding Guest Balance: {formatNgn(balanceDue)}
+                Due at Property: {formatNgn(balanceDue)}
               </span>
             </div>
           </div>
@@ -281,16 +285,19 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                 {formatChannelCurrency(paySummary.otaPaidSourceAmount, paySummary.sourceCurrency)}{' '}
                 {paySummary.sourceCurrency}
               </p>
-              {paySummary.expectedPayoutNgn > 0 && (
+              {paySummary.paymentCollectionMode === 'ota_prepaid' && (
                 <p className="font-mono-tabular text-[10px] text-slate-600">
-                  Exp. Payout: {formatNgn(paySummary.expectedPayoutNgn)}
+                  Payout:{' '}
+                  {paySummary.otaPayoutStatus === 'received'
+                    ? `Received (${formatNgn(paySummary.actualPayoutReceivedNgn)})`
+                    : `Pending (${formatNgn(paySummary.expectedPayoutNgn)})`}
                 </p>
               )}
             </div>
             <div>
               <p className="text-slate-500">Hotel payment received</p>
               <p className="font-mono-tabular font-bold text-slate-900">
-                {formatNgn(paySummary.hotelPaidAmount)}
+                {formatNgn(paySummary.totalReceivedByHotelNgn)}
               </p>
             </div>
             <div>

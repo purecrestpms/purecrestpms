@@ -65,7 +65,6 @@ import {
   NavSectionId,
   normalizeSubdomainSlug,
   OtaIntegrationRecord,
-  OtaPaymentCollectionMode,
   PlanInquiryRecord,
   PortalMode,
   PosMenuItemRecord,
@@ -111,6 +110,28 @@ const PLAN_PRICING: Record<LicenseRecord['plan'], { monthly: number; annual: num
   Enterprise: { monthly: 220000, annual: 1850000, lifetime: 4500000, rooms: 80 },
   'Lifetime Sovereign': { monthly: 4500000, annual: 4500000, lifetime: 4500000, rooms: 250 },
 };
+
+function getDefaultOtaCommissionPct(
+  channelName: OtaIntegrationRecord['channelName'] | string
+): number {
+  switch (channelName) {
+    case 'Booking.com':
+    case 'Hotels.ng':
+      return 15;
+    case 'Airbnb':
+      return 14;
+    case 'Expedia':
+      return 18;
+    case 'VRBO':
+      return 12;
+    case 'Custom iCal':
+      return 10;
+    case 'Direct Website Engine':
+      return 0;
+    default:
+      return 15;
+  }
+}
 
 export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   section,
@@ -183,10 +204,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [newChannelSuite, setNewChannelSuite] = useState('All Rooms');
   const [newListingId, setNewListingId] = useState('');
   const [newIcalUrl, setNewIcalUrl] = useState('');
-  const [newDefaultCurrency, setNewDefaultCurrency] = useState<ChannelCurrency>('USD');
-  const [newDefaultNightlyRate, setNewDefaultNightlyRate] = useState('');
-  const [newCollectionMode, setNewCollectionMode] =
-    useState<OtaPaymentCollectionMode>('ota_prepaid');
+  const [newCommissionPct, setNewCommissionPct] = useState('14');
   const [newAutoSync, setNewAutoSync] = useState(true);
   const [exportSuiteFilter, setExportSuiteFilter] = useState('ALL');
   const [icalDrafts, setIcalDrafts] = useState<
@@ -196,9 +214,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         url: string;
         room: string;
         listingId: string;
-        defaultCurrency: ChannelCurrency;
-        defaultNightlyRate: string;
-        paymentCollectionMode: OtaPaymentCollectionMode;
+        commissionPct: string;
       }
     >
   >({});
@@ -516,53 +532,53 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
     channel: OtaIntegrationRecord
   ): Promise<OtaIntegrationRecord> => {
     const draft = icalDrafts[channel.id];
-    const isIntlOta =
-      channel.channelName === 'Airbnb' ||
-      channel.channelName === 'Booking.com' ||
-      channel.channelName === 'Expedia' ||
-      channel.channelName === 'VRBO' ||
-      channel.channelName === 'Custom iCal';
-    const effectiveStoredCurrency: ChannelCurrency =
-      isIntlOta && (!channel.defaultCurrency || channel.defaultCurrency === 'NGN')
-        ? getDefaultOtaChannelCurrency(channel.channelName)
-        : channel.defaultCurrency || getDefaultOtaChannelCurrency(channel.channelName);
+    const propertyCurrency: ChannelCurrency = (property.currency as ChannelCurrency) || 'NGN';
+    const inferredMode =
+      channel.channelName === 'Direct Website Engine' ? 'hotel_collect' : 'ota_prepaid';
+    const currentCommission =
+      typeof channel.commissionPct === 'number'
+        ? channel.commissionPct
+        : getDefaultOtaCommissionPct(channel.channelName);
+
     if (!draft) {
-      if (isIntlOta && channel.defaultCurrency !== effectiveStoredCurrency) {
+      if (channel.defaultCurrency !== propertyCurrency) {
         await updateOtaChannelIcal({
           property,
           channel,
           icalImportUrl: (channel.icalImportUrl || '').trim(),
           roomNumber: normalizeChannelRoom(channel.roomNumber),
           propertyListingId: channel.propertyListingId,
-          defaultCurrency: effectiveStoredCurrency,
-          defaultNightlyRate: channel.defaultNightlyRate ?? 0,
-          paymentCollectionMode: channel.paymentCollectionMode || 'ota_prepaid',
+          commissionPct: currentCommission,
+          defaultCurrency: propertyCurrency,
+          defaultNightlyRate: 0,
+          paymentCollectionMode: inferredMode,
           actorRole: ROLE_LABELS[activeRole],
         });
-        return { ...channel, defaultCurrency: effectiveStoredCurrency };
+        return {
+          ...channel,
+          defaultCurrency: propertyCurrency,
+          defaultNightlyRate: 0,
+          commissionPct: currentCommission,
+          paymentCollectionMode: inferredMode,
+        };
       }
       return channel;
     }
-    const currentDefaultCurrency: ChannelCurrency =
-      channel.defaultCurrency || getDefaultOtaChannelCurrency(channel.channelName);
-    const currentMode: OtaPaymentCollectionMode =
-      channel.paymentCollectionMode ||
-      (channel.channelName === 'Direct Website Engine' ? 'hotel_collect' : 'ota_prepaid');
+
     const nextUrl = draft.url.trim();
     const nextRoom = normalizeChannelRoom(draft.room);
     const nextListingId = draft.listingId.trim() || channel.propertyListingId;
-    const nextCurrency: ChannelCurrency = draft.defaultCurrency || effectiveStoredCurrency;
-    const parsedRate = Number(draft.defaultNightlyRate.replace(/,/g, ''));
-    const nextRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : channel.defaultNightlyRate ?? 0;
-    const nextMode: OtaPaymentCollectionMode = draft.paymentCollectionMode || currentMode;
+    const parsedPct = Number(draft.commissionPct);
+    const nextCommission = Number.isFinite(parsedPct)
+      ? Math.max(0, Math.min(50, parsedPct))
+      : currentCommission;
 
     const isDirty =
       nextUrl !== (channel.icalImportUrl || '').trim() ||
       nextRoom !== normalizeChannelRoom(channel.roomNumber) ||
       nextListingId !== (channel.propertyListingId || '').trim() ||
-      nextCurrency !== currentDefaultCurrency ||
-      nextRate !== (channel.defaultNightlyRate ?? 0) ||
-      nextMode !== currentMode;
+      nextCommission !== currentCommission ||
+      channel.defaultCurrency !== propertyCurrency;
 
     if (!isDirty) return channel;
 
@@ -572,9 +588,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
-      defaultCurrency: nextCurrency,
-      defaultNightlyRate: nextRate,
-      paymentCollectionMode: nextMode,
+      commissionPct: nextCommission,
+      defaultCurrency: propertyCurrency,
+      defaultNightlyRate: 0,
+      paymentCollectionMode: inferredMode,
       actorRole: ROLE_LABELS[activeRole],
     });
     setIcalDrafts((prev) => {
@@ -587,9 +604,10 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       icalImportUrl: nextUrl,
       roomNumber: nextRoom,
       propertyListingId: nextListingId,
-      defaultCurrency: nextCurrency,
-      defaultNightlyRate: nextRate,
-      paymentCollectionMode: nextMode,
+      commissionPct: nextCommission,
+      defaultCurrency: propertyCurrency,
+      defaultNightlyRate: 0,
+      paymentCollectionMode: inferredMode,
     };
   };
 
@@ -783,8 +801,11 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
-    const parsedDefaultRate = Number(newDefaultNightlyRate.replace(/,/g, ''));
-    const safeDefaultRate = Number.isFinite(parsedDefaultRate) && parsedDefaultRate > 0 ? parsedDefaultRate : 0;
+    const parsedPct = Number(newCommissionPct);
+    const safeCommissionPct = Number.isFinite(parsedPct)
+      ? Math.max(0, Math.min(50, parsedPct))
+      : getDefaultOtaCommissionPct(newChannelName);
+    const propertyCurrency: ChannelCurrency = (property.currency as ChannelCurrency) || 'NGN';
     setBusy(true);
     try {
       await createOtaChannelWithIcal({
@@ -793,19 +814,21 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         propertyListingId: newListingId,
         roomNumber: newChannelSuite,
         icalImportUrl: newIcalUrl,
-        defaultCurrency: newDefaultCurrency,
-        defaultNightlyRate: safeDefaultRate,
-        paymentCollectionMode: newCollectionMode,
+        commissionPct: safeCommissionPct,
+        defaultCurrency: propertyCurrency,
+        defaultNightlyRate: 0,
+        paymentCollectionMode:
+          newChannelName === 'Direct Website Engine' ? 'hotel_collect' : 'ota_prepaid',
         autoSync: newAutoSync,
         actorRole: ROLE_LABELS[activeRole],
       });
       onNotify(
-        `Added ${newChannelName} (${newChannelSuite} · ${newDefaultCurrency}) to Channel Manager`
+        `Added ${newChannelName} (${newChannelSuite} · ${safeCommissionPct}% commission · ${propertyCurrency}) to Channel Manager`
       );
       setShowChannelForm(false);
       setNewListingId('');
       setNewIcalUrl('');
-      setNewDefaultNightlyRate('');
+      setNewCommissionPct(String(getDefaultOtaCommissionPct(newChannelName)));
     } catch (err) {
       onNotify(err instanceof Error ? err.message : `Unable to add ${newChannelName}`);
     } finally {
@@ -890,19 +913,15 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           const otaBookings = reservations
             .filter((r) => isOtaBookingChannel(r.channel))
             .sort((a, b) => b.checkInDate.localeCompare(a.checkInDate));
-          const usdOtaPaidTotal = otaBookings.reduce((sum, r) => {
+          const otaPaidNgnTotal = otaBookings.reduce((sum, r) => {
             const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-            return p.sourceCurrency === 'USD' ? sum + p.otaPaidSourceAmount : sum;
+            return sum + p.otaPaidAmount;
           }, 0);
           const expectedNgnTotal = otaBookings.reduce((sum, r) => {
             const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
             return sum + p.expectedPayoutNgn;
           }, 0);
-          const needsUsdResync = otaBookings.some((r) => {
-            const p = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-            const chDefault = getDefaultOtaChannelCurrency(r.channel);
-            return chDefault !== 'NGN' && p.sourceCurrency === 'NGN';
-          });
+          const propertyCurrency = (property.currency as ChannelCurrency) || 'NGN';
 
           return (
             <div className="space-y-5">
@@ -925,9 +944,12 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   </div>
                   <div className="h-7 w-px bg-slate-200 hidden sm:block" />
                   <div>
-                    <span className="text-slate-500 block text-[11px]">Daily FX Conversion</span>
+                    <span className="text-slate-500 block text-[11px]">Synced Rate Currency</span>
                     <span className="font-mono-tabular text-sm font-bold text-slate-900">
-                      $1 = ₦{(property.usdExchangeRateNgn || 1600).toLocaleString()}
+                      {propertyCurrency}
+                      <span className="font-sans font-normal text-xs text-slate-500 ml-1.5">
+                        (Room rates)
+                      </span>
                     </span>
                   </div>
                 </div>
@@ -1005,16 +1027,16 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                             onChange={(e) => {
                               const val = e.target.value as OtaIntegrationRecord['channelName'];
                               setNewChannelName(val);
-                              setNewDefaultCurrency(getDefaultOtaChannelCurrency(val));
+                              setNewCommissionPct(String(getDefaultOtaCommissionPct(val)));
                             }}
                             className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
                           >
-                            <option value="Booking.com">Booking.com</option>
-                            <option value="Airbnb">Airbnb</option>
-                            <option value="Expedia">Expedia</option>
-                            <option value="VRBO">VRBO</option>
-                            <option value="Custom iCal">Custom iCal</option>
-                            <option value="Direct Website Engine">Direct Website Engine</option>
+                            <option value="Booking.com">Booking.com (15%)</option>
+                            <option value="Airbnb">Airbnb (14%)</option>
+                            <option value="Expedia">Expedia (18%)</option>
+                            <option value="VRBO">VRBO (12%)</option>
+                            <option value="Custom iCal">Custom iCal (10%)</option>
+                            <option value="Direct Website Engine">Direct Website Engine (0%)</option>
                           </select>
                         </div>
 
@@ -1038,21 +1060,18 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
 
                         <div>
                           <label className="block font-medium text-slate-700 mb-1">
-                            Booking Currency
+                            Booking Commission (%)
                           </label>
-                          <select
-                            value={newDefaultCurrency}
-                            onChange={(e) =>
-                              setNewDefaultCurrency(e.target.value as ChannelCurrency)
-                            }
-                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white font-semibold"
-                          >
-                            {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                              <option key={cur} value={cur}>
-                                {cur}
-                              </option>
-                            ))}
-                          </select>
+                          <input
+                            type="number"
+                            min={0}
+                            max={50}
+                            step={0.5}
+                            placeholder="e.g. 15"
+                            value={newCommissionPct}
+                            onChange={(e) => setNewCommissionPct(e.target.value)}
+                            className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular"
+                          />
                         </div>
 
                         <div className="sm:col-span-2">
@@ -1081,38 +1100,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                           />
                         </div>
 
-                        <div>
-                          <label className="block font-medium text-slate-700 mb-1">
-                            Fallback Nightly Rate ({newDefaultCurrency})
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="Optional fallback e.g. 120.00"
-                            value={newDefaultNightlyRate}
-                            onChange={(e) => setNewDefaultNightlyRate(e.target.value)}
-                            className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block font-medium text-slate-700 mb-1">
-                            Payment Collection
-                          </label>
-                          <select
-                            value={newCollectionMode}
-                            onChange={(e) =>
-                              setNewCollectionMode(e.target.value as OtaPaymentCollectionMode)
-                            }
-                            className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
-                          >
-                            <option value="ota_prepaid">Guest Paid to OTA (Prepaid)</option>
-                            <option value="hotel_collect">Pay at Property (Hotel Collect)</option>
-                          </select>
-                        </div>
-
-                        <div className="flex items-end">
-                          <label className="inline-flex items-center gap-2 h-10 text-slate-700 cursor-pointer">
+                        <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-1">
+                          <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
                             <input
                               type="checkbox"
                               checked={newAutoSync}
@@ -1120,6 +1109,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                             />
                             <span>Enable auto-sync</span>
                           </label>
+                          <p className="text-[11px] text-slate-500">
+                            Synced bookings automatically use your property currency ({propertyCurrency}) and room rates.
+                          </p>
                         </div>
                       </div>
 
@@ -1146,31 +1138,15 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {otaChannels.map((ch) => {
                       const displayName = getDisplayChannelName(ch.channelName);
-                      const isIntlOta =
-                        displayName === 'Airbnb' ||
-                        displayName === 'Booking.com' ||
-                        displayName === 'Expedia' ||
-                        displayName === 'VRBO' ||
-                        displayName === 'Custom iCal';
-                      const effectiveDefaultCurrency: ChannelCurrency =
-                        isIntlOta && (!ch.defaultCurrency || ch.defaultCurrency === 'NGN')
-                          ? getDefaultOtaChannelCurrency(displayName)
-                          : ch.defaultCurrency || getDefaultOtaChannelCurrency(displayName);
-                      const effectiveCollectionMode: OtaPaymentCollectionMode =
-                        ch.paymentCollectionMode ||
-                        (ch.channelName === 'Direct Website Engine'
-                          ? 'hotel_collect'
-                          : 'ota_prepaid');
+                      const effectiveCommission =
+                        typeof ch.commissionPct === 'number'
+                          ? ch.commissionPct
+                          : getDefaultOtaCommissionPct(displayName);
                       const draft = icalDrafts[ch.id] ?? {
                         url: ch.icalImportUrl || '',
                         room: normalizeChannelRoom(ch.roomNumber),
                         listingId: ch.propertyListingId || '',
-                        defaultCurrency: effectiveDefaultCurrency,
-                        defaultNightlyRate:
-                          ch.defaultNightlyRate && ch.defaultNightlyRate > 0
-                            ? String(ch.defaultNightlyRate)
-                            : '',
-                        paymentCollectionMode: effectiveCollectionMode,
+                        commissionPct: String(effectiveCommission),
                       };
                       const suiteParam = encodeURIComponent(
                         !draft.room || draft.room === 'All Rooms' ? 'ALL' : draft.room
@@ -1206,8 +1182,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                 <p className="text-xs text-slate-500 truncate mt-0.5">
                                   {draft.room || 'All Rooms'} ·{' '}
                                   <span className="font-mono-tabular font-semibold text-slate-700">
-                                    {draft.defaultCurrency}
-                                  </span>
+                                    {draft.commissionPct || '0'}% fee
+                                  </span>{' '}
+                                  · {propertyCurrency}
                                   {draft.url.trim() ? ' · iCal linked' : ' · No iCal URL'}
                                 </p>
                               </div>
@@ -1249,7 +1226,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                           {/* Expandable Configuration Drawer */}
                           {isExpanded && (
                             <div className="space-y-3 bg-slate-50/70 border border-slate-200/80 rounded-lg p-3.5 text-xs">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div>
                                   <label className="block text-[11px] font-medium text-slate-600 mb-1">
                                     Room Mapping
@@ -1290,79 +1267,29 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                     className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
                                   />
                                 </div>
-                              </div>
-
-                              <div className="grid grid-cols-3 gap-2.5">
-                                <div>
-                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                                    Currency
-                                  </label>
-                                  <select
-                                    value={draft.defaultCurrency}
-                                    onChange={(e) =>
-                                      setIcalDrafts((prev) => ({
-                                        ...prev,
-                                        [ch.id]: {
-                                          ...draft,
-                                          defaultCurrency: e.target.value as ChannelCurrency,
-                                        },
-                                      }))
-                                    }
-                                    className="w-full h-9 border border-slate-200 rounded-lg px-2 bg-white font-semibold"
-                                  >
-                                    {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                                      <option key={cur} value={cur}>
-                                        {cur}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
 
                                 <div>
                                   <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                                    Rate ({draft.defaultCurrency}/nt)
+                                    Booking Commission (%)
                                   </label>
                                   <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    placeholder={
-                                      draft.defaultCurrency === 'NGN' ? 'Room ₦' : 'e.g. 120'
-                                    }
-                                    value={draft.defaultNightlyRate}
+                                    type="number"
+                                    min={0}
+                                    max={50}
+                                    step={0.5}
+                                    placeholder="e.g. 15"
+                                    value={draft.commissionPct}
                                     onChange={(e) =>
                                       setIcalDrafts((prev) => ({
                                         ...prev,
                                         [ch.id]: {
                                           ...draft,
-                                          defaultNightlyRate: e.target.value,
+                                          commissionPct: e.target.value,
                                         },
                                       }))
                                     }
                                     className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular bg-white"
                                   />
-                                </div>
-
-                                <div>
-                                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                                    Collection
-                                  </label>
-                                  <select
-                                    value={draft.paymentCollectionMode}
-                                    onChange={(e) =>
-                                      setIcalDrafts((prev) => ({
-                                        ...prev,
-                                        [ch.id]: {
-                                          ...draft,
-                                          paymentCollectionMode: e.target
-                                            .value as OtaPaymentCollectionMode,
-                                        },
-                                      }))
-                                    }
-                                    className="w-full h-9 border border-slate-200 rounded-lg px-2 bg-white"
-                                  >
-                                    <option value="ota_prepaid">Paid to OTA</option>
-                                    <option value="hotel_collect">Pay at Hotel</option>
-                                  </select>
                                 </div>
                               </div>
 
@@ -1389,21 +1316,23 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                     onClick={async () => {
                                       setBusy(true);
                                       try {
-                                        const parsedRate = Number(
-                                          draft.defaultNightlyRate.replace(/,/g, '')
-                                        );
+                                        const parsedPct = Number(draft.commissionPct);
+                                        const safePct = Number.isFinite(parsedPct)
+                                          ? Math.max(0, Math.min(50, parsedPct))
+                                          : effectiveCommission;
                                         await updateOtaChannelIcal({
                                           property,
                                           channel: ch,
                                           icalImportUrl: draft.url,
                                           roomNumber: draft.room,
                                           propertyListingId: draft.listingId,
-                                          defaultCurrency: draft.defaultCurrency,
-                                          defaultNightlyRate:
-                                            Number.isFinite(parsedRate) && parsedRate >= 0
-                                              ? parsedRate
-                                              : 0,
-                                          paymentCollectionMode: draft.paymentCollectionMode,
+                                          commissionPct: safePct,
+                                          defaultCurrency: propertyCurrency,
+                                          defaultNightlyRate: 0,
+                                          paymentCollectionMode:
+                                            ch.channelName === 'Direct Website Engine'
+                                              ? 'hotel_collect'
+                                              : 'ota_prepaid',
                                           actorRole: ROLE_LABELS[activeRole],
                                         });
                                         setIcalDrafts((prev) => {
@@ -1411,7 +1340,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                           delete next[ch.id];
                                           return next;
                                         });
-                                        onNotify(`Saved iCal & currency settings for ${displayName}`);
+                                        onNotify(
+                                          `Saved iCal & commission (${safePct}%) settings for ${displayName}`
+                                        );
                                       } catch (err) {
                                         onNotify(
                                           formatChannelError(
@@ -1428,6 +1359,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                                     Save
                                   </button>
                                 </div>
+                                <p className="text-[11px] text-slate-500 mt-1.5">
+                                  Rates &amp; currency automatically match {property.name}&apos;s active currency ({propertyCurrency}).
+                                </p>
                               </div>
 
                               <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
@@ -1867,9 +1801,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                       </div>
                       <div className="flex flex-wrap items-center gap-4 text-xs font-mono-tabular">
                         <div>
-                          <span className="text-slate-400 font-sans mr-1.5">OTA Paid:</span>
+                          <span className="text-slate-400 font-sans mr-1.5">OTA Prepayments:</span>
                           <strong className="text-[#061539]">
-                            {formatUsd(usdOtaPaidTotal)} USD
+                            {formatNgn(otaPaidNgnTotal)}
                           </strong>
                         </div>
                         <div>
@@ -1878,19 +1812,6 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
                             {formatNgn(expectedNgnTotal)}
                           </strong>
                         </div>
-                        {needsUsdResync && (
-                          <button
-                            type="button"
-                            disabled={syncingAllChannels}
-                            onClick={() => void handleSyncAllChannels()}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-sans font-semibold cursor-pointer"
-                          >
-                            <RefreshCw
-                              className={`w-3 h-3 ${syncingAllChannels ? 'animate-spin' : ''}`}
-                            />
-                            <span>Refresh USD</span>
-                          </button>
-                        )}
                       </div>
                     </div>
 

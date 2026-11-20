@@ -2230,6 +2230,8 @@ export default function App() {
                     property={activeProperty}
                     activeRole={effectiveRole}
                     ledgerEntries={ledgerEntries}
+                    reservations={reservations}
+                    rooms={rooms}
                     inventoryItems={inventoryItems}
                     purchaseOrders={purchaseOrders}
                     canManageRecords={
@@ -2237,6 +2239,7 @@ export default function App() {
                     }
                     actorRole={ROLE_LABELS[effectiveRole]}
                     onNavigate={handleSelectSection}
+                    onOpenReservationFolio={handleOpenReservationFolio}
                     onNotify={notify}
                   />
                 )}

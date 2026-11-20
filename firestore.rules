@@ -271,7 +271,7 @@ service cloud.firestore {
         'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry',
         'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'channel', 'nightlyRateNgn',
         'roomChargesNgn', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn',
-        'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn',
+        'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'actualPayoutReceivedNgn', 'otaPayoutStatus', 'otaPayoutReceivedAtIso', 'amountDueAtPropertyNgn', 'paymentManuallyEdited', 'hotelPaidNgn',
         'status', 'paymentMethod', 'paymentStatus',
         'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso',
         'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso',
@@ -311,10 +311,15 @@ service cloud.firestore {
       (!('otaPaidNgn' in data) || (data.otaPaidNgn is number && data.otaPaidNgn >= 0)) &&
       (!('otaPaidSourceAmount' in data) || (data.otaPaidSourceAmount is number && data.otaPaidSourceAmount >= 0)) &&
       (!('expectedPayoutNgn' in data) || (data.expectedPayoutNgn is number && data.expectedPayoutNgn >= 0)) &&
+      (!('actualPayoutReceivedNgn' in data) || (data.actualPayoutReceivedNgn is number && data.actualPayoutReceivedNgn >= 0)) &&
+      (!('otaPayoutStatus' in data) || (data.otaPayoutStatus is string && data.otaPayoutStatus in ['pending', 'received'])) &&
+      (!('otaPayoutReceivedAtIso' in data) || (data.otaPayoutReceivedAtIso is string && data.otaPayoutReceivedAtIso.size() <= 40)) &&
+      (!('amountDueAtPropertyNgn' in data) || (data.amountDueAtPropertyNgn is number && data.amountDueAtPropertyNgn >= 0)) &&
+      (!('paymentManuallyEdited' in data) || data.paymentManuallyEdited is bool) &&
       (!('hotelPaidNgn' in data) || (data.hotelPaidNgn is number && data.hotelPaidNgn >= 0)) &&
       data.status in ['confirmed', 'pending', 'checked_in', 'checked_out', 'cancelled', 'no_show'] &&
       data.paymentMethod in ['Bank Transfer', 'Card POS', 'Cash NGN', 'Corporate Invoice', 'Online Gateway', 'OTA Platform Payout'] &&
-      (!('paymentStatus' in data) || (data.paymentStatus is string && data.paymentStatus in ['Paid', 'Partial', 'Unpaid'])) &&
+      (!('paymentStatus' in data) || (data.paymentStatus is string && data.paymentStatus in ['Paid', 'Partial', 'Unpaid', 'Paid to OTA'])) &&
       (!('cautionDepositEnabled' in data) || data.cautionDepositEnabled is bool) &&
       (!('cautionDepositNgn' in data) || (data.cautionDepositNgn is number && data.cautionDepositNgn >= 0 && data.cautionDepositNgn <= 100000000)) &&
       (!('cautionDepositCollectedNgn' in data) || (data.cautionDepositCollectedNgn is number && data.cautionDepositCollectedNgn >= 0 && data.cautionDepositCollectedNgn <= 100000000)) &&
@@ -810,7 +815,7 @@ service cloud.firestore {
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'hotelPaidNgn', 'paymentMethod', 'paymentStatus', 'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'actualPayoutReceivedNgn', 'otaPayoutStatus', 'otaPayoutReceivedAtIso', 'amountDueAtPropertyNgn', 'paymentManuallyEdited', 'hotelPaidNgn', 'paymentMethod', 'paymentStatus', 'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
           );
         allow delete: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
       }

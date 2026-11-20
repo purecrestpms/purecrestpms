@@ -68,6 +68,7 @@ import {
   formatBookingSourceLabel,
   formatChannelCurrency,
   formatNgn,
+  formatPaymentCollectionLabel,
   formatPriceInputWithCommas,
   formatUsd,
   getDefaultOtaChannelCurrency,
@@ -83,6 +84,8 @@ import {
   LicenseRecord,
   matchesBookingSourceFilter,
   NavSectionId,
+  OtaPaymentCollectionMode,
+  OtaPayoutStatus,
   parseFormattedPriceInput,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
@@ -105,7 +108,6 @@ import {
 } from '../utils/availability';
 import {
   DEFAULT_ROOM_COVER_IMAGE_URL,
-  formatReadableImageSourceLabel,
   isLegacyOrAiStudioImageUrl,
   resolveAppImageUrl,
   resolveGalleryImageUrls,
@@ -114,6 +116,7 @@ import {
 import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
+import { ReservationPaymentModal } from './ReservationPaymentModal';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
 import { getAmenityIcon, RoomGallerySlider } from './RoomGallerySlider';
 
@@ -372,6 +375,13 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [bookingExpectedPayoutInput, setBookingExpectedPayoutInput] = useState<string>('65,500');
   const [bookingExpectedPayoutManual, setBookingExpectedPayoutManual] = useState(false);
   const [bookingHotelPaidInput, setBookingHotelPaidInput] = useState<string>('65,500');
+  const [bookingCollectionMode, setBookingCollectionMode] =
+    useState<OtaPaymentCollectionMode>('hotel_collect');
+  const [bookingOtaPayoutStatus, setBookingOtaPayoutStatus] =
+    useState<OtaPayoutStatus>('pending');
+  const [bookingActualPayoutInput, setBookingActualPayoutInput] = useState<string>('0');
+  const [bookingAmountDueInput, setBookingAmountDueInput] = useState<string>('0');
+  const [bookingAmountDueManual, setBookingAmountDueManual] = useState(false);
   const [bookingPaymentStatus, setBookingPaymentStatus] = useState<PaymentStatusLabel>('Paid');
   const [bookingPaymentStatusManual, setBookingPaymentStatusManual] = useState(false);
   const [cautionDepositEnabled, setCautionDepositEnabled] = useState(false);
@@ -500,12 +510,18 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [editOtaPaidSourceInput, setEditOtaPaidSourceInput] = useState<string>('0');
   const [editExpectedPayoutInput, setEditExpectedPayoutInput] = useState<string>('0');
   const [editHotelPaidInput, setEditHotelPaidInput] = useState<string>('0');
+  const [editCollectionMode, setEditCollectionMode] =
+    useState<OtaPaymentCollectionMode>('hotel_collect');
+  const [editOtaPayoutStatus, setEditOtaPayoutStatus] = useState<OtaPayoutStatus>('pending');
+  const [editActualPayoutInput, setEditActualPayoutInput] = useState<string>('0');
+  const [editAmountDueInput, setEditAmountDueInput] = useState<string>('0');
   const [editPaymentStatus, setEditPaymentStatus] = useState<PaymentStatusLabel>('Unpaid');
   const [editCautionEnabled, setEditCautionEnabled] = useState(false);
   const [editCautionAmountInput, setEditCautionAmountInput] = useState<string>('0');
   const [editCautionCollectedInput, setEditCautionCollectedInput] = useState<string>('0');
   const [editCautionRefunded, setEditCautionRefunded] = useState(false);
   const [editStayError, setEditStayError] = useState<string | null>(null);
+  const [paymentModalResId, setPaymentModalResId] = useState<string | null>(null);
 
   const selectedRoomDetail = selectedRoomDetailId
     ? rooms.find((r) => r.id === selectedRoomDetailId) || null
@@ -699,6 +715,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       );
       setEditExpectedPayoutInput(formatPriceInputWithCommas(summary.expectedPayoutNgn));
       setEditHotelPaidInput(formatPriceInputWithCommas(summary.hotelPaidAmount));
+      setEditCollectionMode(summary.paymentCollectionMode);
+      setEditOtaPayoutStatus(
+        summary.otaPayoutStatus === 'received' ? 'received' : 'pending'
+      );
+      setEditActualPayoutInput(
+        formatPriceInputWithCommas(summary.actualPayoutReceivedNgn)
+      );
+      setEditAmountDueInput(
+        formatPriceInputWithCommas(summary.amountDueAtPropertyNgn)
+      );
       setEditPaymentStatus(summary.paymentStatus);
       setEditCautionEnabled(summary.cautionDepositEnabled);
       setEditCautionAmountInput(
@@ -1292,15 +1318,28 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       ? Math.max(0, Math.round(parseFormattedPriceInput(cautionDepositCollectedInput) ?? 0))
       : 0;
     const estChargesNgn = expectedPayoutNgnVal;
-    const otaCreditNgn = isOtaSource ? Math.min(estChargesNgn, otaPaidNgnVal) : 0;
-    const estBalanceNgn = Math.max(0, estChargesNgn - otaCreditNgn - hotelPaidNgnVal);
+    const isCollectedByOtaMode = bookingCollectionMode === 'ota_prepaid';
+    const estBalanceNgn = bookingAmountDueManual
+      ? Math.max(0, Math.round(parseFormattedPriceInput(bookingAmountDueInput) ?? 0))
+      : isCollectedByOtaMode
+        ? 0
+        : Math.max(0, estChargesNgn - hotelPaidNgnVal);
     const computedPayStatus: PaymentStatusLabel = bookingPaymentStatusManual
       ? bookingPaymentStatus
-      : estBalanceNgn <= 0 && (estChargesNgn > 0 || otaPaidNgnVal > 0 || hotelPaidNgnVal > 0)
-        ? 'Paid'
-        : otaPaidNgnVal > 0 || hotelPaidNgnVal > 0
-          ? 'Partial'
-          : 'Unpaid';
+      : isCollectedByOtaMode
+        ? 'Paid to OTA'
+        : estBalanceNgn <= 0 && (estChargesNgn > 0 || hotelPaidNgnVal > 0)
+          ? 'Paid'
+          : hotelPaidNgnVal > 0
+            ? 'Partial'
+            : 'Unpaid';
+    const actualPayoutReceivedVal =
+      isCollectedByOtaMode && bookingOtaPayoutStatus === 'received'
+        ? Math.max(
+            0,
+            Math.round(parseFormattedPriceInput(bookingActualPayoutInput) ?? expectedPayoutNgnVal)
+          )
+        : 0;
 
     setBusyId('booking');
     try {
@@ -1332,10 +1371,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         sourceNightlyRate: resolvedSourceNightlyRate,
         sourceTotalAmount: resolvedSourceTotal,
         fxRateToNgn,
-        paymentCollectionMode: parsedOtaPaidSource > 0 ? 'ota_prepaid' : 'hotel_collect',
-        otaPaidSourceAmount: parsedOtaPaidSource,
-        otaPaidNgn: otaPaidNgnVal,
+        paymentCollectionMode: bookingCollectionMode,
+        otaPaidSourceAmount: isCollectedByOtaMode ? parsedOtaPaidSource : 0,
+        otaPaidNgn: isCollectedByOtaMode ? otaPaidNgnVal : 0,
         expectedPayoutNgn: expectedPayoutNgnVal,
+        otaPayoutStatus: isCollectedByOtaMode ? bookingOtaPayoutStatus : 'pending',
+        actualPayoutReceivedNgn: actualPayoutReceivedVal,
+        amountDueAtPropertyNgn: estBalanceNgn,
+        paymentManuallyEdited: true,
         hotelPaidNgn: hotelPaidNgnVal,
         cautionDepositEnabled,
         cautionDepositNgn: cautionFeeNgnVal,
@@ -1343,7 +1386,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         cautionDepositRefunded: cautionDepositEnabled && cautionDepositRefunded,
         immediateCheckIn,
         initialStatus: initialBookingStatus,
-        paymentConfirmed: immediateCheckIn ? inlinePayConfirmed : false,
+        paymentConfirmed: immediateCheckIn ? inlinePayConfirmed : isCollectedByOtaMode,
         idVerified: immediateCheckIn ? inlineIdVerified : false,
         keyIssued: immediateCheckIn ? inlineKeyIssued === 'yes' : false,
         actorRole,
@@ -1374,6 +1417,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setBookingOtaPaidSourceInput('');
       setBookingExpectedPayoutInput(formatPriceInputWithCommas(baseRoomRateNgn));
       setBookingExpectedPayoutManual(false);
+      setBookingCollectionMode('hotel_collect');
+      setBookingOtaPayoutStatus('pending');
+      setBookingActualPayoutInput('0');
+      setBookingAmountDueInput('0');
+      setBookingAmountDueManual(false);
       setBookingHotelPaidInput(formatPriceInputWithCommas(baseRoomRateNgn));
       setBookingPaymentStatus('Paid');
       setBookingPaymentStatusManual(false);
@@ -1632,6 +1680,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       ? Math.max(0, Math.round(parseFormattedPriceInput(editCautionCollectedInput) ?? 0))
       : 0;
 
+    const parsedEditActualPayout =
+      editCollectionMode === 'ota_prepaid' && editOtaPayoutStatus === 'received'
+        ? Math.max(0, Math.round(parseFormattedPriceInput(editActualPayoutInput) ?? 0))
+        : 0;
+    const parsedEditAmountDue = Math.max(
+      0,
+      Math.round(parseFormattedPriceInput(editAmountDueInput) ?? 0)
+    );
+
     setBusyId(`stay-${res.id}`);
     try {
       await updateReservationDetailsWorkflow({
@@ -1660,11 +1717,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         status: editStatus,
         paymentMethod: editPaymentMethodRes,
         paymentStatus: editPaymentStatus,
+        paymentCollectionMode: editCollectionMode,
+        otaPayoutStatus: editCollectionMode === 'ota_prepaid' ? editOtaPayoutStatus : 'pending',
+        actualPayoutReceivedNgn: parsedEditActualPayout,
+        amountDueAtPropertyNgn: parsedEditAmountDue,
+        paymentManuallyEdited: true,
         sourceCurrency: activeEditCurrency,
         sourceNightlyRate: resolvedEditSourceNightly,
         sourceTotalAmount: resolvedEditSourceTotal,
         fxRateToNgn: parsedEditFx,
-        otaPaidSourceAmount: parsedEditOtaSourcePaid,
+        otaPaidSourceAmount: editCollectionMode === 'ota_prepaid' ? parsedEditOtaSourcePaid : 0,
         expectedPayoutNgn: parsedEditExpectedPayout,
         hotelPaidNgn: parsedEditHotelPaid,
         cautionDepositEnabled: editCautionEnabled,
@@ -4147,10 +4209,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       {/* SECTION: RESERVATION, IN-HOUSE, FRONT DESK */}
       {isStayTableSection && (
         <div className="space-y-4">
-          {/* Colorful Operational Summary Strip */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-            <div className="bg-gradient-to-br from-white via-white to-blue-50/70 border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl px-4 py-3.5 shadow-xs">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-[#061539]/75">
+          {/* Operational Reservation Summary Strip */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3.5">
+              <p className="text-[11px] font-semibold text-slate-500">
                 Total Reservations
               </p>
               <p className="font-mono-tabular text-2xl font-extrabold text-[#061539] mt-1 leading-none">
@@ -4160,39 +4222,26 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 Across all booking channels
               </p>
             </div>
-            <div className="bg-gradient-to-br from-white via-white to-amber-50/70 border border-slate-200 border-t-4 border-t-amber-500 rounded-xl px-4 py-3.5 shadow-xs">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-amber-900/80">
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3.5">
+              <p className="text-[11px] font-semibold text-slate-500">
                 Confirmed &amp; Pending
               </p>
-              <p className="font-mono-tabular text-2xl font-extrabold text-amber-950 mt-1 leading-none">
+              <p className="font-mono-tabular text-2xl font-extrabold text-amber-800 mt-1 leading-none">
                 {reservationMetrics.confirmed + reservationMetrics.pending}
               </p>
-              <p className="text-[11px] text-amber-800/80 mt-1.5 font-mono-tabular">
+              <p className="text-[11px] text-slate-500 mt-1.5 font-mono-tabular">
                 {reservationMetrics.confirmed} confirmed · {reservationMetrics.pending} pending
               </p>
             </div>
-            <div className="bg-gradient-to-br from-white via-white to-emerald-50/70 border border-slate-200 border-t-4 border-t-emerald-600 rounded-xl px-4 py-3.5 shadow-xs">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-900/80">
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3.5">
+              <p className="text-[11px] font-semibold text-slate-500">
                 Checked-in Guests
               </p>
               <p className="font-mono-tabular text-2xl font-extrabold text-emerald-700 mt-1 leading-none">
                 {reservationMetrics.checked_in}
               </p>
-              <p className="text-[11px] text-emerald-700/85 mt-1.5">
+              <p className="text-[11px] text-slate-500 mt-1.5">
                 Active in-house folios
-              </p>
-            </div>
-            <div className="bg-gradient-to-br from-white via-white to-indigo-50/70 border border-slate-200 border-t-4 border-t-indigo-600 rounded-xl px-4 py-3.5 shadow-xs">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-900/80">
-                Payments &amp; OTA Prepaid
-              </p>
-              <p className="font-mono-tabular text-2xl font-extrabold text-[#061539] mt-1 leading-none">
-                {formatNgn(reservationMetrics.totalPaid)}
-              </p>
-              <p className="text-[11px] text-indigo-700 mt-1.5 font-mono-tabular font-semibold">
-                {reservationMetrics.totalOtaUsd > 0
-                  ? `Includes ${formatUsd(reservationMetrics.totalOtaUsd)} USD via OTA`
-                  : `Direct: ${formatNgn(reservationMetrics.totalHotelPaid)}`}
               </p>
             </div>
           </div>
@@ -4375,9 +4424,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       otaPaidAmount,
                       hotelPaidAmount,
                       expectedPayoutNgn,
-                      amountPaid,
-                      balance,
-                      balanceUsd,
+                      actualPayoutReceivedNgn,
+                      otaPayoutStatus,
+                      totalReceivedByHotelNgn,
+                      amountDueAtPropertyNgn,
+                      paymentCollectionMode,
                       paymentStatus,
                       sourceCurrency,
                       sourceTotalAmount,
@@ -4387,6 +4438,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       cautionDepositRefunded: rowCautionRefunded,
                     } = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
                     const isOtaRow = isOtaBookingChannel(res.channel);
+                    const isOtaCollectedRow = paymentCollectionMode === 'ota_prepaid';
                     const bookedDate = getReservationBookedDate(res);
                     const adultsCount = res.adults || 1;
                     const kidsCount = res.children || 0;
@@ -4405,9 +4457,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     const paymentStatusColor =
                       paymentStatus === 'Paid'
                         ? 'text-emerald-700'
-                        : paymentStatus === 'Partial'
-                          ? 'text-amber-700'
-                          : 'text-rose-700';
+                        : paymentStatus === 'Paid to OTA'
+                          ? 'text-blue-700'
+                          : paymentStatus === 'Partial'
+                            ? 'text-amber-700'
+                            : 'text-rose-700';
 
                     const resStatusColor =
                       res.status === 'checked_in'
@@ -4514,7 +4568,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         </td>
 
                         <td className="py-3 px-3.5 text-slate-700 font-medium whitespace-nowrap">
-                          {formatBookingSourceLabel(res.channel)}
+                          <span className="block">{formatBookingSourceLabel(res.channel)}</span>
+                          <span className="block text-[10px] font-semibold text-slate-500">
+                            {formatPaymentCollectionLabel(paymentCollectionMode)}
+                          </span>
                         </td>
 
                         <td className="py-3 px-3.5 text-right font-mono-tabular font-semibold text-slate-900 whitespace-nowrap">
@@ -4538,22 +4595,26 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           )}
                         </td>
 
-                        <td className="py-3 px-3.5 text-right font-mono-tabular text-emerald-700 whitespace-nowrap">
-                          {isOtaRow ? (
+                        <td className="py-3 px-3.5 text-right font-mono-tabular whitespace-nowrap">
+                          {isOtaCollectedRow ? (
                             <>
-                              <span className="block font-semibold text-blue-700">
-                                OTA: {formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)}{' '}
-                                {sourceCurrency}
+                              <span className="block font-semibold text-emerald-700">
+                                Hotel Recv: {formatNgn(totalReceivedByHotelNgn)}
                               </span>
-                              <span className="block text-[10px] text-slate-600">
-                                ≈ {formatNgn(otaPaidAmount)} · Direct: {formatNgn(hotelPaidAmount)}
+                              <span className="block text-[10px] text-blue-700">
+                                Paid to OTA:{' '}
+                                {sourceCurrency !== 'NGN' && otaPaidSourceAmount > 0
+                                  ? `${formatChannelCurrency(otaPaidSourceAmount, sourceCurrency)} ${sourceCurrency}`
+                                  : formatNgn(otaPaidAmount || expectedPayoutNgn)}
                               </span>
                             </>
                           ) : (
                             <>
-                              <span className="block font-semibold">{formatNgn(amountPaid)}</span>
+                              <span className="block font-semibold text-emerald-700">
+                                {formatNgn(totalReceivedByHotelNgn)}
+                              </span>
                               <span className="block text-[10px] text-slate-500">
-                                Direct: {formatNgn(hotelPaidAmount)}
+                                Direct Received: {formatNgn(hotelPaidAmount)}
                               </span>
                             </>
                           )}
@@ -4561,12 +4622,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                         <td
                           className={`py-3 px-3.5 text-right font-mono-tabular font-bold whitespace-nowrap ${
-                            balance > 0 ? 'text-rose-700' : 'text-slate-600'
+                            amountDueAtPropertyNgn > 0 ? 'text-rose-700' : 'text-emerald-700'
                           }`}
                         >
-                          <span className="block">{formatNgn(balance)}</span>
+                          <span className="block">{formatNgn(amountDueAtPropertyNgn)}</span>
                           <span className="block text-[10px] font-normal text-slate-500">
-                            {balance > 0 ? `≈ ${formatUsd(balanceUsd)} USD` : '₦0 bal due'}
+                            {amountDueAtPropertyNgn > 0 ? 'Due at property' : '₦0 due at property'}
                           </span>
                         </td>
 
@@ -4574,6 +4635,23 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           <span className={`font-semibold ${paymentStatusColor}`}>
                             {paymentStatus}
                           </span>
+                          {isOtaCollectedRow ? (
+                            <span
+                              className={`block text-[10px] font-semibold mt-0.5 ${
+                                otaPayoutStatus === 'received'
+                                  ? 'text-emerald-700'
+                                  : 'text-amber-700'
+                              }`}
+                            >
+                              {otaPayoutStatus === 'received'
+                                ? `OTA Payout: Received (${formatNgn(actualPayoutReceivedNgn)})`
+                                : `OTA Payout: Pending (${formatNgn(expectedPayoutNgn)})`}
+                            </span>
+                          ) : (
+                            <span className="block text-[10px] font-medium text-slate-500 mt-0.5">
+                              {amountDueAtPropertyNgn <= 0 ? 'Direct Settled' : 'Collect at Property'}
+                            </span>
+                          )}
                           {rowCautionEnabled && rowCautionCollected > 0 && (
                             <span className="block text-[10px] font-mono-tabular text-amber-800 mt-0.5">
                               Caution: {formatNgn(rowCautionCollected)}{' '}
@@ -4609,6 +4687,16 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               <Eye className="w-3 h-3" />
                               <span>View</span>
                             </button>
+                            {canManageRooms && (
+                              <button
+                                type="button"
+                                onClick={() => setPaymentModalResId(res.id)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                <CreditCard className="w-3 h-3" />
+                                <span>Payment</span>
+                              </button>
+                            )}
                             {canCancel && (
                               <button
                                 type="button"
@@ -5168,37 +5256,27 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         );
                       })}
                     </div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                        <span className="truncate font-medium">
-                          {formatReadableImageSourceLabel(draftImageUrl) || 'App Media Storage'}
-                        </span>
-                        <span className="text-[10px] font-semibold text-emerald-700 shrink-0 ml-2">
-                          App Storage
-                        </span>
-                      </div>
-                      <input
-                        type="url"
-                        value={isCleanExternalImageUrl(draftImageUrl) ? draftImageUrl : ''}
-                        onChange={(e) => {
-                          const nextUrl = e.target.value.trim();
-                          setUploadError(null);
-                          if (!nextUrl) return;
-                          if (isLegacyOrAiStudioImageUrl(nextUrl)) {
-                            setUploadError(
-                              'Google / AI Studio image links are blocked. Please upload a photo from your device or choose from the property gallery above.'
-                            );
-                            return;
-                          }
-                          setDraftImageUrl(nextUrl);
-                          setDraftGalleryImages((prev) =>
-                            Array.from(new Set([nextUrl, ...prev])).slice(0, 6)
+                    <input
+                      type="url"
+                      value={isCleanExternalImageUrl(draftImageUrl) ? draftImageUrl : ''}
+                      onChange={(e) => {
+                        const nextUrl = e.target.value.trim();
+                        setUploadError(null);
+                        if (!nextUrl) return;
+                        if (isLegacyOrAiStudioImageUrl(nextUrl)) {
+                          setUploadError(
+                            'Google / AI Studio image links are blocked. Please upload a photo from your device or choose from the property gallery above.'
                           );
-                        }}
-                        placeholder="Optional: paste a clean https:// image URL or upload a photo above"
-                        className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]"
-                      />
-                    </div>
+                          return;
+                        }
+                        setDraftImageUrl(nextUrl);
+                        setDraftGalleryImages((prev) =>
+                          Array.from(new Set([nextUrl, ...prev])).slice(0, 6)
+                        );
+                      }}
+                      placeholder="Optional: paste a clean https:// image URL or upload a photo above"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]"
+                    />
                   </div>
                 </div>
               </div>
@@ -5476,37 +5554,27 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         );
                       })}
                     </div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                        <span className="truncate font-medium">
-                          {formatReadableImageSourceLabel(newRoomImageUrl) || 'App Media Storage'}
-                        </span>
-                        <span className="text-[10px] font-semibold text-emerald-700 shrink-0 ml-2">
-                          App Storage
-                        </span>
-                      </div>
-                      <input
-                        type="url"
-                        value={isCleanExternalImageUrl(newRoomImageUrl) ? newRoomImageUrl : ''}
-                        onChange={(e) => {
-                          const nextUrl = e.target.value.trim();
-                          setAddRoomError(null);
-                          if (!nextUrl) return;
-                          if (isLegacyOrAiStudioImageUrl(nextUrl)) {
-                            setAddRoomError(
-                              'Google / AI Studio image links are blocked. Please upload a photo from your device or choose from the property gallery above.'
-                            );
-                            return;
-                          }
-                          setNewRoomImageUrl(nextUrl);
-                          setNewRoomGalleryImages((prev) =>
-                            Array.from(new Set([nextUrl, ...prev])).slice(0, 6)
+                    <input
+                      type="url"
+                      value={isCleanExternalImageUrl(newRoomImageUrl) ? newRoomImageUrl : ''}
+                      onChange={(e) => {
+                        const nextUrl = e.target.value.trim();
+                        setAddRoomError(null);
+                        if (!nextUrl) return;
+                        if (isLegacyOrAiStudioImageUrl(nextUrl)) {
+                          setAddRoomError(
+                            'Google / AI Studio image links are blocked. Please upload a photo from your device or choose from the property gallery above.'
                           );
-                        }}
-                        placeholder="Optional: paste a clean https:// image URL or upload a photo above"
-                        className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]"
-                      />
-                    </div>
+                          return;
+                        }
+                        setNewRoomImageUrl(nextUrl);
+                        setNewRoomGalleryImages((prev) =>
+                          Array.from(new Set([nextUrl, ...prev])).slice(0, 6)
+                        );
+                      }}
+                      placeholder="Optional: paste a clean https:// image URL or upload a photo above"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]"
+                    />
                   </div>
                 </div>
               </div>
@@ -5648,66 +5716,93 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                     <div className="border border-blue-200 bg-blue-50/50 rounded-xl p-3.5">
                       <p className="text-[11px] font-semibold text-blue-900">
-                        {folioIsOta
-                          ? `Platform Payment (${activeFolioReservation.channel} · ${folioPaySummary.sourceCurrency})`
-                          : 'Platform Payment (OTA)'}
+                        {formatPaymentCollectionLabel(folioPaySummary.paymentCollectionMode)}
                       </p>
                       <p className="font-mono-tabular text-base font-bold text-blue-800 mt-1">
-                        {folioIsOta
-                          ? `${formatChannelCurrency(
-                              folioPaySummary.otaPaidSourceAmount,
-                              folioPaySummary.sourceCurrency
-                            )} ${folioPaySummary.sourceCurrency}`
+                        {folioPaySummary.paymentCollectionMode === 'ota_prepaid'
+                          ? folioPaySummary.sourceCurrency !== 'NGN' &&
+                            folioPaySummary.otaPaidSourceAmount > 0
+                            ? `${formatChannelCurrency(
+                                folioPaySummary.otaPaidSourceAmount,
+                                folioPaySummary.sourceCurrency
+                              )} ${folioPaySummary.sourceCurrency}`
+                            : formatNgn(
+                                folioPaySummary.otaPaidAmount || folioPaySummary.expectedPayoutNgn
+                              )
                           : '₦0'}
                       </p>
                       <p className="text-[11px] text-blue-700 mt-0.5 font-mono-tabular">
-                        {folioIsOta
-                          ? `≈ ${formatNgn(folioPaySummary.otaPaidAmount)} (@ ₦${folioPaySummary.fxRateToNgn.toLocaleString()})`
-                          : 'Direct booking (no OTA payout)'}
+                        {folioPaySummary.paymentCollectionMode === 'ota_prepaid'
+                          ? `Guest Paid to OTA (${activeFolioReservation.channel})`
+                          : 'Guest pays directly at property'}
                       </p>
                     </div>
 
                     <div className="border border-slate-200 bg-slate-50 rounded-xl p-3.5">
                       <p className="text-[11px] font-semibold text-slate-700">
-                        {folioIsOta ? 'Expected Property Payout (₦)' : 'Room Charges Total (₦)'}
+                        {folioPaySummary.paymentCollectionMode === 'ota_prepaid'
+                          ? 'OTA Payout Tracking'
+                          : 'Room Charges Total (₦)'}
                       </p>
                       <p className="font-mono-tabular text-base font-bold text-slate-900 mt-1">
-                        {formatNgn(
-                          folioIsOta
-                            ? folioPaySummary.expectedPayoutNgn
-                            : activeFolioReservation.roomChargesNgn
-                        )}
+                        {folioPaySummary.paymentCollectionMode === 'ota_prepaid'
+                          ? folioPaySummary.otaPayoutStatus === 'received'
+                            ? formatNgn(folioPaySummary.actualPayoutReceivedNgn)
+                            : formatNgn(folioPaySummary.expectedPayoutNgn)
+                          : formatNgn(activeFolioReservation.roomChargesNgn)}
                       </p>
-                      <p className="text-[11px] text-slate-500 mt-0.5 font-mono-tabular">
-                        ≈ {formatUsd(folioIsOta ? folioPaySummary.expectedPayoutUsd : folioPaySummary.totalAmountUsd)} USD · {activeFolioReservation.nights} night(s)
+                      <p className="text-[11px] mt-0.5 font-mono-tabular">
+                        {folioPaySummary.paymentCollectionMode === 'ota_prepaid' ? (
+                          <span
+                            className={
+                              folioPaySummary.otaPayoutStatus === 'received'
+                                ? 'font-semibold text-emerald-700'
+                                : 'font-semibold text-amber-700'
+                            }
+                          >
+                            {folioPaySummary.otaPayoutStatus === 'received'
+                              ? `Received (Exp. ${formatNgn(folioPaySummary.expectedPayoutNgn)})`
+                              : 'Pending OTA Payout'}
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">
+                            ≈ {formatUsd(folioPaySummary.totalAmountUsd)} USD ·{' '}
+                            {activeFolioReservation.nights} night(s)
+                          </span>
+                        )}
                       </p>
                     </div>
 
                     <div className="border border-emerald-200 bg-emerald-50/50 rounded-xl p-3.5">
                       <p className="text-[11px] font-semibold text-emerald-900">
-                        Direct Payment to {property.name.split(' ')[0]} (₦)
+                        Money Received by Hotel (₦)
                       </p>
                       <p className="font-mono-tabular text-base font-bold text-emerald-800 mt-1">
-                        {formatNgn(folioPaySummary.hotelPaidAmount)}
+                        {formatNgn(folioPaySummary.totalReceivedByHotelNgn)}
                       </p>
                       <p className="text-[11px] text-emerald-700 mt-0.5 font-mono-tabular">
-                        ≈ {formatUsd(folioPaySummary.hotelPaidUsd)} USD · {activeFolioReservation.paymentMethod}
+                        Direct {formatNgn(folioPaySummary.hotelPaidAmount)}
+                        {folioPaySummary.actualPayoutReceivedNgn > 0
+                          ? ` + OTA ${formatNgn(folioPaySummary.actualPayoutReceivedNgn)}`
+                          : ` · ${activeFolioReservation.paymentMethod}`}
                       </p>
                     </div>
 
                     <div className="border border-slate-200 bg-white rounded-xl p-3.5">
                       <p className="text-[11px] font-semibold text-slate-700">
-                        Outstanding Hotel Balance
+                        Amount Due at Property
                       </p>
                       <p
                         className={`font-mono-tabular text-base font-bold mt-1 ${
-                          folioPaySummary.balance > 0 ? 'text-rose-700' : 'text-emerald-700'
+                          folioPaySummary.amountDueAtPropertyNgn > 0
+                            ? 'text-rose-700'
+                            : 'text-emerald-700'
                         }`}
                       >
-                        {formatNgn(folioPaySummary.balance)}
+                        {formatNgn(folioPaySummary.amountDueAtPropertyNgn)}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5 font-mono-tabular">
-                        ≈ {formatUsd(folioPaySummary.balanceUsd)} USD · <strong>{folioPaySummary.paymentStatus}</strong>
+                        Status: <strong>{folioPaySummary.paymentStatus}</strong>
                       </p>
                     </div>
                   </div>
@@ -5798,7 +5893,17 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             ` · ID Verified (${activeFolioReservation.idType || 'KYC'})`}
                         </span>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        {canManageRooms && (
+                          <button
+                            type="button"
+                            onClick={() => setPaymentModalResId(activeFolioReservation.id)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 rounded-md text-[11px] font-semibold text-emerald-800 cursor-pointer whitespace-nowrap shrink-0"
+                          >
+                            <CreditCard className="w-3 h-3" />
+                            <span>Manage Payment</span>
+                          </button>
+                        )}
                         {activeFolioReservation.status !== 'checked_out' &&
                           activeFolioReservation.status !== 'cancelled' &&
                           activeFolioReservation.status !== 'no_show' && (
@@ -5808,7 +5913,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 setEditingStayDetails((v) => !v);
                                 setEditStayError(null);
                               }}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-100 rounded-md text-[11px] font-semibold text-slate-700 cursor-pointer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-100 rounded-md text-[11px] font-semibold text-slate-700 cursor-pointer whitespace-nowrap shrink-0"
                             >
                               <Pencil className="w-3 h-3" />
                               <span>{editingStayDetails ? 'Close Editor' : 'Edit Reservation'}</span>
@@ -6218,22 +6323,83 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Payment Collection Type
+                                </label>
+                                <select
+                                  value={editCollectionMode}
+                                  onChange={(e) => {
+                                    const nextMode = e.target.value as OtaPaymentCollectionMode;
+                                    setEditCollectionMode(nextMode);
+                                    if (nextMode === 'ota_prepaid') {
+                                      setEditPaymentStatus('Paid to OTA');
+                                      setEditAmountDueInput('0');
+                                    } else {
+                                      const directPaid = Math.max(
+                                        0,
+                                        parseFormattedPriceInput(editHotelPaidInput) ?? 0
+                                      );
+                                      const nextDue = Math.max(0, editStayTotalNgn - directPaid);
+                                      setEditAmountDueInput(formatPriceInputWithCommas(nextDue));
+                                      setEditPaymentStatus(
+                                        directPaid <= 0
+                                          ? 'Unpaid'
+                                          : nextDue <= 0
+                                            ? 'Paid'
+                                            : 'Partial'
+                                      );
+                                    }
+                                  }}
+                                  className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
+                                >
+                                  <option value="ota_prepaid">Collected by OTA</option>
+                                  <option value="hotel_collect">Collect at Property</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                                   Payment Status
                                 </label>
                                 <select
                                   value={editPaymentStatus}
-                                  onChange={(e) =>
-                                    setEditPaymentStatus(e.target.value as PaymentStatusLabel)
-                                  }
+                                  onChange={(e) => {
+                                    const nextSt = e.target.value as PaymentStatusLabel;
+                                    setEditPaymentStatus(nextSt);
+                                    if (nextSt === 'Paid to OTA') {
+                                      setEditCollectionMode('ota_prepaid');
+                                      setEditAmountDueInput('0');
+                                    }
+                                  }}
                                   className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
                                 >
+                                  <option value="Paid to OTA">Paid to OTA</option>
                                   <option value="Paid">Paid</option>
                                   <option value="Partial">Partial</option>
                                   <option value="Unpaid">Unpaid</option>
                                 </select>
                               </div>
 
-                              {editIsOta && (
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Amount Due at Property (₦)
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={editAmountDueInput}
+                                  onChange={(e) =>
+                                    handleCommaPriceChange(
+                                      e,
+                                      editAmountDueInput,
+                                      setEditAmountDueInput
+                                    )
+                                  }
+                                  placeholder="0"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                                />
+                              </div>
+
+                              {(editIsOta || editCollectionMode === 'ota_prepaid') && (
                                 <>
                                   <div>
                                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -6277,7 +6443,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                                   <div>
                                     <label className="block text-[11px] font-semibold text-blue-900 mb-1">
-                                      Platform Payment ({activeEditCur})
+                                      Paid to OTA ({activeEditCur})
                                     </label>
                                     <input
                                       type="text"
@@ -6297,7 +6463,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                                   <div>
                                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                      Expected Property Payout (₦)
+                                      Expected OTA Payout (₦)
                                     </label>
                                     <input
                                       type="text"
@@ -6312,6 +6478,57 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                       }
                                       placeholder="e.g. 165,000"
                                       className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                      OTA Payout Status
+                                    </label>
+                                    <select
+                                      value={editOtaPayoutStatus}
+                                      onChange={(e) => {
+                                        const nextP = e.target.value as OtaPayoutStatus;
+                                        setEditOtaPayoutStatus(nextP);
+                                        if (nextP === 'received') {
+                                          const curActual =
+                                            parseFormattedPriceInput(editActualPayoutInput) ?? 0;
+                                          if (curActual <= 0) {
+                                            setEditActualPayoutInput(editExpectedPayoutInput);
+                                          }
+                                        } else {
+                                          setEditActualPayoutInput('0');
+                                        }
+                                      }}
+                                      className="w-full h-10 border border-blue-200 rounded-lg px-3 bg-white text-xs font-semibold text-blue-900"
+                                    >
+                                      <option value="pending">Pending</option>
+                                      <option value="received">Received</option>
+                                    </select>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
+                                      Actual OTA Payout Received (₦)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      disabled={editOtaPayoutStatus !== 'received'}
+                                      value={
+                                        editOtaPayoutStatus === 'received'
+                                          ? editActualPayoutInput
+                                          : '0'
+                                      }
+                                      onChange={(e) =>
+                                        handleCommaPriceChange(
+                                          e,
+                                          editActualPayoutInput,
+                                          setEditActualPayoutInput
+                                        )
+                                      }
+                                      placeholder="0"
+                                      className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900 disabled:bg-slate-100 disabled:text-slate-400"
                                     />
                                   </div>
                                 </>
@@ -7373,24 +7590,31 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                 Math.round(parseFormattedPriceInput(bookingHotelPaidInput) ?? 0)
               );
               const estTotalCharges = expectedPayoutEst;
-              const otaCreditTowardCharges = isOta
-                ? Math.min(estTotalCharges, otaPaidNgnEst)
-                : 0;
-              const estBalanceDue = Math.max(
-                0,
-                estTotalCharges - otaCreditTowardCharges - directPaidEst
-              );
+              const isCollectedByOtaNew = bookingCollectionMode === 'ota_prepaid';
+              const estBalanceDue = bookingAmountDueManual
+                ? Math.max(0, Math.round(parseFormattedPriceInput(bookingAmountDueInput) ?? 0))
+                : isCollectedByOtaNew
+                  ? 0
+                  : Math.max(0, estTotalCharges - directPaidEst);
               const estBalanceUsd = convertNgnToUsd(estBalanceDue, internalUsdRate);
-              const autoPayStatus: PaymentStatusLabel =
-                estBalanceDue <= 0 &&
-                (estTotalCharges > 0 || otaPaidNgnEst > 0 || directPaidEst > 0)
+              const autoPayStatus: PaymentStatusLabel = isCollectedByOtaNew
+                ? 'Paid to OTA'
+                : estBalanceDue <= 0 && (estTotalCharges > 0 || directPaidEst > 0)
                   ? 'Paid'
-                  : otaPaidNgnEst > 0 || directPaidEst > 0
+                  : directPaidEst > 0
                     ? 'Partial'
                     : 'Unpaid';
               const estPayStatus: PaymentStatusLabel = bookingPaymentStatusManual
                 ? bookingPaymentStatus
                 : autoPayStatus;
+              const actualPayoutReceivedEst =
+                isCollectedByOtaNew && bookingOtaPayoutStatus === 'received'
+                  ? Math.max(
+                      0,
+                      Math.round(parseFormattedPriceInput(bookingActualPayoutInput) ?? expectedPayoutEst)
+                    )
+                  : 0;
+              const hotelMoneyReceivedEst = directPaidEst + actualPayoutReceivedEst;
               const roomsMatchingType = sortedRooms.filter(
                 (r) => !newRequestedRoomType || r.roomType === newRequestedRoomType
               );
@@ -7676,6 +7900,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             const nextIsOta = isOtaBookingChannel(nextCh);
                             const defaultRoomTotal = baseRateNgn * Math.max(1, nights);
                             if (!nextIsOta) {
+                              setBookingCollectionMode('hotel_collect');
+                              setBookingOtaPayoutStatus('pending');
+                              setBookingActualPayoutInput('0');
+                              setBookingAmountDueManual(false);
                               setBookingCurrency('NGN');
                               setBookingFxRateInput('1');
                               setBookingNightlyRateInput(formatPriceInputWithCommas(baseRateNgn));
@@ -7687,6 +7915,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               setBookingHotelPaidInput(formatPriceInputWithCommas(defaultRoomTotal));
                               setPaymentMethod('Bank Transfer');
                             } else {
+                              setBookingCollectionMode('ota_prepaid');
+                              setBookingOtaPayoutStatus('pending');
+                              setBookingActualPayoutInput('0');
+                              setBookingAmountDueInput('0');
+                              setBookingAmountDueManual(false);
                               const nextCur = getDefaultOtaChannelCurrency(nextCh);
                               const nextFx =
                                 nextCur === 'NGN'
@@ -8075,6 +8308,32 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Payment Collection Type
+                        </label>
+                        <select
+                          value={bookingCollectionMode}
+                          onChange={(e) => {
+                            const nextMode = e.target.value as OtaPaymentCollectionMode;
+                            setBookingCollectionMode(nextMode);
+                            setBookingPaymentStatusManual(false);
+                            setBookingAmountDueManual(false);
+                            if (nextMode === 'ota_prepaid') {
+                              setBookingHotelPaidInput('0');
+                              setBookingAmountDueInput('0');
+                              setPaymentMethod('OTA Platform Payout');
+                            } else {
+                              setPaymentMethod('Bank Transfer');
+                            }
+                          }}
+                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
+                        >
+                          <option value="ota_prepaid">Collected by OTA</option>
+                          <option value="hotel_collect">Collect at Property</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                           Payment Status
                         </label>
                         <select
@@ -8083,22 +8342,54 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             const nextStatus = e.target.value as PaymentStatusLabel;
                             setBookingPaymentStatus(nextStatus);
                             setBookingPaymentStatusManual(true);
-                            if (nextStatus === 'Unpaid') {
+                            if (nextStatus === 'Paid to OTA') {
+                              setBookingCollectionMode('ota_prepaid');
+                              setBookingAmountDueInput('0');
+                              setBookingAmountDueManual(true);
+                            } else if (nextStatus === 'Unpaid') {
                               setBookingHotelPaidInput('0');
+                              setBookingAmountDueManual(false);
                               if (isOta) setBookingOtaPaidSourceInput('0');
-                            } else if (nextStatus === 'Paid' && !isOta) {
+                            } else if (nextStatus === 'Paid' && !isCollectedByOtaNew) {
                               setBookingHotelPaidInput(formatPriceInputWithCommas(estTotalCharges));
+                              setBookingAmountDueManual(false);
                             }
                           }}
                           className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
                         >
+                          <option value="Paid to OTA">Paid to OTA</option>
                           <option value="Paid">Paid</option>
                           <option value="Partial">Partial</option>
                           <option value="Unpaid">Unpaid</option>
                         </select>
                       </div>
 
-                      {isOta && (
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Amount Due at Property (₦)
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={
+                            bookingAmountDueManual
+                              ? bookingAmountDueInput
+                              : formatPriceInputWithCommas(estBalanceDue)
+                          }
+                          onChange={(e) => {
+                            setBookingAmountDueManual(true);
+                            handleCommaPriceChange(
+                              e,
+                              bookingAmountDueInput,
+                              setBookingAmountDueInput
+                            );
+                          }}
+                          placeholder="0"
+                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                        />
+                      </div>
+
+                      {(isOta || isCollectedByOtaNew) && (
                         <>
                           <div>
                             <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -8162,7 +8453,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                           <div>
                             <label className="block text-[11px] font-semibold text-blue-900 mb-1">
-                              Platform Payment — {channel} ({activeCur})
+                              Paid to OTA — {channel} ({activeCur})
                             </label>
                             <input
                               type="text"
@@ -8193,7 +8484,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                           <div>
                             <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                              Expected Property Payout (₦)
+                              Expected OTA Payout (₦)
                             </label>
                             <input
                               type="text"
@@ -8211,6 +8502,59 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                             />
                           </div>
+
+                          {isCollectedByOtaNew && (
+                            <>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-blue-900 mb-1">
+                                  OTA Payout Status
+                                </label>
+                                <select
+                                  value={bookingOtaPayoutStatus}
+                                  onChange={(e) => {
+                                    const nextP = e.target.value as OtaPayoutStatus;
+                                    setBookingOtaPayoutStatus(nextP);
+                                    if (nextP === 'received') {
+                                      setBookingActualPayoutInput(
+                                        formatPriceInputWithCommas(expectedPayoutEst)
+                                      );
+                                    } else {
+                                      setBookingActualPayoutInput('0');
+                                    }
+                                  }}
+                                  className="w-full h-10 border border-blue-200 rounded-lg px-3 bg-white text-xs font-semibold text-blue-900"
+                                >
+                                  <option value="pending">Pending</option>
+                                  <option value="received">Received</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
+                                  Actual OTA Payout Received (₦)
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  disabled={bookingOtaPayoutStatus !== 'received'}
+                                  value={
+                                    bookingOtaPayoutStatus === 'received'
+                                      ? bookingActualPayoutInput
+                                      : '0'
+                                  }
+                                  onChange={(e) =>
+                                    handleCommaPriceChange(
+                                      e,
+                                      bookingActualPayoutInput,
+                                      setBookingActualPayoutInput
+                                    )
+                                  }
+                                  placeholder="0"
+                                  className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900 disabled:bg-slate-100 disabled:text-slate-400"
+                                />
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
 
@@ -8224,6 +8568,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           value={bookingHotelPaidInput}
                           onChange={(e) => {
                             setBookingPaymentStatusManual(false);
+                            setBookingAmountDueManual(false);
                             handleCommaPriceChange(
                               e,
                               bookingHotelPaidInput,
@@ -8240,20 +8585,24 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2.5 border-t border-emerald-200/70">
                       <div className="bg-white border border-blue-200 rounded-lg px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-800">
-                          Platform Payment ({isOta ? channel : 'OTA'})
+                          {formatPaymentCollectionLabel(bookingCollectionMode)}
                         </p>
                         <p className="font-mono-tabular text-sm font-bold text-blue-800 mt-0.5">
-                          {isOta
-                            ? `${formatChannelCurrency(otaPaidSrc, activeCur)} ${activeCur}`
+                          {isCollectedByOtaNew
+                            ? activeCur !== 'NGN' && otaPaidSrc > 0
+                              ? `${formatChannelCurrency(otaPaidSrc, activeCur)} ${activeCur}`
+                              : formatNgn(otaPaidNgnEst || expectedPayoutEst)
                             : '₦0'}
                         </p>
                         <p className="font-mono-tabular text-[10px] text-slate-500">
-                          {isOta ? `≈ ${formatNgn(otaPaidNgnEst)}` : 'Direct booking'}
+                          {isCollectedByOtaNew
+                            ? `OTA Payout: ${bookingOtaPayoutStatus === 'received' ? 'Received' : 'Pending'}`
+                            : 'Collect directly at property'}
                         </p>
                       </div>
                       <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          {isOta ? 'Expected Property Payout' : 'Stay Room Total'}
+                          {isCollectedByOtaNew ? 'Expected OTA Payout' : 'Stay Room Total'}
                         </p>
                         <p className="font-mono-tabular text-sm font-bold text-slate-900 mt-0.5">
                           {formatNgn(expectedPayoutEst)}
@@ -8264,10 +8613,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       </div>
                       <div className="bg-white border border-emerald-200 rounded-lg px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800">
-                          Direct to {propertyShortName}
+                          Money Received by Hotel
                         </p>
                         <p className="font-mono-tabular text-sm font-bold text-emerald-700 mt-0.5">
-                          {formatNgn(directPaidEst)}
+                          {formatNgn(hotelMoneyReceivedEst)}
                         </p>
                         <p className="font-mono-tabular text-[10px] text-slate-500">
                           {paymentMethod}
@@ -8275,7 +8624,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       </div>
                       <div className="bg-white border border-slate-200 rounded-lg px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          Outstanding Hotel Balance
+                          Amount Due at Property
                         </p>
                         <p
                           className={`font-mono-tabular text-sm font-bold mt-0.5 ${
@@ -8602,42 +8951,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     </div>
 
                     <div className="lg:col-span-7 space-y-5 text-xs">
-                      <div className="border border-slate-200 rounded-xl p-4 space-y-3">
-                        <p className="font-semibold text-slate-900">Quick Housekeeping Actions</p>
-                        <div className="flex flex-wrap gap-2">
-                          {(['clean', 'inspected', 'dirty', 'cleaning'] as const).map((hk) => (
-                            <button
-                              key={hk}
-                              type="button"
-                              disabled={busyId === selectedRoomDetail.id}
-                              onClick={async () => {
-                                setBusyId(selectedRoomDetail.id);
-                                try {
-                                  await updateRoomStatus({
-                                    property,
-                                    room: selectedRoomDetail,
-                                    updates: { housekeepingStatus: hk },
-                                    actorRole,
-                                  });
-                                  onNotify(
-                                    `Marked ${selectedRoomDetail.roomNumber} as ${hk}`
-                                  );
-                                } finally {
-                                  setBusyId(null);
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-lg border font-semibold capitalize cursor-pointer ${
-                                selectedRoomDetail.housekeepingStatus === hk
-                                  ? 'bg-emerald-600 border-emerald-600 text-white'
-                                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                              }`}
-                            >
-                              {hk}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
                       <div className="border border-slate-200 rounded-xl p-4 space-y-3">
                         <div className="flex items-center justify-between">
                           <p className="font-semibold text-slate-900">
@@ -9219,6 +9532,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
           }}
         />
       )}
+      {paymentModalResId &&
+        (() => {
+          const targetRes = reservations.find((r) => r.id === paymentModalResId);
+          if (!targetRes) return null;
+          return (
+            <ReservationPaymentModal
+              property={property}
+              reservation={targetRes}
+              actorRole={actorRole}
+              onClose={() => setPaymentModalResId(null)}
+              onNotify={onNotify}
+            />
+          );
+        })()}
     </div>
   );
 };

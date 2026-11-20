@@ -1,11 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertCircle,
   ArrowRight,
   BarChart3,
   BedDouble,
   Calendar,
   CalendarPlus,
+  CheckCircle2,
   CreditCard,
+  Globe,
   ListFilter,
   LogIn,
   LogOut,
@@ -300,30 +303,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ).length;
     const departuresDelta = departuresToday - departuresYesterday;
 
-    // Daily revenue: posted ledger revenue + prorated nightly OTA-prepaid stays (without double-counting ledger refs)
+    // Daily revenue: strictly money received in ledger (never count unreceived/pending OTA bookings as hotel revenue)
     const computeDailyRevenueNgn = (targetIso: string): number => {
       const dayLedger = ledgerEntries.filter(
         (e) => e.entryType === 'revenue' && normalizeIsoDate(e.entryDate) === targetIso
       );
       const ledgerTotal = dayLedger.reduce((sum, e) => sum + (Number(e.amountNgn) || 0), 0);
-      const ledgerRefs = new Set(
-        dayLedger.map((e) => (e.reference || '').trim().toUpperCase()).filter(Boolean)
-      );
-
-      let otaAccruedNgn = 0;
-      for (const r of activeNonCancelled) {
-        if (!isOtaBookingChannel(r.channel)) continue;
-        const rIn = normalizeIsoDate(r.checkInDate);
-        const rOutRaw = normalizeIsoDate(r.checkOutDate);
-        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
-        if (!(rIn <= targetIso && targetIso < rOut)) continue;
-        if (r.bookingRef && ledgerRefs.has(r.bookingRef.trim().toUpperCase())) continue;
-        const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
-        if (pay.otaPaidAmount <= 0) continue;
-        const stayNights = Math.max(1, r.nights || diffNightsIso(rIn, rOut));
-        otaAccruedNgn += Math.round(pay.expectedPayoutNgn / stayNights);
-      }
-      return Math.round(ledgerTotal + otaAccruedNgn);
+      return Math.round(ledgerTotal);
     };
 
     const revenueToday = computeDailyRevenueNgn(todayIso);
@@ -346,6 +332,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       revenueDeltaPct,
     };
   }, [rooms, reservations, ledgerEntries, property.usdExchangeRateNgn, todayIso, yesterdayIso]);
+
+  // Financial Overview (OTA Prepayments, Payments Received by Hotel, Outstanding Balance at Property)
+  const financialOverview = useMemo(() => {
+    const activeReservations = reservations.filter(
+      (r) => r.status !== 'cancelled' && r.status !== 'no_show'
+    );
+    let otaPrepaymentsNgn = 0;
+    let otaExpectedPayoutNgn = 0;
+    let otaPrepaidCount = 0;
+    let otaPendingPayoutCount = 0;
+    let otaReceivedPayoutCount = 0;
+    let paymentsReceivedNgn = 0;
+    let paymentsReceivedCount = 0;
+    let outstandingBalanceNgn = 0;
+    let outstandingCount = 0;
+
+    for (const r of activeReservations) {
+      const pay = getReservationPaymentSummary(r, property.usdExchangeRateNgn);
+      if (pay.paymentCollectionMode === 'ota_prepaid') {
+        otaPrepaymentsNgn += pay.otaPaidAmount > 0 ? pay.otaPaidAmount : pay.expectedPayoutNgn;
+        otaExpectedPayoutNgn += pay.expectedPayoutNgn;
+        otaPrepaidCount += 1;
+        if (pay.otaPayoutStatus === 'received') {
+          otaReceivedPayoutCount += 1;
+        } else {
+          otaPendingPayoutCount += 1;
+        }
+      }
+      if (pay.totalReceivedByHotelNgn > 0) {
+        paymentsReceivedNgn += pay.totalReceivedByHotelNgn;
+        paymentsReceivedCount += 1;
+      }
+      if (pay.amountDueAtPropertyNgn > 0) {
+        outstandingBalanceNgn += pay.amountDueAtPropertyNgn;
+        outstandingCount += 1;
+      }
+    }
+
+    return {
+      otaPrepaymentsNgn: Math.round(otaPrepaymentsNgn),
+      otaExpectedPayoutNgn: Math.round(otaExpectedPayoutNgn),
+      otaPrepaidCount,
+      otaPendingPayoutCount,
+      otaReceivedPayoutCount,
+      paymentsReceivedNgn: Math.round(paymentsReceivedNgn),
+      paymentsReceivedCount,
+      outstandingBalanceNgn: Math.round(outstandingBalanceNgn),
+      outstandingCount,
+    };
+  }, [reservations, property.usdExchangeRateNgn]);
 
   // Booking Performance Bar Chart Data (active stays per day)
   const bookingPerformance = useMemo(() => {
@@ -582,6 +618,108 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
         </button>
+      </div>
+
+      {/* 2b. Financial Overview: OTA Prepayments, Payments Received, Outstanding Balance */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="font-display text-sm font-bold text-slate-900">
+              Financial Overview
+            </h2>
+            <p className="text-[11px] text-slate-500">
+              Live payment position across OTA channels and direct property settlements
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('accounting')}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <span>Detailed Payments</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <button
+            type="button"
+            onClick={() => onNavigate('accounting')}
+            className="text-left bg-white border border-slate-200 hover:border-blue-300 rounded-2xl p-5 transition-colors cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-600">OTA Prepayments</span>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                <Globe className="w-4 h-4" />
+              </div>
+            </div>
+            <p className="font-display font-mono-tabular text-2xl font-extrabold text-slate-900 mt-2 truncate">
+              {formatNgn(financialOverview.otaPrepaymentsNgn)}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1 font-mono-tabular">
+              {financialOverview.otaPendingPayoutCount} pending ·{' '}
+              {financialOverview.otaReceivedPayoutCount} received · Exp.{' '}
+              <span className="font-semibold text-blue-700">
+                {formatNgn(financialOverview.otaExpectedPayoutNgn)}
+              </span>
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate('accounting')}
+            className="text-left bg-white border border-slate-200 hover:border-emerald-300 rounded-2xl p-5 transition-colors cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-600">Payments Received</span>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+            </div>
+            <p className="font-display font-mono-tabular text-2xl font-extrabold text-emerald-700 mt-2 truncate">
+              {formatNgn(financialOverview.paymentsReceivedNgn)}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Direct receipts &amp; settled OTA payouts across{' '}
+              <span className="font-mono-tabular font-semibold text-slate-700">
+                {financialOverview.paymentsReceivedCount}
+              </span>{' '}
+              stay{financialOverview.paymentsReceivedCount === 1 ? '' : 's'}
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate('accounting')}
+            className="text-left bg-white border border-slate-200 hover:border-rose-300 rounded-2xl p-5 transition-colors cursor-pointer"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-600">Outstanding Balance</span>
+              <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-700 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-4 h-4" />
+              </div>
+            </div>
+            <p
+              className={`font-display font-mono-tabular text-2xl font-extrabold mt-2 truncate ${
+                financialOverview.outstandingBalanceNgn > 0 ? 'text-rose-700' : 'text-slate-900'
+              }`}
+            >
+              {formatNgn(financialOverview.outstandingBalanceNgn)}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              {financialOverview.outstandingCount > 0 ? (
+                <>
+                  <span className="font-mono-tabular font-semibold text-rose-700">
+                    {financialOverview.outstandingCount}
+                  </span>{' '}
+                  reservation{financialOverview.outstandingCount === 1 ? '' : 's'} with balance due
+                </>
+              ) : (
+                'All active folios settled'
+              )}
+            </p>
+          </button>
+        </div>
       </div>
 
       {/* 3. Middle Row: Booking Performance Bar Chart + Dark Green Quick Actions */}

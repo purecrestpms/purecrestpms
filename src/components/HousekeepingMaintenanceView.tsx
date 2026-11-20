@@ -17,6 +17,7 @@ import {
   resolveMaintenanceTicket,
   updateHousekeepingTaskWorkflow,
   updateMaintenanceTicketWorkflow,
+  updateRoomStatus,
 } from '../services/pmsService';
 import {
   formatNgn,
@@ -413,30 +414,133 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
             </form>
           )}
 
-          {/* Room Cleanliness Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-            {sortedRooms.map((r) => (
+          {/* Housekeeping Status Summary */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+            {(
+              [
+                {
+                  key: 'clean',
+                  label: 'Clean & Ready',
+                  count: sortedRooms.filter((r) => r.housekeepingStatus === 'clean').length,
+                  accent: 'text-emerald-700',
+                },
+                {
+                  key: 'inspected',
+                  label: 'Inspected',
+                  count: sortedRooms.filter((r) => r.housekeepingStatus === 'inspected').length,
+                  accent: 'text-[#1c46be]',
+                },
+                {
+                  key: 'cleaning',
+                  label: 'In Progress',
+                  count: sortedRooms.filter((r) => r.housekeepingStatus === 'cleaning').length,
+                  accent: 'text-amber-700',
+                },
+                {
+                  key: 'dirty',
+                  label: 'Dirty / Needs Turnover',
+                  count: sortedRooms.filter((r) => r.housekeepingStatus === 'dirty').length,
+                  accent: 'text-rose-700',
+                },
+              ] as const
+            ).map((stat) => (
               <div
-                key={r.id}
-                className="bg-white border border-slate-200 rounded-xl p-3 space-y-1"
+                key={stat.key}
+                className="bg-white border border-slate-200 rounded-xl px-4 py-3.5"
               >
-                <p className="font-mono-tabular text-sm font-bold text-slate-900">
-                  Rm {r.roomNumber}
-                </p>
-                <p className="text-[11px] text-slate-500 truncate">{r.name}</p>
-                <p
-                  className={`text-xs font-semibold capitalize pt-1 ${
-                    r.housekeepingStatus === 'dirty'
-                      ? 'text-red-700'
-                      : r.housekeepingStatus === 'cleaning'
-                        ? 'text-amber-700'
-                        : 'text-emerald-700'
-                  }`}
-                >
-                  {r.housekeepingStatus}
+                <p className="text-xs font-medium text-slate-500">{stat.label}</p>
+                <p className={`font-mono-tabular text-2xl font-bold mt-1 ${stat.accent}`}>
+                  {stat.count}
                 </p>
               </div>
             ))}
+          </div>
+
+          {/* Interactive Room Housekeeping Board */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="font-display text-sm font-bold text-slate-900">
+                  Room Housekeeping Status &amp; Quick Controls
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Update cleanliness status across all property rooms directly from Housekeeping Management.
+                </p>
+              </div>
+              <span className="font-mono-tabular text-xs font-semibold text-slate-500">
+                {sortedRooms.length} room{sortedRooms.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {sortedRooms.map((r) => (
+                <div
+                  key={r.id}
+                  className="border border-slate-200 rounded-xl p-3.5 space-y-2.5 bg-slate-50/40"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-mono-tabular text-sm font-bold text-slate-900">
+                        {r.roomNumber}
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate">{r.roomType || r.name}</p>
+                    </div>
+                    <span
+                      className={`text-[11px] font-semibold capitalize shrink-0 ${
+                        r.housekeepingStatus === 'dirty'
+                          ? 'text-rose-700'
+                          : r.housekeepingStatus === 'cleaning'
+                            ? 'text-amber-700'
+                            : r.housekeepingStatus === 'inspected'
+                              ? 'text-[#1c46be]'
+                              : 'text-emerald-700'
+                      }`}
+                    >
+                      {r.housekeepingStatus}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 capitalize">
+                    Occupancy: <span className="font-medium text-slate-700">{r.occupancyStatus.replace('_', ' ')}</span>
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 pt-1">
+                    {(['clean', 'inspected', 'dirty', 'cleaning'] as const).map((hk) => {
+                      const isActive = r.housekeepingStatus === hk;
+                      return (
+                        <button
+                          key={hk}
+                          type="button"
+                          disabled={busyRecordId === `hk-${r.id}`}
+                          onClick={async () => {
+                            setActionError(null);
+                            setBusyRecordId(`hk-${r.id}`);
+                            try {
+                              await updateRoomStatus({
+                                property,
+                                room: r,
+                                updates: { housekeepingStatus: hk },
+                                actorRole,
+                              });
+                              onNotify(`Marked ${r.roomNumber} as ${hk}`);
+                            } catch (err) {
+                              setActionError(err instanceof Error ? err.message : String(err));
+                            } finally {
+                              setBusyRecordId(null);
+                            }
+                          }}
+                          className={`px-2 py-1.5 rounded-lg border text-[11px] font-semibold capitalize transition-colors cursor-pointer disabled:opacity-50 ${
+                            isActive
+                              ? 'bg-[#0b5d34] border-[#0b5d34] text-white'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {hk}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">

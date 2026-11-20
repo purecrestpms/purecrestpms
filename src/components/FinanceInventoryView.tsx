@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  CreditCard,
   Download,
+  ExternalLink,
   FileText,
   Package,
   Pencil,
   Plus,
   Printer,
+  Search,
   ShieldAlert,
   ShoppingCart,
   Trash2,
@@ -26,16 +29,26 @@ import {
   updateLedgerEntryWorkflow,
 } from '../services/pmsService';
 import {
+  formatBookingSourceLabel,
+  formatChannelCurrency,
   formatNgn,
+  formatPaymentCollectionLabel,
+  getReservationBookedDate,
+  getReservationPaymentSummary,
+  getReservationRoomDisplay,
   InventoryItemRecord,
+  isOtaBookingChannel,
   LedgerEntryRecord,
   NavSectionId,
   PropertyRecord,
   PurchaseOrderRecord,
+  ReservationRecord,
   RICHGATES_PROPERTY_INFO,
+  RoomRecord,
   StaffRole,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
+import { ReservationPaymentModal } from './ReservationPaymentModal';
 
 function formatPdfNgn(amount: number): string {
   return `NGN ${Math.round(amount).toLocaleString('en-US')}`;
@@ -46,11 +59,18 @@ interface FinanceInventoryViewProps {
   property: PropertyRecord;
   activeRole?: StaffRole;
   ledgerEntries: LedgerEntryRecord[];
+  reservations?: ReservationRecord[];
+  rooms?: RoomRecord[];
   inventoryItems: InventoryItemRecord[];
   purchaseOrders: PurchaseOrderRecord[];
   canManageRecords?: boolean;
   actorRole: string;
   onNavigate?: (section: NavSectionId) => void;
+  onOpenReservationFolio?: (
+    reservationId: string,
+    targetSection?: 'reservations' | 'front_desk',
+    intent?: 'view' | 'edit'
+  ) => void;
   onNotify: (msg: string) => void;
 }
 
@@ -59,11 +79,14 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
   property,
   activeRole,
   ledgerEntries,
+  reservations = [],
+  rooms = [],
   inventoryItems,
   purchaseOrders,
   canManageRecords = false,
   actorRole,
   onNavigate,
+  onOpenReservationFolio,
   onNotify,
 }) => {
   const { cms } = useCms();
@@ -122,6 +145,14 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
   const [editISupplier, setEditISupplier] = useState('');
   const [confirmDeleteInvId, setConfirmDeleteInvId] = useState<string | null>(null);
 
+  // Payments Transactions Tab & Filter State
+  const [paymentsTab, setPaymentsTab] = useState<'transactions' | 'ledger'>('transactions');
+  const [paymentSearch, setPaymentSearch] = useState('');
+  const [paymentFilter, setPaymentFilter] = useState<
+    'all' | 'ota_prepaid' | 'received' | 'outstanding'
+  >('all');
+  const [paymentModalResId, setPaymentModalResId] = useState<string | null>(null);
+
   useEffect(() => {
     if (!poItemId && inventoryItems[0]) {
       setPoItemId(inventoryItems[0].id);
@@ -129,6 +160,97 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       setPoUnitCost(inventoryItems[0].unitCostNgn);
     }
   }, [inventoryItems, poItemId]);
+
+  const paymentRecords = useMemo(() => {
+    return reservations
+      .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
+      .map((res) => {
+        const pay = getReservationPaymentSummary(res, property.usdExchangeRateNgn);
+        const roomDisp = getReservationRoomDisplay(res, rooms);
+        const isOta = isOtaBookingChannel(res.channel);
+        const isCollectedByOta = pay.paymentCollectionMode === 'ota_prepaid';
+        const channelLabel = formatBookingSourceLabel(res.channel);
+        const collectionModeLabel = formatPaymentCollectionLabel(pay.paymentCollectionMode);
+        const paymentDate = getReservationBookedDate(res) || res.checkInDate;
+        const paymentMethodLabel =
+          res.paymentMethod ||
+          (isCollectedByOta ? 'OTA Platform Payout' : 'Collect at Property');
+
+        let otaPayoutStatusLabel:
+          | 'OTA Payout Received'
+          | 'Pending OTA Payout'
+          | 'Collect at Property'
+          | 'Direct Settled'
+          | 'Balance Due';
+        if (isCollectedByOta) {
+          otaPayoutStatusLabel =
+            pay.otaPayoutStatus === 'received' ? 'OTA Payout Received' : 'Pending OTA Payout';
+        } else {
+          otaPayoutStatusLabel =
+            pay.amountDueAtPropertyNgn <= 0
+              ? 'Direct Settled'
+              : isOta
+                ? 'Collect at Property'
+                : 'Balance Due';
+        }
+
+        return {
+          res,
+          pay,
+          roomLabel: roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned',
+          isOta,
+          isCollectedByOta,
+          channelLabel,
+          collectionModeLabel,
+          paymentDate,
+          paymentMethodLabel,
+          otaPayoutStatus: otaPayoutStatusLabel,
+        };
+      })
+      .sort((a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || ''));
+  }, [reservations, rooms, property.usdExchangeRateNgn]);
+
+  const filteredPaymentRecords = useMemo(() => {
+    const q = paymentSearch.trim().toLowerCase();
+    return paymentRecords.filter((item) => {
+      if (paymentFilter === 'ota_prepaid' && !item.isCollectedByOta) {
+        return false;
+      }
+      if (paymentFilter === 'received' && item.pay.totalReceivedByHotelNgn <= 0) {
+        return false;
+      }
+      if (paymentFilter === 'outstanding' && item.pay.amountDueAtPropertyNgn <= 0) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        item.res.guestName.toLowerCase().includes(q) ||
+        item.res.bookingRef.toLowerCase().includes(q) ||
+        item.roomLabel.toLowerCase().includes(q) ||
+        item.channelLabel.toLowerCase().includes(q) ||
+        item.collectionModeLabel.toLowerCase().includes(q) ||
+        item.paymentMethodLabel.toLowerCase().includes(q) ||
+        item.otaPayoutStatus.toLowerCase().includes(q) ||
+        item.pay.paymentStatus.toLowerCase().includes(q)
+      );
+    });
+  }, [paymentRecords, paymentFilter, paymentSearch]);
+
+  const paymentSummaryTotals = useMemo(() => {
+    return paymentRecords.reduce(
+      (acc, item) => {
+        if (item.isCollectedByOta) {
+          acc.otaPrepaid +=
+            item.pay.otaPaidAmount > 0 ? item.pay.otaPaidAmount : item.pay.expectedPayoutNgn;
+          acc.otaExpectedPayout += item.pay.expectedPayoutNgn;
+        }
+        acc.received += item.pay.totalReceivedByHotelNgn;
+        acc.outstanding += item.pay.amountDueAtPropertyNgn;
+        return acc;
+      },
+      { otaPrepaid: 0, otaExpectedPayout: 0, received: 0, outstanding: 0 }
+    );
+  }, [paymentRecords]);
 
   const totalRevenue = ledgerEntries
     .filter((e) => e.entryType === 'revenue')
@@ -594,8 +716,251 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
         </div>
       </div>
 
-      {/* P&L Summary Strip for Accounting & Reports */}
-      {(section === 'accounting' || section === 'reports') && (
+      {/* Payments Segmented View Switcher (Accounting / Payments page) */}
+      {section === 'accounting' && (
+        <div className="no-print flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex items-center p-1 bg-slate-100 rounded-lg border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => setPaymentsTab('transactions')}
+              className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                paymentsTab === 'transactions'
+                  ? 'bg-white text-[#061539] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Payment Transactions
+              <span className="ml-1.5 font-mono-tabular text-[11px] text-slate-400">
+                {paymentRecords.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentsTab('ledger')}
+              className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                paymentsTab === 'ledger'
+                  ? 'bg-white text-[#061539] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              General Ledger &amp; P&amp;L
+              <span className="ml-1.5 font-mono-tabular text-[11px] text-slate-400">
+                {ledgerEntries.length}
+              </span>
+            </button>
+          </div>
+          {paymentsTab === 'transactions' && (
+            <div className="flex flex-wrap items-center gap-4 text-xs font-mono-tabular">
+              <span className="text-slate-500 font-sans">
+                OTA Prepayments:{' '}
+                <strong className="font-mono-tabular text-blue-700">
+                  {formatNgn(paymentSummaryTotals.otaPrepaid)}
+                </strong>
+              </span>
+              <span className="text-slate-500 font-sans">
+                Received:{' '}
+                <strong className="font-mono-tabular text-emerald-700">
+                  {formatNgn(paymentSummaryTotals.received)}
+                </strong>
+              </span>
+              <span className="text-slate-500 font-sans">
+                Outstanding:{' '}
+                <strong
+                  className={`font-mono-tabular ${
+                    paymentSummaryTotals.outstanding > 0 ? 'text-rose-700' : 'text-slate-700'
+                  }`}
+                >
+                  {formatNgn(paymentSummaryTotals.outstanding)}
+                </strong>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* DETAILED PAYMENT TRANSACTIONS TABLE */}
+      {section === 'accounting' && paymentsTab === 'transactions' && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search guest, booking ref, room, channel, or method..."
+                value={paymentSearch}
+                onChange={(e) => setPaymentSearch(e.target.value)}
+                className="w-full h-9 pl-9 pr-3 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#061539]"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              {(
+                [
+                  { id: 'all', label: 'All Transactions' },
+                  { id: 'ota_prepaid', label: 'OTA Prepayments' },
+                  { id: 'received', label: 'Payments Received' },
+                  { id: 'outstanding', label: 'Outstanding' },
+                ] as const
+              ).map((flt) => {
+                const active = paymentFilter === flt.id;
+                return (
+                  <button
+                    key={flt.id}
+                    type="button"
+                    onClick={() => setPaymentFilter(flt.id)}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                      active
+                        ? 'bg-[#061539] text-white'
+                        : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {flt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {filteredPaymentRecords.length === 0 ? (
+            <div className="p-10 text-center text-xs text-slate-500">
+              No payment transaction records match your current search or filter.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[920px] text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    <th className="py-3 px-4">Guest &amp; Reservation Ref</th>
+                    <th className="py-3 px-4">Channel &amp; Collection Type</th>
+                    <th className="py-3 px-4">Payment Date</th>
+                    <th className="py-3 px-4 text-right">Hotel Received</th>
+                    <th className="py-3 px-4">Guest Status &amp; OTA Payout</th>
+                    <th className="py-3 px-4 text-right">Due at Property</th>
+                    {(isAdmin || onOpenReservationFolio) && (
+                      <th className="no-print py-3 px-4 text-right">Actions</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredPaymentRecords.map((item) => {
+                    const { res, pay } = item;
+                    const showSourceCur =
+                      pay.sourceCurrency !== 'NGN' && pay.otaPaidSourceAmount > 0;
+                    const payoutTextClass =
+                      item.otaPayoutStatus === 'OTA Payout Received' ||
+                      item.otaPayoutStatus === 'Direct Settled'
+                        ? 'text-emerald-700'
+                        : item.otaPayoutStatus === 'Pending OTA Payout'
+                          ? 'text-amber-700'
+                          : item.otaPayoutStatus === 'Collect at Property'
+                            ? 'text-slate-700'
+                            : 'text-rose-700';
+
+                    return (
+                      <tr key={res.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-900">{res.guestName}</div>
+                          <div className="font-mono-tabular text-[11px] text-slate-500">
+                            {res.bookingRef} · {item.roomLabel}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-800">{item.channelLabel}</div>
+                          <div className="text-[11px] font-medium text-blue-700">
+                            {item.collectionModeLabel}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {item.paymentMethodLabel}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          <div>{item.paymentDate}</div>
+                          <div className="text-[10px] text-slate-400">
+                            Stay {res.checkInDate} → {res.checkOutDate}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular whitespace-nowrap">
+                          <div className="font-bold text-slate-900">
+                            {formatNgn(pay.totalReceivedByHotelNgn)}
+                          </div>
+                          {item.isCollectedByOta ? (
+                            <div className="text-[10px] text-blue-700">
+                              Paid to OTA:{' '}
+                              {showSourceCur
+                                ? `${formatChannelCurrency(pay.otaPaidSourceAmount, pay.sourceCurrency)} ${pay.sourceCurrency}`
+                                : formatNgn(pay.otaPaidAmount || pay.expectedPayoutNgn)}
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-slate-500">
+                              Total folio {formatNgn(pay.totalAmount)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <div className="font-semibold text-slate-900">
+                            {pay.paymentStatus}
+                          </div>
+                          <div className={`text-[11px] font-semibold mt-0.5 ${payoutTextClass}`}>
+                            {item.otaPayoutStatus}
+                          </div>
+                          {item.isCollectedByOta && (
+                            <div className="text-[10px] font-mono-tabular text-slate-500 mt-0.5">
+                              Exp. {formatNgn(pay.expectedPayoutNgn)}
+                              {pay.otaPayoutStatus === 'received'
+                                ? ` · Recv. ${formatNgn(pay.actualPayoutReceivedNgn)}`
+                                : ''}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular whitespace-nowrap">
+                          {pay.amountDueAtPropertyNgn > 0 ? (
+                            <span className="font-bold text-rose-700">
+                              {formatNgn(pay.amountDueAtPropertyNgn)}
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-emerald-700">
+                              ₦0 · {pay.paymentStatus === 'Paid to OTA' ? 'Paid to OTA' : 'Settled'}
+                            </span>
+                          )}
+                        </td>
+                        {(isAdmin || onOpenReservationFolio) && (
+                          <td className="no-print py-3 px-4 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center justify-end gap-1.5">
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPaymentModalResId(res.id)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-md text-[11px] font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                                >
+                                  <CreditCard className="w-3 h-3" />
+                                  <span>Manage Payment</span>
+                                </button>
+                              )}
+                              {onOpenReservationFolio && (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenReservationFolio(res.id, 'reservations')}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-md text-[11px] font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                                >
+                                  <span>Folio</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* P&L Summary Strip for Ledger & Reports */}
+      {(section === 'reports' || (section === 'accounting' && paymentsTab === 'ledger')) && (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5">
             <p className="text-xs font-medium text-slate-500">Gross Operating Revenue</p>
@@ -703,7 +1068,7 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       )}
 
       {/* Accounting Ledger Table */}
-      {(section === 'accounting' || section === 'reports') && (
+      {(section === 'reports' || (section === 'accounting' && paymentsTab === 'ledger')) && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -1439,6 +1804,21 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
           </form>
         </div>
       )}
+
+      {paymentModalResId &&
+        (() => {
+          const targetRes = reservations.find((r) => r.id === paymentModalResId);
+          if (!targetRes) return null;
+          return (
+            <ReservationPaymentModal
+              property={property}
+              reservation={targetRes}
+              actorRole={actorRole}
+              onClose={() => setPaymentModalResId(null)}
+              onNotify={onNotify}
+            />
+          );
+        })()}
     </div>
   );
 };

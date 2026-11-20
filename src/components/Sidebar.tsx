@@ -91,7 +91,6 @@ const RESERVATION_SUB_ITEMS: SubMenuItem[] = [
 
 const ROOM_SUB_ITEMS: SubMenuItem[] = [
   { id: 'rooms', label: 'All Rooms', icon: BedDouble },
-  { id: 'housekeeping', label: 'Housekeeping', icon: Sparkles },
   { id: 'maintenance', label: 'Maintenance', icon: Wrench },
   { id: 'pos_kitchen', label: 'Restaurant POS', icon: ChefHat },
   { id: 'inventory', label: 'Store Inventory', icon: Package },
@@ -496,6 +495,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
                 <LogIn className={iconClass(activeSection === 'arrivals')} />
                 {!isCollapsed && <span className="truncate">Check-in / Check-out</span>}
+              </span>
+            </button>
+          )}
+          {canSee('housekeeping') && (
+            <button
+              type="button"
+              onClick={() => handleNavClick('housekeeping')}
+              title={isCollapsed ? 'Housekeeping Management' : undefined}
+              className={navItemClass(activeSection === 'housekeeping', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <Sparkles className={iconClass(activeSection === 'housekeeping')} />
+                {!isCollapsed && <span className="truncate">Housekeeping</span>}
               </span>
             </button>
           )}
