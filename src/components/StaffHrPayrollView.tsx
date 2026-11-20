@@ -366,11 +366,13 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         }),
       });
       if (resp.ok) {
-        const data = (await resp.json()) as { delivered?: boolean; reason?: string };
+        const data = (await resp.json()) as { delivered?: boolean; message?: string; from?: string };
         if (data.delivered) {
           return {
             delivered: true,
-            message: `Login details emailed directly to ${params.to}.`,
+            message:
+              data.message ||
+              `Login details emailed directly to ${params.to} from ${data.from || 'noreply@pchpms.com'}.`,
           };
         }
       }

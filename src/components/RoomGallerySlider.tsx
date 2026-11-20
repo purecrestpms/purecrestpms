@@ -19,13 +19,14 @@ import {
   Zap,
 } from 'lucide-react';
 
+import { DEFAULT_ROOM_COVER_IMAGE_URL, resolveAppImageUrl } from '../utils/mediaAssets';
+
 export interface GallerySlideItem {
   url: string;
   label: string;
 }
 
-const FALLBACK_ROOM_IMAGE =
-  '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png';
+const FALLBACK_ROOM_IMAGE = DEFAULT_ROOM_COVER_IMAGE_URL;
 
 export function getAmenityIcon(amenity: string): React.ComponentType<{ className?: string }> {
   const lower = amenity.toLowerCase();
@@ -91,7 +92,10 @@ export const RoomGallerySlider: React.FC<RoomGallerySliderProps> = ({
 }) => {
   const safeSlides: GallerySlideItem[] =
     slides.length > 0
-      ? slides
+      ? slides.map((s) => ({
+          ...s,
+          url: resolveAppImageUrl(s.url, FALLBACK_ROOM_IMAGE),
+        }))
       : [{ url: FALLBACK_ROOM_IMAGE, label: `${roomNumber} — ${roomName}` }];
 
   const [activeIndex, setActiveIndex] = useState(0);

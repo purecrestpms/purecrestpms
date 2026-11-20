@@ -69,6 +69,7 @@ import {
   buildPropertyIcalFeed,
   heartbeatStaffSessionWorkflow,
   markMessageReadWorkflow,
+  migrateLegacyMediaUrlsInFirestore,
   recordStaffSessionLogoutWorkflow,
   seedRichgatesIfNeeded,
   sendBrandedPasswordResetWorkflow,
@@ -79,6 +80,12 @@ import {
   syncRichgatesPropertyInfoIfNeeded,
   upsertStaffSessionLoginWorkflow,
 } from './services/pmsService';
+import {
+  DEFAULT_ROOM_COVER_IMAGE_URL,
+  isLegacyOrAiStudioImageUrl,
+  resolveAppImageUrl,
+  resolveGalleryImageUrls,
+} from './utils/mediaAssets';
 import {
   ADMIN_ONLY_SECTIONS,
   AttendanceRecord,
@@ -345,6 +352,9 @@ export default function App() {
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const messagesInitLoadedRef = useRef(false);
   const propIdsBackfilledRef = useRef(false);
+  const mediaMigratedPropsRef = useRef<Set<string>>(new Set());
+  const rawPropertiesRef = useRef<PropertyRecord[]>([]);
+  const rawRoomsRef = useRef<RoomRecord[]>([]);
 
   const [activeSection, setActiveSection] = useState<NavSectionId>(detectInitialSection);
   const [activeReportTab, setActiveReportTab] = useState<ReportTab>('bookings');
@@ -788,7 +798,15 @@ export default function App() {
     const unsubProps = onSnapshot(
       propsQuery,
       (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PropertyRecord);
+        const rawList = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PropertyRecord);
+        if (!snap.metadata.fromCache) {
+          rawPropertiesRef.current = rawList;
+        }
+        const list = rawList.map((prop) =>
+          prop.logoUrl
+            ? { ...prop, logoUrl: resolveAppImageUrl(prop.logoUrl, '') }
+            : prop
+        );
         setProperties(list);
         if (!snap.metadata.fromCache) {
           setDbError(null);
@@ -931,8 +949,38 @@ export default function App() {
       );
     };
 
+    const roomsColRef = collection(db, 'properties', activePropertyId, 'rooms');
+    const roomsQuery = isAdmin
+      ? roomsColRef
+      : query(roomsColRef, where('authorizedEmails', 'array-contains', tokenEmail));
+    const unsubRooms = onSnapshot(
+      roomsQuery,
+      (snap) => {
+        const rawRooms = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as RoomRecord);
+        if (!snap.metadata.fromCache) {
+          rawRoomsRef.current = rawRooms;
+        }
+        setRooms(
+          rawRooms.map((room) => {
+            const cleanCover = resolveAppImageUrl(room.imageUrl, DEFAULT_ROOM_COVER_IMAGE_URL);
+            return {
+              ...room,
+              imageUrl: cleanCover,
+              ...(Array.isArray(room.galleryImages)
+                ? { galleryImages: resolveGalleryImageUrls(room.galleryImages, cleanCover) }
+                : {}),
+            };
+          })
+        );
+      },
+      (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('Collection sync error [rooms]:', msg);
+      }
+    );
+
     const unsubs = [
-      sub<RoomRecord>('rooms', setRooms),
+      unsubRooms,
       sub<BlockedDateRecord>('blocked_dates', setBlockedDates),
       sub<GuestRecord>('guests', setGuests),
       sub<ReservationRecord>('reservations', setReservations),
@@ -987,6 +1035,38 @@ export default function App() {
       }
     });
   }, [properties, activePropertyId, rooms, reservations, housekeepingTasks, activeRole]);
+
+  // Automatically migrate any legacy /assets/aistudio/ or AI Studio image paths in Firestore to /assets/media/
+  useEffect(() => {
+    if (activeRole !== 'pch_admin' && activeRole !== 'property_admin') return;
+    const activeProp = properties.find((p) => p.id === activePropertyId) || null;
+    const rawProps = rawPropertiesRef.current;
+    const rawRooms = rawRoomsRef.current;
+
+    const hasLegacyPropLogo = rawProps.some(
+      (p) => p.logoUrl && isLegacyOrAiStudioImageUrl(p.logoUrl)
+    );
+    const hasLegacyRoomImage =
+      Boolean(activeProp) &&
+      rawRooms.some(
+        (r) =>
+          (r.imageUrl && isLegacyOrAiStudioImageUrl(r.imageUrl)) ||
+          (Array.isArray(r.galleryImages) &&
+            r.galleryImages.some((u) => isLegacyOrAiStudioImageUrl(u)))
+      );
+
+    if (!hasLegacyPropLogo && !hasLegacyRoomImage) return;
+
+    const migrationKey = activeProp ? activeProp.id : '__global__';
+    if (mediaMigratedPropsRef.current.has(migrationKey)) return;
+    mediaMigratedPropsRef.current.add(migrationKey);
+
+    void migrateLegacyMediaUrlsInFirestore({
+      properties: rawProps,
+      activeProperty: activeProp,
+      rooms: rawRooms,
+    });
+  }, [properties, activePropertyId, rooms, activeRole]);
 
   // Automatically sync Richgates Apartments official address, phone, WhatsApp, and support email
   useEffect(() => {

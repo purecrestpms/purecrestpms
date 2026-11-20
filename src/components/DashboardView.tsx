@@ -47,6 +47,7 @@ import {
 } from '../utils/availability';
 import { CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { StaffDashboardView } from './StaffDashboardView';
+import { DEFAULT_ROOM_COVER_IMAGE_URL, resolveAppImageUrl } from '../utils/mediaAssets';
 
 interface DashboardViewProps {
   property: PropertyRecord;
@@ -83,8 +84,7 @@ interface DashboardViewProps {
   onSignOut?: () => void;
 }
 
-const DEFAULT_HERO_SUITE_IMAGE =
-  '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png';
+const DEFAULT_HERO_SUITE_IMAGE = DEFAULT_ROOM_COVER_IMAGE_URL;
 
 function addDaysIso(baseIso: string, delta: number): string {
   const [y, m, d] = baseIso.split('-').map(Number);
@@ -221,7 +221,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const heroImageUrl = useMemo(() => {
     const firstWithImage = sortedRooms.find((r) => r.imageUrl && r.imageUrl.trim().length > 0);
-    return firstWithImage?.imageUrl || DEFAULT_HERO_SUITE_IMAGE;
+    return resolveAppImageUrl(firstWithImage?.imageUrl, DEFAULT_HERO_SUITE_IMAGE);
   }, [sortedRooms]);
 
   const greetingName = useMemo(() => {

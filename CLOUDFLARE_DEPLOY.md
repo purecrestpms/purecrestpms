@@ -40,3 +40,14 @@ The app automatically detects the subdomain and `/staff` path on startup:
 ## Live OTA Account iCal Sync (`/api/ical-proxy`)
 - The workspace includes `functions/api/ical-proxy.ts` (Cloudflare Pages Function) alongside `server.ts` (for Node/Express).
 - When deploying `dist` via Cloudflare Pages (`npx wrangler pages deploy dist --project-name=pch-pms`), Cloudflare automatically mounts `functions/api/ical-proxy.ts` at `/api/ical-proxy` so properties can pull live `.ics` reservations from Booking.com, Airbnb, Expedia, and VRBO without browser CORS errors.
+
+## Transactional Login Share Email (`/api/share-login-email`)
+- `functions/api/share-login-email.ts` runs as a Cloudflare Pages Function at `/api/share-login-email` and sends from `PCH PMS <noreply@pchpms.com>` (or `EMAIL_FROM`).
+- Configure your mail provider secret in Cloudflare Pages -> **Settings -> Environment variables** (`RESEND_API_KEY`, `EMAIL_API_KEY`, `CLOUDFLARE_EMAIL_API_URL`, `BREVO_API_KEY`, `SENDGRID_API_KEY`, or `POSTMARK_API_KEY`).
+
+## Application-Owned Media Storage (`/assets/media/*` & `/api/media/*`)
+- All brand, property, and room images live under `public/assets/media/` (`brand/`, `properties/`, `rooms/`, `library/`).
+- Newly uploaded room and property photos post to `functions/api/media/upload.ts` (`/api/media/upload`) and are served via `functions/api/media/[[path]].ts` (`/api/media/<key>`) when a Cloudflare R2 bucket binding named `MEDIA_BUCKET` is configured in Cloudflare Pages -> **Settings -> Functions -> R2 bucket bindings**.
+- If `MEDIA_BUCKET` is not yet bound, uploads automatically fall back to compressed storage inside the application's Firestore database so uploaded photos work across all custom subdomains without broken links.
+
+

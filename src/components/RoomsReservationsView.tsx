@@ -103,6 +103,14 @@ import {
   formatRoomAvailabilityTag,
   getLocalIsoDate,
 } from '../utils/availability';
+import {
+  DEFAULT_ROOM_COVER_IMAGE_URL,
+  formatReadableImageSourceLabel,
+  isLegacyOrAiStudioImageUrl,
+  resolveAppImageUrl,
+  resolveGalleryImageUrls,
+  uploadAppMediaImage,
+} from '../utils/mediaAssets';
 import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
@@ -139,8 +147,7 @@ interface RoomsReservationsViewProps {
   onGuestCheckedIn?: (info: CheckedInConfirmationInfo) => void;
 }
 
-const DEFAULT_SUITE_IMAGE =
-  '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png';
+const DEFAULT_SUITE_IMAGE = DEFAULT_ROOM_COVER_IMAGE_URL;
 
 function parseReadableError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
@@ -155,48 +162,17 @@ function parseReadableError(err: unknown): string {
   return raw;
 }
 
-async function compressImageToDataUrl(
-  file: File,
-  options?: { maxWidth?: number; maxBytes?: number }
-): Promise<string> {
-  const maxWidth = options?.maxWidth ?? 880;
-  const maxBytes = options?.maxBytes ?? 320000;
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Failed to read selected image file.'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Unsupported or corrupted image file.'));
-      img.onload = () => {
-        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
-        const targetW = Math.max(1, Math.round(img.width * scale));
-        const targetH = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Canvas context unavailable.'));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, targetW, targetH);
-
-        let quality = 0.78;
-        let result = canvas.toDataURL('image/jpeg', quality);
-        while (result.length > maxBytes && quality > 0.32) {
-          quality -= 0.1;
-          result = canvas.toDataURL('image/jpeg', quality);
-        }
-        if (result.length > maxBytes + 25000) {
-          reject(new Error('Image too large after compression. Please pick a smaller image.'));
-          return;
-        }
-        resolve(result);
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
+function isCleanExternalImageUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('/assets/') ||
+    trimmed.startsWith('/api/media/')
+  ) {
+    return false;
+  }
+  return !isLegacyOrAiStudioImageUrl(trimmed);
 }
 
 function datesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
@@ -351,11 +327,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [editRoomError, setEditRoomError] = useState<string | null>(null);
 
-  // Rooms search & amenity browser state
+  // Rooms search & filter state
   const [roomSearchQuery, setRoomSearchQuery] = useState('');
   const [roomSectionFilter, setRoomSectionFilter] = useState<'ALL' | RoomSection>('ALL');
   const [roomStatusFilter, setRoomStatusFilter] = useState<'ALL' | RoomRecord['occupancyStatus']>('ALL');
-  const [roomAmenityFilter, setRoomAmenityFilter] = useState<string>('ALL');
   const [expandedAmenityRoomIds, setExpandedAmenityRoomIds] = useState<Record<string, boolean>>({});
 
   // Add New Room Page state
@@ -870,9 +845,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     setDraftOccupancy(room.occupancyStatus);
     setDraftHousekeeping(room.housekeepingStatus);
     setDraftAmenitiesText((room.amenities || []).join(', '));
-    const cover = room.imageUrl || DEFAULT_SUITE_IMAGE;
+    const cover = resolveAppImageUrl(room.imageUrl, DEFAULT_SUITE_IMAGE);
     setDraftImageUrl(cover);
-    const initialSlides = getRoomGalleryImages(room).map((s) => s.url);
+    const initialSlides = resolveGalleryImageUrls(
+      getRoomGalleryImages(room).map((s) => s.url),
+      cover
+    );
     setDraftGalleryImages(initialSlides.length > 0 ? initialSlides : [cover]);
     setUploadError(null);
     setEditRoomError(null);
@@ -883,9 +861,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (!file) return;
     setUploadError(null);
     try {
-      const compressed = await compressImageToDataUrl(file, { maxWidth: 720, maxBytes: 120000 });
-      setDraftImageUrl(compressed);
-      setDraftGalleryImages((prev) => Array.from(new Set([compressed, ...prev])).slice(0, 6));
+      const uploadedUrl = await uploadAppMediaImage(file, {
+        propertyId: property.id,
+        folder: 'rooms',
+        slug: `${draftRoomNumber || editingRoom?.roomNumber || 'room'}-cover`,
+        maxWidth: 720,
+        maxBytes: 120000,
+      });
+      setDraftImageUrl(uploadedUrl);
+      setDraftGalleryImages((prev) => Array.from(new Set([uploadedUrl, ...prev])).slice(0, 6));
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to process image.');
     } finally {
@@ -903,8 +887,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       return;
     }
     try {
-      const compressed = await compressImageToDataUrl(file, { maxWidth: 680, maxBytes: 110000 });
-      setDraftGalleryImages((prev) => Array.from(new Set([...prev, compressed])).slice(0, 6));
+      const uploadedUrl = await uploadAppMediaImage(file, {
+        propertyId: property.id,
+        folder: 'rooms',
+        slug: `${draftRoomNumber || editingRoom?.roomNumber || 'room'}-slide`,
+        maxWidth: 680,
+        maxBytes: 110000,
+      });
+      setDraftGalleryImages((prev) => Array.from(new Set([...prev, uploadedUrl])).slice(0, 6));
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to process gallery slide.');
     } finally {
@@ -968,9 +958,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             .filter(Boolean)
         )
       ).slice(0, 15);
-      const coverUrl = draftImageUrl.trim() || draftGalleryImages[0] || DEFAULT_SUITE_IMAGE;
-      const cleanGallery = Array.from(
-        new Set([coverUrl, ...draftGalleryImages.map((u) => u.trim()).filter(Boolean)])
+      if (isLegacyOrAiStudioImageUrl(draftImageUrl)) {
+        setEditRoomError(
+          'External Google / AI Studio links are not permitted. Upload a room photo or select one from the property media gallery.'
+        );
+        setBusyId(null);
+        return;
+      }
+      const coverUrl = resolveAppImageUrl(
+        draftImageUrl.trim() || draftGalleryImages[0],
+        DEFAULT_SUITE_IMAGE
+      );
+      const cleanGallery = resolveGalleryImageUrls(
+        [coverUrl, ...draftGalleryImages.map((u) => u.trim()).filter(Boolean)],
+        coverUrl
       ).slice(0, 6);
       const cleanRoomNumber = draftRoomNumber.trim() || editingRoom.roomNumber;
       const cleanRoomType = draftRoomType.trim() || editingRoom.roomType;
@@ -1032,9 +1033,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (!file) return;
     setAddRoomError(null);
     try {
-      const compressed = await compressImageToDataUrl(file, { maxWidth: 720, maxBytes: 120000 });
-      setNewRoomImageUrl(compressed);
-      setNewRoomGalleryImages((prev) => Array.from(new Set([compressed, ...prev])).slice(0, 6));
+      const uploadedUrl = await uploadAppMediaImage(file, {
+        propertyId: property.id,
+        folder: 'rooms',
+        slug: `${newRoomNumber || 'new-room'}-cover`,
+        maxWidth: 720,
+        maxBytes: 120000,
+      });
+      setNewRoomImageUrl(uploadedUrl);
+      setNewRoomGalleryImages((prev) => Array.from(new Set([uploadedUrl, ...prev])).slice(0, 6));
     } catch (err) {
       setAddRoomError(err instanceof Error ? err.message : 'Unable to process room photo.');
     } finally {
@@ -1052,8 +1059,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       return;
     }
     try {
-      const compressed = await compressImageToDataUrl(file, { maxWidth: 680, maxBytes: 110000 });
-      setNewRoomGalleryImages((prev) => Array.from(new Set([...prev, compressed])).slice(0, 6));
+      const uploadedUrl = await uploadAppMediaImage(file, {
+        propertyId: property.id,
+        folder: 'rooms',
+        slug: `${newRoomNumber || 'new-room'}-slide`,
+        maxWidth: 680,
+        maxBytes: 110000,
+      });
+      setNewRoomGalleryImages((prev) => Array.from(new Set([...prev, uploadedUrl])).slice(0, 6));
     } catch (err) {
       setAddRoomError(err instanceof Error ? err.message : 'Unable to process gallery slide.');
     } finally {
@@ -1108,9 +1121,20 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
     setBusyId('add-room');
     try {
-      const coverUrl = newRoomImageUrl || newRoomGalleryImages[0] || DEFAULT_SUITE_IMAGE;
-      const cleanGallery = Array.from(
-        new Set([coverUrl, ...newRoomGalleryImages.map((u) => u.trim()).filter(Boolean)])
+      if (isLegacyOrAiStudioImageUrl(newRoomImageUrl)) {
+        setAddRoomError(
+          'External Google / AI Studio links are not permitted. Upload a room photo or select one from the property media gallery.'
+        );
+        setBusyId(null);
+        return;
+      }
+      const coverUrl = resolveAppImageUrl(
+        newRoomImageUrl || newRoomGalleryImages[0],
+        DEFAULT_SUITE_IMAGE
+      );
+      const cleanGallery = resolveGalleryImageUrls(
+        [coverUrl, ...newRoomGalleryImages.map((u) => u.trim()).filter(Boolean)],
+        coverUrl
       ).slice(0, 6);
       const derivedRoomName = `${trimmedCode} ${trimmedType}`.slice(0, 80);
       await createRoomWorkflow({
@@ -3066,22 +3090,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
       {/* SECTION: ROOMS */}
       {section === 'rooms' && (() => {
-        const allAmenitiesList = Array.from(
-          new Set(
-            sortedRooms.flatMap((r) => (r.amenities || []).map((a) => a.trim()).filter(Boolean))
-          )
-        ).sort((a, b) => a.localeCompare(b));
-
         const normalizedRoomQuery = roomSearchQuery.trim().toLowerCase();
         const filteredRoomsList = sortedRooms.filter((r) => {
           if (roomSectionFilter !== 'ALL' && getRoomSection(r) !== roomSectionFilter) return false;
           if (roomStatusFilter !== 'ALL' && r.occupancyStatus !== roomStatusFilter) return false;
-          if (
-            roomAmenityFilter !== 'ALL' &&
-            !(r.amenities || []).some((a) => a.toLowerCase() === roomAmenityFilter.toLowerCase())
-          ) {
-            return false;
-          }
           if (!normalizedRoomQuery) return true;
           return (
             r.roomNumber.toLowerCase().includes(normalizedRoomQuery) ||
@@ -3094,8 +3106,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         const hasActiveRoomFilter =
           roomSearchQuery.trim() !== '' ||
           roomSectionFilter !== 'ALL' ||
-          roomStatusFilter !== 'ALL' ||
-          roomAmenityFilter !== 'ALL';
+          roomStatusFilter !== 'ALL';
 
         return (
           <div className="space-y-6">
@@ -3107,12 +3118,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               onNotify={onNotify}
             />
 
-            {/* Rooms & Amenities Easy Search / Filter Bar */}
-            <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+            {/* Rooms Easy Search / Filter Bar */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs items-end">
                 <div className="md:col-span-5">
                   <label className="block font-medium text-slate-600 mb-1">
-                    Search Rooms or Amenities
+                    Search Rooms
                   </label>
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -3120,7 +3131,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       type="text"
                       value={roomSearchQuery}
                       onChange={(e) => setRoomSearchQuery(e.target.value)}
-                      placeholder="Search RM-1, Kitchenette, Balcony, King Bed..."
+                      placeholder="Search RM-1, Deluxe Studio, One Bedroom..."
                       className="w-full h-9 pl-8 pr-3 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-[#061539]"
                     />
                   </div>
@@ -3166,7 +3177,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         setRoomSearchQuery('');
                         setRoomSectionFilter('ALL');
                         setRoomStatusFilter('ALL');
-                        setRoomAmenityFilter('ALL');
                       }}
                       className="text-xs font-semibold text-[#28488a] hover:underline cursor-pointer"
                     >
@@ -3175,42 +3185,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   )}
                 </div>
               </div>
-
-              {allAmenitiesList.length > 0 && (
-                <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className="font-semibold text-slate-500 mr-1">Filter by Amenity:</span>
-                  <button
-                    type="button"
-                    onClick={() => setRoomAmenityFilter('ALL')}
-                    className={`px-2.5 py-1 rounded-md border font-medium transition-colors cursor-pointer ${
-                      roomAmenityFilter === 'ALL'
-                        ? 'bg-[#061539] text-white border-[#061539]'
-                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    All Amenities
-                  </button>
-                  {allAmenitiesList.slice(0, 10).map((amenity) => {
-                    const AmenityIcon = getAmenityIcon(amenity);
-                    const isSelected = roomAmenityFilter.toLowerCase() === amenity.toLowerCase();
-                    return (
-                      <button
-                        key={amenity}
-                        type="button"
-                        onClick={() => setRoomAmenityFilter(isSelected ? 'ALL' : amenity)}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md border font-medium transition-colors cursor-pointer ${
-                          isSelected
-                            ? 'bg-[#061539] text-white border-[#061539]'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-blue-50 hover:border-blue-200'
-                        }`}
-                      >
-                        <AmenityIcon className="w-3 h-3 shrink-0" />
-                        <span>{amenity}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
 
             {filteredRoomsList.length === 0 ? (
@@ -3219,7 +3193,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   No rooms match your active filters
                 </p>
                 <p className="text-xs text-slate-500">
-                  Clear your search or amenity filter to view all rooms and photo galleries.
+                  Clear your search or filters to view all rooms and photo galleries.
                 </p>
                 <button
                   type="button"
@@ -3227,7 +3201,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     setRoomSearchQuery('');
                     setRoomSectionFilter('ALL');
                     setRoomStatusFilter('ALL');
-                    setRoomAmenityFilter('ALL');
                   }}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#061539] text-white text-xs font-semibold cursor-pointer mt-2"
                 >
@@ -5195,21 +5168,37 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         );
                       })}
                     </div>
-                    <input
-                      type="text"
-                      value={draftImageUrl.startsWith('data:') ? '[Uploaded Device Photo]' : draftImageUrl}
-                      onChange={(e) => {
-                        const nextUrl = e.target.value;
-                        setDraftImageUrl(nextUrl);
-                        if (nextUrl.trim() && !nextUrl.startsWith('[Uploaded')) {
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        <span className="truncate font-medium">
+                          {formatReadableImageSourceLabel(draftImageUrl) || 'App Media Storage'}
+                        </span>
+                        <span className="text-[10px] font-semibold text-emerald-700 shrink-0 ml-2">
+                          App Storage
+                        </span>
+                      </div>
+                      <input
+                        type="url"
+                        value={isCleanExternalImageUrl(draftImageUrl) ? draftImageUrl : ''}
+                        onChange={(e) => {
+                          const nextUrl = e.target.value.trim();
+                          setUploadError(null);
+                          if (!nextUrl) return;
+                          if (isLegacyOrAiStudioImageUrl(nextUrl)) {
+                            setUploadError(
+                              'Google / AI Studio image links are blocked. Please upload a photo from your device or choose from the property gallery above.'
+                            );
+                            return;
+                          }
+                          setDraftImageUrl(nextUrl);
                           setDraftGalleryImages((prev) =>
-                            Array.from(new Set([nextUrl.trim(), ...prev])).slice(0, 6)
+                            Array.from(new Set([nextUrl, ...prev])).slice(0, 6)
                           );
-                        }
-                      }}
-                      placeholder="Or paste custom cover image URL (/assets/... or https://...)"
-                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
-                    />
+                        }}
+                        placeholder="Optional: paste a clean https:// image URL or upload a photo above"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5487,17 +5476,37 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         );
                       })}
                     </div>
-                    <input
-                      type="text"
-                      value={
-                        newRoomImageUrl.startsWith('data:')
-                          ? '[Uploaded Device Photo]'
-                          : newRoomImageUrl
-                      }
-                      onChange={(e) => setNewRoomImageUrl(e.target.value)}
-                      placeholder="Or paste custom cover photo URL..."
-                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-mono-tabular"
-                    />
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        <span className="truncate font-medium">
+                          {formatReadableImageSourceLabel(newRoomImageUrl) || 'App Media Storage'}
+                        </span>
+                        <span className="text-[10px] font-semibold text-emerald-700 shrink-0 ml-2">
+                          App Storage
+                        </span>
+                      </div>
+                      <input
+                        type="url"
+                        value={isCleanExternalImageUrl(newRoomImageUrl) ? newRoomImageUrl : ''}
+                        onChange={(e) => {
+                          const nextUrl = e.target.value.trim();
+                          setAddRoomError(null);
+                          if (!nextUrl) return;
+                          if (isLegacyOrAiStudioImageUrl(nextUrl)) {
+                            setAddRoomError(
+                              'Google / AI Studio image links are blocked. Please upload a photo from your device or choose from the property gallery above.'
+                            );
+                            return;
+                          }
+                          setNewRoomImageUrl(nextUrl);
+                          setNewRoomGalleryImages((prev) =>
+                            Array.from(new Set([nextUrl, ...prev])).slice(0, 6)
+                          );
+                        }}
+                        placeholder="Optional: paste a clean https:// image URL or upload a photo above"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

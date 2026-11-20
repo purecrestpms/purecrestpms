@@ -23,6 +23,7 @@ import {
   PlanInquiryRecord,
   PropertyRecord,
 } from '../types/pms';
+import { RICHGATES_EXTERIOR_IMAGE_URL } from '../utils/mediaAssets';
 
 interface PchAdminDashboardViewProps {
   properties: PropertyRecord[];
@@ -43,8 +44,7 @@ function getTimeGreeting(): string {
   return 'Good evening';
 }
 
-const HERO_IMAGE =
-  '/assets/aistudio/file_000000003fc881f4b5e66b7352a17edc_c7ca46a2.png';
+const HERO_IMAGE = RICHGATES_EXTERIOR_IMAGE_URL;
 
 export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
   properties,

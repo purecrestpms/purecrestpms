@@ -21,8 +21,9 @@ import {
   LicenseRecord,
   PlanInquiryRecord,
 } from '../types/pms';
+import { PCH_BRAND_LOGO_URL } from '../utils/mediaAssets';
 
-const PCH_LOGO_ICON = '/assets/aistudio/4A541DC4-8B5B-4592-9C9E-752D5AE470AD_3f72a29d.png';
+const PCH_LOGO_ICON = PCH_BRAND_LOGO_URL;
 
 interface AppHomepageViewProps {
   isSignedIn?: boolean;

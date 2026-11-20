@@ -42,6 +42,12 @@ import {
   normalizeIsoDate,
 } from '../utils/availability';
 import { deterministicOtaReservationId, ParsedIcalEvent, parseIcalEvents } from '../utils/icalParser';
+import {
+  DEFAULT_ROOM_COVER_IMAGE_URL,
+  isLegacyOrAiStudioImageUrl,
+  resolveAppImageUrl,
+  resolveGalleryImageUrls,
+} from '../utils/mediaAssets';
 import { ParsedOtaCsvRow } from '../utils/otaCsvParser';
 import {
   ASSIGNABLE_ROLE_LABELS,
@@ -1434,13 +1440,17 @@ export async function updateRoomStatus(params: {
       payload.maxGuests = Math.min(12, Math.max(1, Math.round(params.updates.maxGuests)));
     }
     if (typeof params.updates.imageUrl === 'string') {
-      payload.imageUrl = params.updates.imageUrl.trim().slice(0, 350000);
+      const normalizedCover = resolveAppImageUrl(
+        params.updates.imageUrl,
+        DEFAULT_ROOM_COVER_IMAGE_URL
+      );
+      payload.imageUrl = normalizedCover.trim().slice(0, 350000);
     }
     if (Array.isArray(params.updates.galleryImages)) {
-      payload.galleryImages = params.updates.galleryImages
-        .map((u) => (typeof u === 'string' ? u.trim() : ''))
-        .filter(Boolean)
-        .slice(0, 6);
+      payload.galleryImages = resolveGalleryImageUrls(
+        params.updates.galleryImages,
+        DEFAULT_ROOM_COVER_IMAGE_URL
+      ).slice(0, 6);
     }
     if (Array.isArray(params.updates.amenities)) {
       payload.amenities = params.updates.amenities
@@ -1507,10 +1517,11 @@ export async function createRoomWorkflow(params: {
     .map((a) => a.trim())
     .filter(Boolean)
     .slice(0, 15);
-  const cleanGallery = (params.galleryImages || [])
-    .map((u) => u.trim())
-    .filter(Boolean)
-    .slice(0, 6);
+  const normalizedCover = resolveAppImageUrl(params.imageUrl, DEFAULT_ROOM_COVER_IMAGE_URL);
+  const cleanGallery = resolveGalleryImageUrls(
+    params.galleryImages || [],
+    normalizedCover
+  ).slice(0, 6);
   const nextCount = Math.min(500, params.currentRoomCount + 1);
 
   const batch = writeBatch(db);
@@ -1529,7 +1540,7 @@ export async function createRoomWorkflow(params: {
     housekeepingStatus: 'clean',
     currentGuestName: '',
     currentReservationId: '',
-    imageUrl: params.imageUrl.trim(),
+    imageUrl: normalizedCover.slice(0, 350000),
     ...(cleanGallery.length > 0 ? { galleryImages: cleanGallery } : {}),
     amenities: cleanAmenities.length > 0 ? cleanAmenities : ['King Bed', 'Wi-Fi', '24/7 Power'],
     authorizedEmails: params.property.authorizedEmails,
@@ -1664,7 +1675,16 @@ export async function syncRichgatesOfficialCatalogIfNeeded(params: {
   const needsRoomUpdate = params.rooms.some((r) => {
     const spec = specMap.get(r.id);
     if (!spec) return false;
-    return r.roomNumber !== spec.roomNumber || !r.section || !r.imageUrl;
+    const hasLegacyGallery =
+      Array.isArray(r.galleryImages) &&
+      r.galleryImages.some((u) => isLegacyOrAiStudioImageUrl(u));
+    return (
+      r.roomNumber !== spec.roomNumber ||
+      !r.section ||
+      !r.imageUrl ||
+      isLegacyOrAiStudioImageUrl(r.imageUrl) ||
+      hasLegacyGallery
+    );
   });
   if (!needsRoomUpdate) return false;
 
@@ -1676,17 +1696,28 @@ export async function syncRichgatesOfficialCatalogIfNeeded(params: {
   for (const room of params.rooms) {
     const spec = specMap.get(room.id);
     if (!spec) continue;
-    batch.update(doc(db, 'properties', params.property.id, 'rooms', room.id), {
+    const preservedOrMigratedCover =
+      room.imageUrl && !isLegacyOrAiStudioImageUrl(room.imageUrl)
+        ? room.imageUrl
+        : resolveAppImageUrl(room.imageUrl, spec.imageUrl);
+    const updateData: Record<string, unknown> = {
       roomNumber: spec.roomNumber,
       name: spec.name,
       roomType: spec.roomType,
       section: spec.section,
       nightlyRateNgn: spec.nightlyRateNgn,
       maxGuests: spec.maxGuests,
-      imageUrl: spec.imageUrl,
+      imageUrl: preservedOrMigratedCover,
       amenities: spec.amenities,
       updatedAt: now,
-    });
+    };
+    if (Array.isArray(room.galleryImages) && room.galleryImages.length > 0) {
+      updateData.galleryImages = resolveGalleryImageUrls(
+        room.galleryImages,
+        preservedOrMigratedCover
+      );
+    }
+    batch.update(doc(db, 'properties', params.property.id, 'rooms', room.id), updateData);
   }
 
   for (const res of params.reservations) {
@@ -1756,9 +1787,15 @@ export async function updatePropertyProfile(params: {
   actorRole: string;
 }) {
   const ref = doc(db, 'properties', params.property.id);
+  const sanitizedUpdates = { ...params.updates };
+  if (typeof sanitizedUpdates.logoUrl === 'string') {
+    sanitizedUpdates.logoUrl = sanitizedUpdates.logoUrl.trim()
+      ? resolveAppImageUrl(sanitizedUpdates.logoUrl, '').slice(0, 350000)
+      : '';
+  }
   try {
     await updateDoc(ref, {
-      ...params.updates,
+      ...sanitizedUpdates,
       updatedAt: serverTimestamp(),
     });
     await writeAuditLog({
@@ -5022,7 +5059,7 @@ export async function createNewPropertyWithRooms(params: {
       maxGuests: 2,
       occupancyStatus: 'vacant',
       housekeepingStatus: 'clean',
-      imageUrl: '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png',
+      imageUrl: DEFAULT_ROOM_COVER_IMAGE_URL,
       amenities: ['King Bed', 'Wi-Fi', 'Smart TV', '24/7 Power'],
       authorizedEmails,
       ownerUid: uid,
@@ -6351,4 +6388,61 @@ export async function recordStaffSessionLogoutWorkflow(params: {
     // Non-blocking logout status update
   }
 }
+
+export async function migrateLegacyMediaUrlsInFirestore(params: {
+  properties: PropertyRecord[];
+  activeProperty?: PropertyRecord | null;
+  rooms: RoomRecord[];
+}): Promise<number> {
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+  let updatedCount = 0;
+
+  for (const prop of params.properties) {
+    if (prop.logoUrl && isLegacyOrAiStudioImageUrl(prop.logoUrl)) {
+      const migratedLogo = resolveAppImageUrl(prop.logoUrl, '');
+      if (migratedLogo !== prop.logoUrl) {
+        batch.update(doc(db, 'properties', prop.id), {
+          logoUrl: migratedLogo,
+          updatedAt: now,
+        });
+        updatedCount += 1;
+      }
+    }
+  }
+
+  if (params.activeProperty) {
+    for (const room of params.rooms) {
+      const hasLegacyCover = Boolean(room.imageUrl && isLegacyOrAiStudioImageUrl(room.imageUrl));
+      const hasLegacyGallery =
+        Array.isArray(room.galleryImages) &&
+        room.galleryImages.some((u) => isLegacyOrAiStudioImageUrl(u));
+      if (!hasLegacyCover && !hasLegacyGallery) continue;
+
+      const updatePayload: Record<string, unknown> = { updatedAt: now };
+      if (hasLegacyCover) {
+        updatePayload.imageUrl = resolveAppImageUrl(room.imageUrl, DEFAULT_ROOM_COVER_IMAGE_URL);
+      }
+      if (hasLegacyGallery) {
+        const fallbackCover =
+          typeof updatePayload.imageUrl === 'string'
+            ? updatePayload.imageUrl
+            : resolveAppImageUrl(room.imageUrl, DEFAULT_ROOM_COVER_IMAGE_URL);
+        updatePayload.galleryImages = resolveGalleryImageUrls(room.galleryImages, fallbackCover);
+      }
+      batch.update(doc(db, 'properties', params.activeProperty.id, 'rooms', room.id), updatePayload);
+      updatedCount += 1;
+    }
+  }
+
+  if (updatedCount === 0) return 0;
+
+  try {
+    await batch.commit();
+    return updatedCount;
+  } catch {
+    return 0;
+  }
+}
+
 

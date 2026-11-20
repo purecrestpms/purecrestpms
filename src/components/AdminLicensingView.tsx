@@ -81,6 +81,7 @@ import {
   SUPPORTED_CHANNEL_CURRENCIES,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
+import { resolveAppImageUrl } from '../utils/mediaAssets';
 
 interface AdminLicensingViewProps {
   section: Extract<
@@ -220,7 +221,7 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       housekeepingStatus: 'clean' as const,
       currentGuestName: '',
       currentReservationId: '',
-      imageUrl: r.imageUrl || '',
+      imageUrl: resolveAppImageUrl(r.imageUrl, ''),
       amenities: r.amenities || [],
     }));
 

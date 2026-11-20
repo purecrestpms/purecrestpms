@@ -30,7 +30,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PieChart,
-  RefreshCw,
   Settings,
   Shield,
   ShieldCheck,
@@ -85,7 +84,6 @@ interface SubMenuItem {
 
 const RESERVATION_SUB_ITEMS: SubMenuItem[] = [
   { id: 'reservations', label: 'All Reservations', icon: CalendarCheck2 },
-  { id: 'calendar', label: 'Calendar', icon: Calendar },
   { id: 'walk_in', label: 'Walk-in Check-in', icon: UserCheck },
   { id: 'in_house', label: 'In-House Guests', icon: DoorOpen },
   { id: 'front_desk', label: 'Front Desk & Folios', icon: BookOpenCheck },
@@ -156,7 +154,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const collapsed = controlledCollapsed ?? internalCollapsed;
   const [distributionSelection, setDistributionSelection] = useState<
-    'booking_channels' | 'channel_manager' | 'channel_sync'
+    'booking_channels' | 'channel_manager'
   >('channel_manager');
   const [reportSelection, setReportSelection] = useState<
     'reports' | 'occupancy' | 'booking' | 'revenue' | 'guest'
@@ -443,7 +441,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const renderPropertySidebarNav = (isCollapsed: boolean) => {
-    const showDistribution = canSee('ota_channels');
+    const showDistribution = canSee('ota_channels') || canSee('calendar');
     const showReports = canSee('reports');
     const showAdminGroup =
       canSee('user_management') ||
@@ -524,82 +522,78 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 Distribution
               </p>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                setDistributionSelection('booking_channels');
-                handleNavClick('ota_channels');
-              }}
-              title={isCollapsed ? 'Booking Channels' : undefined}
-              className={navItemClass(
-                activeSection === 'ota_channels' && distributionSelection === 'booking_channels',
-                isCollapsed
-              )}
-            >
-              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-                <Globe
-                  className={iconClass(
-                    activeSection === 'ota_channels' && distributionSelection === 'booking_channels'
+            {canSee('ota_channels') && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDistributionSelection('booking_channels');
+                    handleNavClick('ota_channels');
+                  }}
+                  title={isCollapsed ? 'Booking Channels' : undefined}
+                  className={navItemClass(
+                    activeSection === 'ota_channels' && distributionSelection === 'booking_channels',
+                    isCollapsed
                   )}
-                />
-                {!isCollapsed && <span className="truncate">Booking Channels</span>}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setDistributionSelection('channel_manager');
-                handleNavClick('ota_channels');
-              }}
-              title={isCollapsed ? 'Channel Manager' : undefined}
-              className={navItemClass(
-                activeSection === 'ota_channels' && distributionSelection === 'channel_manager',
-                isCollapsed
-              )}
-            >
-              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-                <BarChart2
-                  className={iconClass(
-                    activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
-                  )}
-                />
-                {!isCollapsed && <span className="truncate">Channel Manager</span>}
-              </span>
-              {!isCollapsed && (
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold leading-none ${
-                    activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
-                      ? 'bg-white text-[#0b5d34]'
-                      : 'bg-emerald-600 text-white'
-                  }`}
                 >
-                  New
-                </span>
-              )}
-            </button>
+                  <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                    <Globe
+                      className={iconClass(
+                        activeSection === 'ota_channels' && distributionSelection === 'booking_channels'
+                      )}
+                    />
+                    {!isCollapsed && <span className="truncate">Booking Channels</span>}
+                  </span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setDistributionSelection('channel_sync');
-                handleNavClick('ota_channels');
-              }}
-              title={isCollapsed ? 'Channel Synchronization' : undefined}
-              className={navItemClass(
-                activeSection === 'ota_channels' && distributionSelection === 'channel_sync',
-                isCollapsed
-              )}
-            >
-              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-                <RefreshCw
-                  className={iconClass(
-                    activeSection === 'ota_channels' && distributionSelection === 'channel_sync'
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDistributionSelection('channel_manager');
+                    handleNavClick('ota_channels');
+                  }}
+                  title={isCollapsed ? 'Channel Manager' : undefined}
+                  className={navItemClass(
+                    activeSection === 'ota_channels' && distributionSelection === 'channel_manager',
+                    isCollapsed
                   )}
-                />
-                {!isCollapsed && <span className="truncate">Channel Synchronization</span>}
-              </span>
-            </button>
+                >
+                  <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                    <BarChart2
+                      className={iconClass(
+                        activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
+                      )}
+                    />
+                    {!isCollapsed && <span className="truncate">Channel Manager</span>}
+                  </span>
+                  {!isCollapsed && (
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold leading-none ${
+                        activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
+                          ? 'bg-white text-[#0b5d34]'
+                          : 'bg-emerald-600 text-white'
+                      }`}
+                    >
+                      New
+                    </span>
+                  )}
+                </button>
+              </>
+            )}
+
+            {canSee('calendar') && (
+              <button
+                type="button"
+                onClick={() => handleNavClick('calendar')}
+                title={isCollapsed ? 'Calendar' : undefined}
+                className={navItemClass(activeSection === 'calendar', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Calendar className={iconClass(activeSection === 'calendar')} />
+                  {!isCollapsed && <span className="truncate">Calendar</span>}
+                </span>
+              </button>
+            )}
           </div>
         )}
 

@@ -1,3 +1,10 @@
+import {
+  DEFAULT_ROOM_COVER_IMAGE_URL,
+  resolveAppImageUrl,
+  RICHGATES_EXTERIOR_IMAGE_URL,
+  ROOM_MEDIA_PATHS,
+} from '../utils/mediaAssets';
+
 export type PortalMode = 'home' | 'pch-admin' | 'richgates-admin' | 'staff';
 
 export type StaffRole =
@@ -85,8 +92,7 @@ export const RICHGATES_PROPERTY_INFO = {
   email: 'support@richgatesapartment.com',
 } as const;
 
-export const RICHGATES_EXTERIOR_IMAGE =
-  '/assets/aistudio/file_000000003fc881f4b5e66b7352a17edc_c7ca46a2.png';
+export const RICHGATES_EXTERIOR_IMAGE = RICHGATES_EXTERIOR_IMAGE_URL;
 
 export const RICHGATES_GALLERY_ASSETS: Array<{
   id: string;
@@ -96,22 +102,22 @@ export const RICHGATES_GALLERY_ASSETS: Array<{
   {
     id: 'rg-kitchenette-studio',
     label: 'Serviced Studio Lounge & Kitchenette',
-    url: '/assets/aistudio/IMG_1945_d08c4168.webp',
+    url: ROOM_MEDIA_PATHS.servicedStudioLounge,
   },
   {
     id: 'rg-suite-living',
     label: 'One Bedroom Living Area',
-    url: '/assets/aistudio/B8CC7C05-AC7B-438D-B422-4033B0713BA1_f0334307.png',
+    url: ROOM_MEDIA_PATHS.oneBedroomLivingSuite,
   },
   {
     id: 'rg-deluxe-bedroom',
     label: 'Deluxe Studio Bedroom',
-    url: '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png',
+    url: ROOM_MEDIA_PATHS.deluxeStudioBedroom,
   },
   {
     id: 'rg-tufted-bedroom',
     label: 'Standard Studio King Bed Detail',
-    url: '/assets/aistudio/IMG_1819_00d6cdc5.jpeg',
+    url: ROOM_MEDIA_PATHS.standardStudioKingBed,
   },
   {
     id: 'rg-exterior',
@@ -144,7 +150,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 1,
     nightlyRateNgn: 65500,
     maxGuests: 2,
-    imageUrl: '/assets/aistudio/IMG_1945_d08c4168.webp',
+    imageUrl: ROOM_MEDIA_PATHS.servicedStudioLounge,
     amenities: ['Fitted Kitchenette', 'Lounge & Smart TV', 'PS5 & Workspace', '24/7 Power'],
   },
   {
@@ -156,7 +162,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 1,
     nightlyRateNgn: 80000,
     maxGuests: 3,
-    imageUrl: '/assets/aistudio/B8CC7C05-AC7B-438D-B422-4033B0713BA1_f0334307.png',
+    imageUrl: ROOM_MEDIA_PATHS.oneBedroomLivingSuite,
     amenities: ['Full Kitchenette', 'Separate Living Room', 'King Bed Suite', 'Starlink Wi-Fi'],
   },
   {
@@ -168,7 +174,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 1,
     nightlyRateNgn: 55000,
     maxGuests: 2,
-    imageUrl: '/assets/aistudio/IMG_1945_d08c4168.webp',
+    imageUrl: ROOM_MEDIA_PATHS.servicedStudioLounge,
     amenities: ['Kitchenette Counter', 'Bar Seating', 'Smart TV', 'Inverter + Diesel Backup'],
   },
   {
@@ -180,7 +186,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 1,
     nightlyRateNgn: 55000,
     maxGuests: 2,
-    imageUrl: '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png',
+    imageUrl: ROOM_MEDIA_PATHS.deluxeStudioBedroom,
     amenities: ['King Bed', 'Lounge Armchair', 'Smart TV', 'En-Suite Rainfall Shower'],
   },
   {
@@ -192,7 +198,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 2,
     nightlyRateNgn: 58000,
     maxGuests: 2,
-    imageUrl: '/assets/aistudio/IMG_1819_00d6cdc5.jpeg',
+    imageUrl: ROOM_MEDIA_PATHS.standardStudioKingBed,
     amenities: ['Tufted King Bed', 'Work Desk', 'High-Speed Wi-Fi', '24/7 Power'],
   },
   {
@@ -204,7 +210,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 2,
     nightlyRateNgn: 55000,
     maxGuests: 2,
-    imageUrl: '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png',
+    imageUrl: ROOM_MEDIA_PATHS.deluxeStudioBedroom,
     amenities: ['King Bed', 'Smart TV', 'Tea & Coffee Station', 'Split AC'],
   },
   {
@@ -216,7 +222,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 2,
     nightlyRateNgn: 65000,
     maxGuests: 2,
-    imageUrl: '/assets/aistudio/IMG_1819_00d6cdc5.jpeg',
+    imageUrl: ROOM_MEDIA_PATHS.standardStudioKingBed,
     amenities: ['King Bed', 'Reading Lounge', 'Smart TV', 'Private Balcony'],
   },
   {
@@ -228,7 +234,7 @@ export const RICHGATES_OFFICIAL_ROOMS: OfficialRoomSpec[] = [
     floor: 2,
     nightlyRateNgn: 75000,
     maxGuests: 3,
-    imageUrl: '/assets/aistudio/B8CC7C05-AC7B-438D-B422-4033B0713BA1_f0334307.png',
+    imageUrl: ROOM_MEDIA_PATHS.oneBedroomLivingSuite,
     amenities: ['Separate Parlour', 'King Bedroom Suite', 'Dining Bar', 'VIP Room Service'],
   },
 ];
@@ -366,14 +372,14 @@ export interface RoomRecord {
 export function getRoomGalleryImages(
   room: Pick<RoomRecord, 'imageUrl' | 'galleryImages' | 'section' | 'roomNumber'>
 ): Array<{ url: string; label: string }> {
-  const defaultCover =
-    room.imageUrl?.trim() ||
-    RICHGATES_GALLERY_ASSETS[2]?.url ||
-    '/assets/aistudio/96AFAA8F-BEBF-4615-84DD-73F6118C3907_96abf748.png';
+  const defaultCover = resolveAppImageUrl(
+    room.imageUrl,
+    RICHGATES_GALLERY_ASSETS[2]?.url || DEFAULT_ROOM_COVER_IMAGE_URL
+  );
   const assetLabelMap = new Map(RICHGATES_GALLERY_ASSETS.map((a) => [a.url, a.label]));
 
   const customList = (room.galleryImages || [])
-    .map((u) => (typeof u === 'string' ? u.trim() : ''))
+    .map((u) => (typeof u === 'string' ? resolveAppImageUrl(u, '') : ''))
     .filter(Boolean);
 
   if (customList.length > 0) {
