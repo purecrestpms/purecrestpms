@@ -2842,7 +2842,8 @@ npm run build
 npx wrangler pages deploy dist --project-name=pch-pms`}
               </pre>
               <p className="text-xs text-slate-500">
-                Central authentication routes through <code className="font-mono-tabular">https://{savedRootDomain}/__/auth/handler</code> and <code className="font-mono-tabular">https://{savedRootDomain}/auth-action</code> for all properties.
+                Branded password reset and email verification links route through{' '}
+                <code className="font-mono-tabular">https://{savedRootDomain}/auth-action</code> for all properties.
               </p>
             </div>
 
@@ -2979,6 +2980,7 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
               </li>
               <li>
                 In <strong>Cloudflare Dashboard → Workers &amp; Pages → pch-pms → Custom domains</strong>, add{' '}
+                <code className="font-mono-tabular">{savedRootDomain}</code>,{' '}
                 <code className="font-mono-tabular">app.{savedRootDomain}</code>,{' '}
                 <code className="font-mono-tabular">admin.{savedRootDomain}</code>, and{' '}
                 {properties.map((p, idx) => (
@@ -2992,17 +2994,71 @@ npx wrangler pages deploy dist --project-name=pch-pms`}
                 .
               </li>
               <li>
-                In <strong>Cloudflare DNS ({savedRootDomain})</strong>, ensure each subdomain has a proxied{' '}
-                <strong>CNAME</strong> pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (orange cloud ON, SSL mode <strong>Full (strict)</strong>). No separate DNS record is needed for <code className="font-mono-tabular">/staff</code>.
+                In <strong>Cloudflare DNS ({savedRootDomain})</strong>, ensure the root domain and each subdomain have a proxied{' '}
+                <strong>CNAME</strong> pointing to <code className="font-mono-tabular">pch-pms.pages.dev</code> (orange cloud ON, SSL mode <strong>Full (strict)</strong>). No separate DNS record is needed for <code className="font-mono-tabular">/staff</code> or <code className="font-mono-tabular">/auth-action</code>.
               </li>
               <li>
                 In <strong>Authentication Settings → Authorized domains</strong>, register{' '}
-                <code className="font-mono-tabular">{savedRootDomain}</code> (used centrally by all properties),{' '}
+                <code className="font-mono-tabular">{savedRootDomain}</code> (covers all property subdomains),{' '}
                 <code className="font-mono-tabular">app.{savedRootDomain}</code>, and{' '}
-                <code className="font-mono-tabular">admin.{savedRootDomain}</code>, and add{' '}
-                <code className="font-mono-tabular">https://{savedRootDomain}/__/auth/handler</code> to your Google OAuth Authorized Redirect URIs.
+                <code className="font-mono-tabular">admin.{savedRootDomain}</code>.
+              </li>
+              <li>
+                In <strong>Authentication → Templates</strong> (Password Reset, Email Verification, Email Change), set{' '}
+                <strong>Action URL</strong> to{' '}
+                <code className="font-mono-tabular">https://{savedRootDomain}/auth-action</code>, set{' '}
+                <strong>Public App Name</strong> to <strong>PCH PMS</strong>, and enable custom SMTP from{' '}
+                <code className="font-mono-tabular">PCH PMS &lt;noreply@{savedRootDomain}&gt;</code> so every security email uses your branded domain.
               </li>
             </ol>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-1">
+              {[
+                {
+                  id: 'auth-action-url',
+                  label: 'Custom Email Action URL',
+                  value: `https://${savedRootDomain}/auth-action`,
+                },
+                {
+                  id: 'auth-sender-email',
+                  label: 'Branded Email Sender',
+                  value: `PCH PMS <noreply@${savedRootDomain}>`,
+                },
+                {
+                  id: 'auth-app-name',
+                  label: 'Public App Display Name',
+                  value: 'PCH PMS',
+                },
+              ].map((cfg) => (
+                <div
+                  key={cfg.id}
+                  className="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold text-slate-500">{cfg.label}</p>
+                    <p className="font-mono-tabular text-xs font-bold text-slate-900 truncate">
+                      {cfg.value}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(cfg.value, cfg.id)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg text-[11px] font-medium shrink-0 cursor-pointer"
+                  >
+                    {copiedKey === cfg.id ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Clean Production Backup & Demo Guest Purge */}

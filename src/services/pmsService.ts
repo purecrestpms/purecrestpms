@@ -23,6 +23,8 @@ import {
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   BOOTSTRAPPED_ADMIN_EMAILS,
+  CENTRAL_AUTH_DOMAIN,
+  CENTRAL_AUTH_ORIGIN,
   effectiveFirebaseConfig,
   getPchActionCodeSettings,
   isBootstrappedAdminEmail,
@@ -5854,11 +5856,24 @@ async function provisionStaffAuthAccount(
       await updateProfile(cred.user, { displayName: fullName.trim() }).catch(() => undefined);
     }
     const actionSettings = getPchActionCodeSettings(customActionUrl);
-    await sendEmailVerification(cred.user, actionSettings).catch(() => undefined);
+    try {
+      await sendEmailVerification(cred.user, actionSettings);
+    } catch (verifyErr) {
+      const verifyCode = (verifyErr as { code?: string })?.code || '';
+      if (
+        verifyCode === 'auth/unauthorized-continue-uri' ||
+        verifyCode === 'auth/invalid-continue-uri'
+      ) {
+        await sendEmailVerification(cred.user, {
+          url: CENTRAL_AUTH_ORIGIN,
+          handleCodeInApp: false,
+        }).catch(() => undefined);
+      }
+    }
     await signOut(secAuth).catch(() => undefined);
     return {
       provisioned: true,
-      note: 'Login credentials created and PCHPMS verification link sent.',
+      note: 'Login credentials created and PCH PMS verification email sent.',
     };
   } catch (err) {
     const code = (err as { code?: string })?.code || '';
@@ -5885,9 +5900,17 @@ export async function sendBrandedPasswordResetWorkflow(
   } catch (err) {
     const code = (err as { code?: string })?.code || '';
     if (code === 'auth/unauthorized-continue-uri' || code === 'auth/invalid-continue-uri') {
-      throw new Error(
-        'Custom auth domain "pchpms.com" must be added to Authorized Domains before sending branded password reset links.'
-      );
+      try {
+        await sendPasswordResetEmail(auth, cleanEmail, {
+          url: CENTRAL_AUTH_ORIGIN,
+          handleCodeInApp: false,
+        });
+        return;
+      } catch {
+        throw new Error(
+          `Custom domain "${CENTRAL_AUTH_DOMAIN}" must be listed under Authorized Domains before sending branded password reset links.`
+        );
+      }
     }
     throw err;
   }
@@ -5939,15 +5962,22 @@ export async function createPropertyUserAccountWorkflow(params: {
   let authProvisioned = false;
   let authNote: string | undefined;
   if (params.password && params.password.trim().length > 0) {
-    const tenantOrigin =
-      typeof window !== 'undefined' && window.location?.origin
+    const slug = getPropertySubdomainSlug(params.property);
+    const isStaffRole = params.role !== 'property_admin';
+    const currentHost =
+      typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
+    const isCustomPchHost =
+      currentHost === CENTRAL_AUTH_DOMAIN || currentHost.endsWith(`.${CENTRAL_AUTH_DOMAIN}`);
+    const tenantPortalUrl = isCustomPchHost
+      ? `https://${slug}.${CENTRAL_AUTH_DOMAIN}${isStaffRole ? '/staff' : ''}`
+      : typeof window !== 'undefined' && window.location?.origin
         ? window.location.origin
-        : `https://${getPropertySubdomainSlug(params.property)}.pchpms.com`;
+        : `https://${slug}.${CENTRAL_AUTH_DOMAIN}`;
     const authRes = await provisionStaffAuthAccount(
       cleanEmail,
       params.password,
       fullName,
-      tenantOrigin
+      tenantPortalUrl
     );
     authProvisioned = authRes.provisioned;
     authNote = authRes.note;

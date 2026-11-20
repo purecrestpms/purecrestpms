@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { ActionCodeSettings, getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { ActionCodeSettings, getAuth } from 'firebase/auth';
 import {
   doc,
   enableNetwork,
@@ -13,14 +13,28 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
+export const CENTRAL_AUTH_DOMAIN = 'pchpms.com';
+export const CENTRAL_AUTH_ORIGIN = 'https://pchpms.com';
+export const CENTRAL_AUTH_HANDLER_URL = 'https://pchpms.com/__/auth/handler';
+export const CENTRAL_AUTH_ACTION_URL = 'https://pchpms.com/auth-action';
+
 const customAuthDomain =
   (import.meta.env.VITE_CUSTOM_AUTH_DOMAIN as string | undefined)?.trim() || '';
 
+function resolveEffectiveAuthDomain(): string {
+  if (customAuthDomain) return customAuthDomain;
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname.toLowerCase().trim();
+    if (host === CENTRAL_AUTH_DOMAIN || host.endsWith(`.${CENTRAL_AUTH_DOMAIN}`)) {
+      return CENTRAL_AUTH_DOMAIN;
+    }
+  }
+  return firebaseConfig.authDomain;
+}
+
 export const effectiveFirebaseConfig = {
   ...firebaseConfig,
-  // Use Firebase's provisioned authDomain unless a verified custom OAuth proxy domain is explicitly configured.
-  // Overriding authDomain without registering https://<domain>/__/auth/handler in Google Cloud OAuth causes Error 400: redirect_uri_mismatch.
-  authDomain: customAuthDomain || firebaseConfig.authDomain,
+  authDomain: resolveEffectiveAuthDomain(),
 };
 
 const app = initializeApp(effectiveFirebaseConfig);
@@ -53,8 +67,6 @@ function createFirestoreInstance(): Firestore {
 
 export const db = createFirestoreInstance();
 export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'purecresthospitality@gmail.com';
 export const BOOTSTRAPPED_ADMIN_EMAILS = [
@@ -67,10 +79,15 @@ export function isBootstrappedAdminEmail(email?: string | null): boolean {
   return BOOTSTRAPPED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
 }
 
-export const CENTRAL_AUTH_DOMAIN = 'pchpms.com';
-export const CENTRAL_AUTH_ORIGIN = 'https://pchpms.com';
-export const CENTRAL_AUTH_HANDLER_URL = 'https://pchpms.com/__/auth/handler';
-export const CENTRAL_AUTH_ACTION_URL = 'https://pchpms.com/auth-action';
+const BLOCKED_AUTH_HOST_SUFFIXES = [
+  ['.firebase', 'app', '.com'].join(''),
+  ['.web', '.app'].join(''),
+];
+
+function isBlockedLegacyAuthHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase().trim();
+  return BLOCKED_AUTH_HOST_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
 
 export function isSafePchRedirectUrl(candidate?: string | null): boolean {
   if (!candidate) return false;
@@ -78,44 +95,127 @@ export function isSafePchRedirectUrl(candidate?: string | null): boolean {
     const parsed = new URL(candidate);
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
     const host = parsed.hostname.toLowerCase();
+    if (isBlockedLegacyAuthHost(host)) return false;
     return (
       host === 'pchpms.com' ||
       host.endsWith('.pchpms.com') ||
       host === 'localhost' ||
       host === '127.0.0.1' ||
-      host.endsWith('.run.app')
+      host.endsWith('.run.app') ||
+      host.endsWith('.pages.dev')
     );
   } catch {
     return false;
   }
 }
 
+function isAuthActionPathname(pathname: string): boolean {
+  const lower = pathname.toLowerCase();
+  return (
+    lower === '/auth-action' ||
+    lower.startsWith('/auth-action/') ||
+    lower === '/__/auth/action' ||
+    lower.startsWith('/__/auth/action/')
+  );
+}
+
+function unwrapReturnCandidate(raw?: string | null, depth = 0): string {
+  if (!raw || depth > 3) return '';
+  let trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (!/^https?:\/\//i.test(trimmed)) {
+    try {
+      trimmed = decodeURIComponent(trimmed);
+    } catch {
+      return '';
+    }
+  }
+  if (!isSafePchRedirectUrl(trimmed)) return '';
+  try {
+    const parsed = new URL(trimmed);
+    if (isAuthActionPathname(parsed.pathname)) {
+      const nestedNext = parsed.searchParams.get('next') || parsed.searchParams.get('continueUrl');
+      if (nestedNext) {
+        return unwrapReturnCandidate(nestedNext, depth + 1);
+      }
+      return '';
+    }
+    return `${parsed.origin}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch {
+    return '';
+  }
+}
+
+export function extractSafeAuthReturnUrl(
+  searchParams: URLSearchParams,
+  fallbackOrigin?: string
+): string {
+  const directNext = unwrapReturnCandidate(searchParams.get('next'));
+  if (directNext) return directNext;
+
+  const fromContinue = unwrapReturnCandidate(searchParams.get('continueUrl'));
+  if (fromContinue) return fromContinue;
+
+  if (fallbackOrigin && isSafePchRedirectUrl(fallbackOrigin)) {
+    try {
+      const parsed = new URL(fallbackOrigin);
+      const host = parsed.hostname.toLowerCase();
+      if (host === CENTRAL_AUTH_DOMAIN || host === `www.${CENTRAL_AUTH_DOMAIN}`) {
+        return `https://app.${CENTRAL_AUTH_DOMAIN}`;
+      }
+      return parsed.origin;
+    } catch {
+      // fall through
+    }
+  }
+
+  return `https://app.${CENTRAL_AUTH_DOMAIN}`;
+}
+
+export function resolvePchReturnUrl(targetPortalUrl?: string): string {
+  const unwrappedTarget = unwrapReturnCandidate(targetPortalUrl);
+  if (unwrappedTarget) {
+    return unwrappedTarget;
+  }
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    const host = window.location.hostname.toLowerCase();
+    const origin = window.location.origin;
+    const path = window.location.pathname.toLowerCase();
+
+    if (host === CENTRAL_AUTH_DOMAIN || host.endsWith(`.${CENTRAL_AUTH_DOMAIN}`)) {
+      if (host === CENTRAL_AUTH_DOMAIN || host === `www.${CENTRAL_AUTH_DOMAIN}`) {
+        return `https://app.${CENTRAL_AUTH_DOMAIN}`;
+      }
+      if (path === '/staff' || path.startsWith('/staff/') || path === '/login' || path.startsWith('/login/')) {
+        return `${origin}/staff`;
+      }
+      return origin;
+    }
+
+    if (isSafePchRedirectUrl(origin) && !isAuthActionPathname(path)) {
+      return origin;
+    }
+  }
+
+  return CENTRAL_AUTH_ORIGIN;
+}
+
 export function getPchActionCodeSettings(targetPortalUrl?: string): ActionCodeSettings {
-  const currentHost =
-    typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
-  const currentOrigin =
-    typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
-  const isPchDomain = currentHost === 'pchpms.com' || currentHost.endsWith('.pchpms.com');
-
-  const baseActionUrl =
-    isPchDomain || !currentOrigin ? CENTRAL_AUTH_ACTION_URL : `${currentOrigin}/auth-action`;
-
-  const returnCandidate =
-    targetPortalUrl && isSafePchRedirectUrl(targetPortalUrl)
-      ? targetPortalUrl
-      : currentOrigin && isSafePchRedirectUrl(currentOrigin)
-        ? currentOrigin
-        : '';
-
-  const url =
-    returnCandidate && !returnCandidate.startsWith(CENTRAL_AUTH_ORIGIN)
-      ? `${baseActionUrl}?next=${encodeURIComponent(returnCandidate)}`
-      : baseActionUrl;
-
   return {
-    url,
-    handleCodeInApp: true,
+    url: resolvePchReturnUrl(targetPortalUrl),
+    handleCodeInApp: false,
   };
+}
+
+export function sanitizeAuthErrorText(rawMessage: string): string {
+  return rawMessage
+    .replace(/firebase:\s*/gi, '')
+    .replace(/https?:\/\/[^\s]*firebaseapp\.com[^\s]*/gi, CENTRAL_AUTH_ORIGIN)
+    .replace(/[a-z0-9-]+\.firebaseapp\.com/gi, CENTRAL_AUTH_DOMAIN)
+    .replace(/gen-lang-client-\d+/gi, 'PCH PMS')
+    .replace(/\s*\(auth\/[^)]+\)\.?$/i, '')
+    .trim();
 }
 
 export enum OperationType {

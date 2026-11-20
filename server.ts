@@ -207,8 +207,14 @@ async function startServer() {
 
       if (req.path === '/__/auth/action' || req.path.startsWith('/__/auth/action/')) {
         const queryIdx = req.originalUrl.indexOf('?');
-        const search = queryIdx >= 0 ? req.originalUrl.slice(queryIdx) : '';
-        res.redirect(302, `/auth-action${search}`);
+        const rawSearch = queryIdx >= 0 ? req.originalUrl.slice(queryIdx + 1) : '';
+        const sanitizedParams = new URLSearchParams(rawSearch);
+        const continueUrl = sanitizedParams.get('continueUrl');
+        if (continueUrl && continueUrl.toLowerCase().includes('firebaseapp.com')) {
+          sanitizedParams.set('continueUrl', reqOrigin);
+        }
+        const qs = sanitizedParams.toString();
+        res.redirect(302, `/auth-action${qs ? `?${qs}` : ''}`);
         return;
       }
 

@@ -1732,7 +1732,7 @@ export function getPortalUrl(
     if (portal === 'staff') {
       return `${proto}//${slug}.${apex}/staff`;
     }
-    return `${proto}//${slug}.${apex}/admin`;
+    return `${proto}//${slug}.${apex}`;
   }
 
   if (portal === 'home') {

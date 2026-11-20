@@ -12,6 +12,7 @@ import {
 import { collection, doc, enableNetwork, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import {
   AlertTriangle,
+  ArrowRight,
   Bell,
   Calendar,
   Check,
@@ -19,6 +20,8 @@ import {
   Copy,
   DoorOpen,
   ExternalLink,
+  Eye,
+  EyeOff,
   KeyRound,
   Lock,
   LogOut,
@@ -57,11 +60,13 @@ import { mergeCmsWithDefaults, useCms } from './context/CmsContext';
 import { RICHGATES_PROPERTY_ID } from './data/seedData';
 import {
   auth,
+  CENTRAL_AUTH_ORIGIN,
   db,
+  extractSafeAuthReturnUrl,
   getPchActionCodeSettings,
   isBootstrappedAdminEmail,
   isFirestoreOfflineError,
-  isSafePchRedirectUrl,
+  sanitizeAuthErrorText,
   testConnection,
 } from './firebase';
 import {
@@ -294,7 +299,7 @@ function formatAuthErrorMessage(err: unknown): string {
     raw.includes('auth/unauthorized-continue-uri')
   ) {
     const host = typeof window !== 'undefined' ? window.location.hostname : 'pchpms.com';
-    return `Domain "${host}" must be added under Authentication → Settings → Authorized domains.`;
+    return `Domain "${host}" must be added under Authorized Domains in your PCH PMS security settings.`;
   }
   if (code === 'auth/operation-not-allowed') {
     return 'Email and password sign-in is not currently enabled. Please contact your administrator.';
@@ -306,14 +311,17 @@ function formatAuthErrorMessage(err: unknown): string {
   ) {
     return 'Invalid email or password. Use "Forgot password?" to reset your password.';
   }
-  if (code === 'auth/invalid-email') {
+  if (code === 'auth/invalid-email' || code === 'auth/missing-email') {
     return 'Please enter a valid email address.';
   }
+  if (code === 'auth/weak-password') {
+    return 'Password is too weak. Use at least 6 characters with letters and numbers.';
+  }
   if (code === 'auth/too-many-requests') {
-    return 'Too many login attempts. Please wait a minute or reset your password.';
+    return 'Too many attempts. Please wait a minute before trying again.';
   }
   if (code === 'auth/network-request-failed') {
-    return 'Network error while signing in. Check your internet connection and try again.';
+    return 'Network error while connecting to PCH PMS. Check your internet connection and try again.';
   }
   if (code === 'auth/user-disabled') {
     return 'This account has been disabled. Contact your administrator for assistance.';
@@ -322,13 +330,11 @@ function formatAuthErrorMessage(err: unknown): string {
     return 'An account with this email address already exists.';
   }
   if (code === 'auth/expired-action-code' || code === 'auth/invalid-action-code') {
-    return 'This verification or password reset link has expired or already been used. Please request a fresh link.';
+    return 'This verification or password reset link has expired or has already been used. Request a fresh link below.';
   }
   return (
-    raw
-      .replace(/^[A-Za-z]+:\s*/i, '')
-      .replace(/\s*\(auth\/[^)]+\)\.?$/i, '')
-      .trim() || 'Unable to complete authentication right now. Please try again.'
+    sanitizeAuthErrorText(raw) ||
+    'Unable to complete authentication right now. Please try again.'
   );
 }
 
@@ -392,63 +398,113 @@ export default function App() {
     oobCode: string;
     continueUrl: string;
     nextUrl: string;
+    hasExplicitNext: boolean;
   } | null>(() => {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
-    const mode = params.get('mode') || '';
-    const oobCode = params.get('oobCode') || '';
-    const continueUrl = params.get('continueUrl') || '';
-    let nextUrl = params.get('next') || '';
-    if (!nextUrl && continueUrl) {
-      try {
-        const parsedContinue = new URL(continueUrl);
-        nextUrl = parsedContinue.searchParams.get('next') || '';
-      } catch {
-        // ignore invalid continueUrl
-      }
+    const mode = (params.get('mode') || '').trim();
+    const oobCode = (params.get('oobCode') || '').trim();
+    const continueUrl = (params.get('continueUrl') || '').trim();
+    const pathLower = window.location.pathname.toLowerCase();
+    const isAuthActionRoute =
+      pathLower === '/auth-action' ||
+      pathLower.startsWith('/auth-action/') ||
+      pathLower === '/__/auth/action' ||
+      pathLower.startsWith('/__/auth/action/');
+
+    if (!isAuthActionRoute && !(mode && oobCode)) {
+      return null;
     }
-    if ((window.location.pathname.toLowerCase().startsWith('/auth-action') || (mode && oobCode)) && mode && oobCode) {
-      return {
-        mode,
-        oobCode,
-        continueUrl,
-        nextUrl: isSafePchRedirectUrl(nextUrl) ? nextUrl : '',
-      };
-    }
-    return null;
+
+    const nextUrl = extractSafeAuthReturnUrl(params, window.location.origin);
+    const hasExplicitNext = Boolean(
+      (params.get('next') || params.get('continueUrl')) &&
+        nextUrl &&
+        nextUrl !== window.location.origin
+    );
+
+    return {
+      mode,
+      oobCode,
+      continueUrl,
+      nextUrl,
+      hasExplicitNext,
+    };
   });
-  const [authActionState, setAuthActionState] = useState<'loading' | 'ready_reset' | 'success' | 'error'>('loading');
+  const [authActionState, setAuthActionState] = useState<
+    'loading' | 'ready_reset' | 'success' | 'error' | 'redirecting'
+  >('loading');
   const [authActionMessage, setAuthActionMessage] = useState<string>('Processing security action...');
+  const [authActionFormError, setAuthActionFormError] = useState<string | null>(null);
   const [authActionEmail, setAuthActionEmail] = useState<string>('');
   const [newResetPassword, setNewResetPassword] = useState('');
   const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [showNewResetPassword, setShowNewResetPassword] = useState(false);
+  const [showConfirmResetPassword, setShowConfirmResetPassword] = useState(false);
   const [authActionSubmitting, setAuthActionSubmitting] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoverySubmitting, setRecoverySubmitting] = useState(false);
+  const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authActionParams) return;
+    // Strip apiKey, oobCode, and continueUrl from the browser address bar immediately
+    if (typeof window !== 'undefined' && window.location.search) {
+      try {
+        window.history.replaceState({}, '', '/auth-action');
+      } catch {
+        // ignore history API errors
+      }
+    }
+
+    // Handle post-action redirects like /auth-action?next=https://richgates.pchpms.com (no oobCode)
+    if (!authActionParams.mode || !authActionParams.oobCode) {
+      if (authActionParams.hasExplicitNext && authActionParams.nextUrl) {
+        setAuthActionState('redirecting');
+        setAuthActionMessage('Redirecting you to your PCH PMS portal...');
+        const timer = window.setTimeout(() => {
+          window.location.replace(authActionParams.nextUrl);
+        }, 250);
+        return () => window.clearTimeout(timer);
+      }
+      setAuthActionState('error');
+      setAuthActionMessage(
+        'This security link is incomplete or has already been completed. You can sign in directly or request a new password reset link below.'
+      );
+      return;
+    }
+
     let active = true;
     const runAction = async () => {
       try {
-        if (authActionParams.mode === 'verifyEmail' || authActionParams.mode === 'recoverEmail') {
+        if (
+          authActionParams.mode === 'verifyEmail' ||
+          authActionParams.mode === 'recoverEmail' ||
+          authActionParams.mode === 'verifyAndChangeEmail'
+        ) {
           await applyActionCode(auth, authActionParams.oobCode);
           await auth.currentUser?.reload().catch(() => undefined);
           if (!active) return;
           setAuthActionState('success');
           setAuthActionMessage(
             authActionParams.mode === 'verifyEmail'
-              ? 'Your PCHPMS email address is now verified. You may sign in to your workspace.'
-              : 'Your email recovery has been completed.'
+              ? 'Your PCH PMS email address is now verified. You may sign in to your property workspace.'
+              : authActionParams.mode === 'verifyAndChangeEmail'
+                ? 'Your PCH PMS email address update has been confirmed.'
+                : 'Your email recovery has been completed.'
           );
         } else if (authActionParams.mode === 'resetPassword') {
           const emailForReset = await verifyPasswordResetCode(auth, authActionParams.oobCode);
           if (!active) return;
           setAuthActionEmail(emailForReset);
+          setRecoveryEmail(emailForReset);
           setAuthActionState('ready_reset');
-          setAuthActionMessage('Choose a strong new password for your PCHPMS account.');
+          setAuthActionMessage('Choose a strong new password for your PCH PMS account.');
         } else {
           if (!active) return;
           setAuthActionState('error');
-          setAuthActionMessage('Unsupported authentication link.');
+          setAuthActionMessage('This authentication link is not valid. Please request a fresh link below.');
         }
       } catch (err) {
         if (!active) return;
@@ -1295,10 +1351,15 @@ export default function App() {
       await cred.user.getIdToken(true).catch(() => undefined);
       if (!cred.user.emailVerified) {
         const actionSettings = getPchActionCodeSettings();
-        await sendEmailVerification(cred.user, actionSettings).catch(() => undefined);
+        await sendEmailVerification(cred.user, actionSettings).catch(() =>
+          sendEmailVerification(cred.user, {
+            url: CENTRAL_AUTH_ORIGIN,
+            handleCodeInApp: false,
+          }).catch(() => undefined)
+        );
         await signOut(auth);
         setAuthNotice(
-          `Please verify your email address (${cred.user.email}). We sent a PCHPMS verification link to your inbox (and spam folder) — click it and sign in again.`
+          `Please verify your email address (${cred.user.email}). We sent a PCH PMS verification link to your inbox (and spam folder) — click it and sign in again.`
         );
       }
     } catch (err) {
@@ -1367,48 +1428,89 @@ export default function App() {
       : 'noindex, nofollow, noarchive, nosnippet';
   }, [portalMode, activePropertyForRole?.name, authActionParams, hostContext.kind]);
 
-  // Branded PCHPMS /auth-action view for email verification & password resets (no firebaseapp.com UI)
+  // Branded PCH PMS /auth-action view for email verification & password resets
   if (authActionParams) {
+    const returnHref = authActionParams.nextUrl || CENTRAL_AUTH_ORIGIN;
+    let returnDomainLabel = 'PCH PMS';
+    try {
+      returnDomainLabel = new URL(returnHref).hostname;
+    } catch {
+      returnDomainLabel = 'PCH PMS';
+    }
+
     const handleCompletePasswordReset = async (e: React.FormEvent) => {
       e.preventDefault();
+      setAuthActionFormError(null);
       if (newResetPassword.length < 6) {
-        setAuthActionMessage('Password must be at least 6 characters.');
+        setAuthActionFormError('Password must be at least 6 characters.');
         return;
       }
       if (newResetPassword !== confirmResetPassword) {
-        setAuthActionMessage('Passwords do not match.');
+        setAuthActionFormError('Passwords do not match. Please re-enter both fields.');
         return;
       }
       setAuthActionSubmitting(true);
       try {
         await confirmPasswordReset(auth, authActionParams.oobCode, newResetPassword);
         setAuthActionState('success');
-        setAuthActionMessage('Your new password has been saved. You can now sign in to your PCHPMS portal.');
+        setAuthActionMessage(
+          'Your new password has been saved. You can now sign in to your PCH PMS portal.'
+        );
       } catch (err) {
-        setAuthActionState('error');
-        setAuthActionMessage(formatAuthErrorMessage(err));
+        const code = (err as { code?: string })?.code || '';
+        if (code === 'auth/weak-password') {
+          setAuthActionFormError(formatAuthErrorMessage(err));
+        } else {
+          setAuthActionState('error');
+          setAuthActionMessage(formatAuthErrorMessage(err));
+        }
       } finally {
         setAuthActionSubmitting(false);
       }
     };
 
-    const returnHref =
-      authActionParams.nextUrl ||
-      (typeof window !== 'undefined' ? `${window.location.origin}/` : '/');
+    const handleRequestFreshResetLink = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setRecoveryError(null);
+      setRecoveryStatus(null);
+      const cleanEmail = recoveryEmail.trim().toLowerCase();
+      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        setRecoveryError('Please enter a valid work email address.');
+        return;
+      }
+      setRecoverySubmitting(true);
+      try {
+        await sendBrandedPasswordResetWorkflow(cleanEmail, returnHref);
+        setRecoveryStatus(
+          `A fresh PCH PMS password reset link has been sent to ${cleanEmail}. Check your inbox or spam folder.`
+        );
+      } catch (err) {
+        setRecoveryError(formatAuthErrorMessage(err));
+      } finally {
+        setRecoverySubmitting(false);
+      }
+    };
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#020d26] via-[#08245e] to-[#03153a] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-[#020d26] via-[#08245e] to-[#03153a] flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-white/20 overflow-hidden">
           <div className="h-1.5 bg-gradient-to-r from-[#062052] via-[#f5b800] to-[#062052]" />
           <div className="p-7 space-y-5 text-center">
-            <div className="w-12 h-12 rounded-2xl bg-[#062052]/5 border border-[#062052]/15 flex items-center justify-center mx-auto">
-              {authActionState === 'success' ? (
-                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-              ) : authActionState === 'error' ? (
-                <AlertTriangle className="w-6 h-6 text-rose-600" />
-              ) : (
-                <Lock className="w-6 h-6 text-[#062052]" />
-              )}
+            <div className="flex flex-col items-center gap-2">
+              <img
+                src="/assets/media/brand/pch-pms-logo.png"
+                alt="PCH PMS"
+                className="h-11 w-11 rounded-xl object-contain bg-slate-50 border border-slate-200 p-1"
+              />
+              <div className="w-10 h-10 rounded-2xl bg-[#062052]/5 border border-[#062052]/15 flex items-center justify-center">
+                {authActionState === 'success' ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                ) : authActionState === 'error' ? (
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                ) : (
+                  <Lock className="w-5 h-5 text-[#062052]" />
+                )}
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -1418,43 +1520,95 @@ export default function App() {
               <h1 className="font-display text-xl font-bold text-[#062052]">
                 {authActionParams.mode === 'resetPassword'
                   ? 'Reset Account Password'
-                  : 'Email Verification'}
+                  : authActionParams.mode === 'verifyEmail'
+                    ? 'Email Verification'
+                    : authActionState === 'redirecting'
+                      ? 'Returning to Portal'
+                      : 'Account Security'}
               </h1>
               {authActionEmail && (
                 <p className="text-xs font-mono-tabular text-slate-600">{authActionEmail}</p>
               )}
+              {returnDomainLabel && (
+                <p className="text-[11px] font-mono-tabular text-slate-400">{returnDomainLabel}</p>
+              )}
             </div>
 
             {authActionState === 'ready_reset' ? (
-              <form onSubmit={handleCompletePasswordReset} className="space-y-3 text-left">
+              <form onSubmit={handleCompletePasswordReset} className="space-y-3.5 text-left">
                 <p className="text-xs text-slate-600 text-center">{authActionMessage}</p>
+                {authActionFormError && (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800"
+                  >
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{authActionFormError}</span>
+                  </div>
+                )}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-800 mb-1">
                     New Password
                   </label>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={newResetPassword}
-                    onChange={(e) => setNewResetPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
-                    className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showNewResetPassword ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                      value={newResetPassword}
+                      onChange={(e) => {
+                        setNewResetPassword(e.target.value);
+                        if (authActionFormError) setAuthActionFormError(null);
+                      }}
+                      placeholder="Minimum 6 characters"
+                      className="w-full pl-3.5 pr-10 py-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-[#062052]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewResetPassword((v) => !v)}
+                      aria-label={showNewResetPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
+                    >
+                      {showNewResetPassword ? (
+                        <Eye className="w-4 h-4" />
+                      ) : (
+                        <EyeOff className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-slate-800 mb-1">
                     Confirm New Password
                   </label>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={confirmResetPassword}
-                    onChange={(e) => setConfirmResetPassword(e.target.value)}
-                    placeholder="Re-enter password"
-                    className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showConfirmResetPassword ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                      value={confirmResetPassword}
+                      onChange={(e) => {
+                        setConfirmResetPassword(e.target.value);
+                        if (authActionFormError) setAuthActionFormError(null);
+                      }}
+                      placeholder="Re-enter password"
+                      className="w-full pl-3.5 pr-10 py-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-[#062052]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmResetPassword((v) => !v)}
+                      aria-label={showConfirmResetPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
+                    >
+                      {showConfirmResetPassword ? (
+                        <Eye className="w-4 h-4" />
+                      ) : (
+                        <EyeOff className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <button
                   type="submit"
@@ -1467,18 +1621,55 @@ export default function App() {
             ) : (
               <div className="space-y-4">
                 <p className="text-xs text-slate-600 leading-relaxed">{authActionMessage}</p>
+
+                {authActionState === 'error' && (
+                  <form
+                    onSubmit={handleRequestFreshResetLink}
+                    className="space-y-2.5 text-left p-3.5 rounded-xl bg-slate-50 border border-slate-200"
+                  >
+                    <p className="text-[11px] font-bold text-slate-800">
+                      Need a new password reset link?
+                    </p>
+                    <input
+                      type="email"
+                      required
+                      value={recoveryEmail}
+                      onChange={(e) => setRecoveryEmail(e.target.value)}
+                      placeholder="Enter your work email"
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-[#062052]"
+                    />
+                    {recoveryError && (
+                      <p className="text-[11px] text-rose-700 font-medium">{recoveryError}</p>
+                    )}
+                    {recoveryStatus && (
+                      <p className="text-[11px] text-emerald-700 font-medium">{recoveryStatus}</p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={recoverySubmitting}
+                      className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg cursor-pointer disabled:opacity-60"
+                    >
+                      {recoverySubmitting ? 'Sending...' : 'Send Fresh Reset Link'}
+                    </button>
+                  </form>
+                )}
+
                 {authActionState !== 'loading' && (
                   <a
                     href={returnHref}
-                    className="inline-flex items-center justify-center w-full py-2.5 px-4 bg-[#062052] hover:bg-[#082c70] text-white text-xs font-semibold rounded-xl"
+                    className="inline-flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-[#062052] hover:bg-[#082c70] text-white text-xs font-semibold rounded-xl"
                   >
-                    Continue to PCH PMS Sign In
+                    <span>Continue to {returnDomainLabel} Sign In</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </a>
                 )}
               </div>
             )}
           </div>
         </div>
+        <p className="mt-4 text-[11px] text-white/75 tracking-wide">
+          Powered by <strong className="text-white font-semibold">PCH PMS</strong> · pchpms.com
+        </p>
       </div>
     );
   }
@@ -1540,7 +1731,10 @@ export default function App() {
               type="button"
               onClick={async () => {
                 await sendEmailVerification(user, getPchActionCodeSettings()).catch(() =>
-                  sendEmailVerification(user).catch(() => undefined)
+                  sendEmailVerification(user, {
+                    url: CENTRAL_AUTH_ORIGIN,
+                    handleCodeInApp: false,
+                  }).catch(() => undefined)
                 );
                 notify(`Verification email resent to ${user.email}`);
               }}
@@ -2304,7 +2498,8 @@ export default function App() {
                   onOpenSessionMonitor={() => handleSelectSection('staff_sessions')}
                   onOpenShiftDailyReport={() => handleSelectSection('shift_daily_report')}
                   onSendPasswordSetupEmail={async (targetEmail) => {
-                    await sendBrandedPasswordResetWorkflow(targetEmail);
+                    const targetPortal = getPortalUrl('richgates-admin', activeProperty);
+                    await sendBrandedPasswordResetWorkflow(targetEmail, targetPortal);
                     notify(`Password setup link sent to ${targetEmail}`);
                   }}
                   onNotify={notify}
@@ -2330,7 +2525,8 @@ export default function App() {
                   onNotify={notify}
                   onNavigateSection={handleSelectSection}
                   onSendPasswordSetupEmail={async (targetEmail) => {
-                    await sendBrandedPasswordResetWorkflow(targetEmail);
+                    const targetPortal = getPortalUrl('staff', activeProperty);
+                    await sendBrandedPasswordResetWorkflow(targetEmail, targetPortal);
                     notify(`Password setup link sent to ${targetEmail}`);
                   }}
                 />

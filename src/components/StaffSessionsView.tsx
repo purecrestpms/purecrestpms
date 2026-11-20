@@ -117,8 +117,8 @@ export const StaffSessionsView: React.FC<StaffSessionsViewProps> = ({
   const slug = getPropertySubdomainSlug(property);
   const staffDirectUrl = getPortalUrl('staff', property);
   const adminDirectUrl = getPortalUrl('richgates-admin', property);
-  const staffSubdomainUrl = `https://${slug}.${rootDomain}/login`;
-  const adminSubdomainUrl = `https://${slug}.${rootDomain}/admin`;
+  const staffSubdomainUrl = `https://${slug}.${rootDomain}/staff`;
+  const adminSubdomainUrl = `https://${slug}.${rootDomain}`;
 
   const portalLinks = [
     {

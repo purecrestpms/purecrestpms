@@ -17,9 +17,15 @@ export async function onRequest(context: CfPagesContext): Promise<Response> {
       ? rawSegments
       : '';
 
-  // Route any /__/auth/action link straight to our branded PCHPMS /auth-action handler
+  // Route any /__/auth/action link straight to our branded PCH PMS /auth-action handler
   if (subPath === 'auth/action' || subPath.startsWith('auth/action/')) {
-    return Response.redirect(`${reqUrl.origin}/auth-action${reqUrl.search}`, 302);
+    const sanitizedParams = new URLSearchParams(reqUrl.searchParams);
+    const continueUrl = sanitizedParams.get('continueUrl');
+    if (continueUrl && continueUrl.toLowerCase().includes('firebaseapp.com')) {
+      sanitizedParams.set('continueUrl', reqUrl.origin);
+    }
+    const qs = sanitizedParams.toString();
+    return Response.redirect(`${reqUrl.origin}/auth-action${qs ? `?${qs}` : ''}`, 302);
   }
 
   const targetUrl = `${UPSTREAM_AUTH_ORIGIN}/__/${subPath}${reqUrl.search}`;

@@ -23,19 +23,22 @@ The app automatically detects the subdomain and `/staff` path on startup:
 - `https://richgates.pchpms.com` -> **Richgates Property Admin Portal** (locked strictly to Richgates Apartments)
 - `https://richgates.pchpms.com/staff` -> **Richgates Staff Operations Portal** (and `<client>.pchpms.com/staff` for any future client property)
 
-### Setup Steps (Cloudflare + DNS + Authentication)
+### Setup Steps (Cloudflare + DNS + Branded Auth Links)
 1. **Cloudflare Pages Custom Domains**:
    - Open Cloudflare Dashboard -> **Workers & Pages** -> `pch-pms` -> **Custom domains** -> **Set up a custom domain**.
-   - Add `app.pchpms.com`, `admin.pchpms.com`, and `richgates.pchpms.com` (and each additional `<client>.pchpms.com`).
+   - Add `pchpms.com`, `app.pchpms.com`, `admin.pchpms.com`, and `richgates.pchpms.com` (and each additional `<client>.pchpms.com`).
 2. **DNS Records (`pchpms.com`)**:
    - Ensure Cloudflare DNS creates (or has) proxied **CNAME** records:
+     - `@` (`pchpms.com`) -> `pch-pms.pages.dev` (Proxied)
      - `app` -> `pch-pms.pages.dev` (Proxied)
      - `admin` -> `pch-pms.pages.dev` (Proxied)
      - `richgates` -> `pch-pms.pages.dev` (Proxied)
    - Set **SSL/TLS** encryption mode to **Full (strict)**. No extra DNS record is needed for `/staff` or `/auth-action`; Cloudflare Pages SPA routing (`public/_redirects`) and `functions/_middleware.ts` (`X-Robots-Tag: noindex, nofollow`) handle routing and search-engine exclusion automatically.
-3. **Authentication Authorized Domains**:
-   - Open **PCH Cloud Authentication -> Settings -> Authorized domains**.
-   - Add `pch-pms.pages.dev`, `app.pchpms.com`, `admin.pchpms.com`, and `richgates.pchpms.com` (plus each provisioned `<client>.pchpms.com` subdomain).
+3. **Branded Email Links & Authorized Domains (`pchpms.com`)**:
+   - In **Authentication -> Settings -> Authorized domains**, add `pchpms.com` (covers `app.pchpms.com`, `admin.pchpms.com`, and all `<client>.pchpms.com` subdomains).
+   - In **Project Settings -> General -> Public-facing name**, set the app name to **`PCH PMS`**.
+   - In **Authentication -> Templates** (Password reset, Email address verification, Email address change), click **Edit -> Customize action URL** and set it to **`https://pchpms.com/auth-action`**.
+   - In **Authentication -> Templates -> SMTP settings**, enable custom SMTP for **`noreply@pchpms.com`** with sender name **`PCH PMS`** so all password reset and verification emails send exclusively from `pchpms.com`.
 
 ## Live OTA Account iCal Sync (`/api/ical-proxy`)
 - The workspace includes `functions/api/ical-proxy.ts` (Cloudflare Pages Function) alongside `server.ts` (for Node/Express).
