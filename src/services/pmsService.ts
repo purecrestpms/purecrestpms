@@ -458,7 +458,10 @@ export async function createReservationWorkflow(params: {
           ? 'Paid'
           : 'Partial');
 
-  batch.set(doc(db, 'properties', params.property.id, 'reservations', resId), {
+  const reservationPayload: Omit<ReservationRecord, 'id'> & {
+    createdAt: ReturnType<typeof serverTimestamp>;
+    updatedAt: ReturnType<typeof serverTimestamp>;
+  } = {
     propertyId: params.property.id,
     bookingRef,
     roomId: roomIdVal,
@@ -523,7 +526,9 @@ export async function createReservationWorkflow(params: {
     ownerUid: uid,
     createdAt: now,
     updatedAt: now,
-  });
+  };
+
+  batch.set(doc(db, 'properties', params.property.id, 'reservations', resId), reservationPayload);
 
   if (params.room) {
     if (params.immediateCheckIn) {
@@ -574,8 +579,17 @@ export async function createReservationWorkflow(params: {
       details: `${params.guestName} · ${roomNumberVal} (${requestedTypeVal}) · ${params.nights} nights · ${params.channel}`,
       authorizedEmails: authEmails,
     }).catch(() => undefined);
+    return {
+      id: resId,
+      bookingRef,
+      reservation: {
+        id: resId,
+        ...(reservationPayload as Omit<ReservationRecord, 'id'>),
+      } as ReservationRecord,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `properties/${params.property.id}/reservations/${resId}`);
+    throw error;
   }
 }
 
@@ -592,6 +606,8 @@ export async function transitionReservationStatus(params: {
   collectCancellationFeeNow?: boolean;
   checkOutTime?: string;
   lateCheckoutFeeNgn?: number;
+  cautionDepositRefunded?: boolean;
+  allBillsSettledConfirmed?: boolean;
   actorRole: string;
 }) {
   const { uid } = getActorContext();
@@ -650,6 +666,17 @@ export async function transitionReservationStatus(params: {
       const cleanLateFee = Math.max(0, Math.round(params.lateCheckoutFeeNgn));
       resUpdates.lateCheckoutFeeNgn = cleanLateFee;
       resUpdates.lateCheckoutApplied = cleanLateFee > 0;
+    }
+    if (params.cautionDepositRefunded && params.reservation.cautionDepositEnabled) {
+      resUpdates.cautionDepositRefunded = true;
+      resUpdates.cautionDepositRefundedAtIso = new Date().toISOString();
+    }
+    if (params.allBillsSettledConfirmed) {
+      resUpdates.amountDueAtPropertyNgn = 0;
+      resUpdates.paymentConfirmed = true;
+      if (params.reservation.paymentCollectionMode !== 'ota_prepaid') {
+        resUpdates.paymentStatus = 'Paid';
+      }
     }
   }
 
@@ -3885,20 +3912,36 @@ export async function syncOtaChannelWorkflow(params: {
   }
 
   const byId = new Map<string, ReservationRecord>();
-  const byExternalUid = new Map<string, ReservationRecord>();
-  const byBookingRef = new Map<string, ReservationRecord>();
+  const byExternalUid = new Map<string, ReservationRecord[]>();
+  const byBookingRef = new Map<string, ReservationRecord[]>();
   for (const r of existingReservations) {
     byId.set(r.id, r);
     if (r.externalUid) {
-      byExternalUid.set(`${r.channel}::${r.externalUid}`, r);
+      const key = `${r.channel}::${r.externalUid}`;
+      const list = byExternalUid.get(key) || [];
+      list.push(r);
+      byExternalUid.set(key, list);
     }
     if (r.bookingRef) {
-      byBookingRef.set(`${r.channel}::${r.bookingRef.toUpperCase()}`, r);
+      const key = `${r.channel}::${r.bookingRef.toUpperCase()}`;
+      const list = byBookingRef.get(key) || [];
+      list.push(r);
+      byBookingRef.set(key, list);
     }
   }
 
-  const yesterdayIso = getLocalIsoDate(new Date(Date.now() - 86400000));
+  // Keep 7-day buffer so UTC vs local timezone differences never drop active or recent OTA bookings
+  const recentCutoffIso = getLocalIsoDate(new Date(Date.now() - 7 * 86400000));
   const todayIso = getLocalIsoDate();
+  const { email: actorEmail } = getActorContext();
+  const syncAuthEmails = Array.from(
+    new Set(
+      [
+        ...(params.property.authorizedEmails || []),
+        ...(actorEmail ? [actorEmail, actorEmail.toLowerCase()] : []),
+      ].filter(Boolean)
+    )
+  );
 
   const normalizedMappedRoom = (params.channel.roomNumber || '').trim();
   const isSpecificMappedRoom =
@@ -4207,34 +4250,61 @@ export async function syncOtaChannelWorkflow(params: {
 
     const uidSeed = ev.rawUid || ev.uid;
     let deterministicId = deterministicOtaReservationId(params.channel.id, uidSeed);
-    const byUidCandidate = byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`);
-    const byRefCandidate = ev.otaBookingRef
-      ? byBookingRef.get(`${resolvedChannelSource}::${ev.otaBookingRef.toUpperCase()}`)
-      : undefined;
+    const uidCandidates = byExternalUid.get(`${resolvedChannelSource}::${ev.uid}`) || [];
+    const refCandidates = ev.otaBookingRef
+      ? byBookingRef.get(`${resolvedChannelSource}::${ev.otaBookingRef.toUpperCase()}`) || []
+      : [];
     const belongsToThisChannelRoom = (cand?: ReservationRecord): boolean => {
       if (!cand) return false;
+      if (processedReservationIds.has(cand.id)) return false;
       if (mappedRoomsFromChannel.length === 0) return true;
       return mappedRoomsFromChannel.some((rm) =>
         matchesRoomRecord(rm, cand.roomId, cand.roomNumber)
       );
     };
-    const rawMatchedExisting =
-      byId.get(deterministicId) ||
-      (belongsToThisChannelRoom(byUidCandidate) ? byUidCandidate : undefined) ||
-      (belongsToThisChannelRoom(byRefCandidate) ? byRefCandidate : undefined);
+    const isDateConsistentForGenericEvent = (cand: ReservationRecord): boolean => {
+      if (ev.otaBookingRef && cand.bookingRef?.toUpperCase() === ev.otaBookingRef.toUpperCase()) {
+        return true;
+      }
+      // If event has no explicit confirmation code (e.g. "Airbnb (Not available)"), match same/overlapping dates
+      return (
+        cand.checkInDate === ev.checkInDate ||
+        cand.checkOutDate === ev.checkOutDate ||
+        datesOverlapIso(ev.checkInDate, ev.checkOutDate, cand.checkInDate, cand.checkOutDate)
+      );
+    };
+    const directIdCandidate = byId.get(deterministicId);
+    const matchedById =
+      directIdCandidate &&
+      !processedReservationIds.has(directIdCandidate.id) &&
+      (ev.otaBookingRef || isDateConsistentForGenericEvent(directIdCandidate))
+        ? directIdCandidate
+        : undefined;
+    const matchedByUid = uidCandidates.find(
+      (c) => belongsToThisChannelRoom(c) && (ev.otaBookingRef || isDateConsistentForGenericEvent(c))
+    );
+    const matchedByRef = refCandidates.find((c) => belongsToThisChannelRoom(c));
 
-    // Guard: never let two distinct VEVENTs in the same feed overwrite each other
-    let existing = rawMatchedExisting;
+    let existing = matchedById || matchedByUid || matchedByRef;
+
+    // Guard: never let two distinct VEVENTs in the same feed overwrite each other or collide on ID
+    if (!existing && directIdCandidate) {
+      deterministicId = deterministicOtaReservationId(
+        params.channel.id,
+        `${uidSeed}::${ev.checkInDate}::${ev.checkOutDate}`
+      );
+      const dateScopedCand = byId.get(deterministicId);
+      if (dateScopedCand && !processedReservationIds.has(dateScopedCand.id)) {
+        existing = dateScopedCand;
+      }
+    }
     if (existing && processedReservationIds.has(existing.id)) {
       deterministicId = deterministicOtaReservationId(
         params.channel.id,
         `${uidSeed}::${ev.checkInDate}::${ev.checkOutDate}`
       );
-      existing = byId.get(deterministicId);
-      if (existing && processedReservationIds.has(existing.id)) {
-        skipped += 1;
-        continue;
-      }
+      const retryCand = byId.get(deterministicId);
+      existing = retryCand && !processedReservationIds.has(retryCand.id) ? retryCand : undefined;
     }
     processedReservationIds.add(existing ? existing.id : deterministicId);
 
@@ -4466,8 +4536,8 @@ export async function syncOtaChannelWorkflow(params: {
       continue;
     }
 
-    // Do not import cancelled or historical bookings that checked out before yesterday
-    if (ev.cancelled || ev.checkOutDate < yesterdayIso) {
+    // Do not import cancelled or historical bookings that checked out more than 7 days ago
+    if (ev.cancelled || ev.checkOutDate < recentCutoffIso) {
       skipped += 1;
       continue;
     }
@@ -4529,7 +4599,7 @@ export async function syncOtaChannelWorkflow(params: {
       paymentMethod:
         importCollectionMode === 'ota_prepaid' ? 'OTA Platform Payout' : 'Bank Transfer',
       externalUid: ev.uid.slice(0, 160),
-      authorizedEmails: params.property.authorizedEmails,
+      authorizedEmails: syncAuthEmails,
       ownerUid: uid,
       createdAt: now,
       updatedAt: now,
@@ -4568,7 +4638,12 @@ export async function syncOtaChannelWorkflow(params: {
     };
     existingReservations.push(cachedRes);
     byId.set(deterministicId, cachedRes);
-    byExternalUid.set(`${resolvedChannelSource}::${ev.uid}`, cachedRes);
+    const uidKey = `${resolvedChannelSource}::${ev.uid}`;
+    byExternalUid.set(uidKey, [...(byExternalUid.get(uidKey) || []), cachedRes]);
+    if (safeBookingRef) {
+      const refKey = `${resolvedChannelSource}::${safeBookingRef.toUpperCase()}`;
+      byBookingRef.set(refKey, [...(byBookingRef.get(refKey) || []), cachedRes]);
+    }
     created += 1;
   }
 

@@ -30,6 +30,7 @@ import {
   Phone,
   PlaneLanding,
   Plus,
+  Printer,
   RefreshCw,
   Save,
   Search,
@@ -117,6 +118,7 @@ import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
 import { ReservationPaymentModal } from './ReservationPaymentModal';
+import { PaymentReceiptModal, PaymentReceiptMode } from './PaymentReceiptModal';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
 import { getAmenityIcon, RoomGallerySlider } from './RoomGallerySlider';
 
@@ -472,10 +474,18 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [changeRoomReason, setChangeRoomReason] = useState('');
   const [changeRoomError, setChangeRoomError] = useState<string | null>(null);
   const [checkoutTarget, setCheckoutTarget] = useState<ReservationRecord | null>(null);
+  const [confirmAllBillsSettled, setConfirmAllBillsSettled] = useState(false);
+  const [refundCautionOnCheckout, setRefundCautionOnCheckout] = useState(false);
   const [settlementMethod, setSettlementMethod] =
     useState<ReservationRecord['paymentMethod']>('Card POS');
   const [lateCheckoutTime, setLateCheckoutTime] = useState('14:00');
   const [lateCheckoutFeeDraft, setLateCheckoutFeeDraft] = useState<number>(0);
+  const [receiptModalState, setReceiptModalState] = useState<{
+    reservation: ReservationRecord;
+    mode: PaymentReceiptMode;
+    amountJustPaidNgn?: number;
+    settlementMethodOverride?: string;
+  } | null>(null);
 
   // Reservation Details, Folio & Editor Page state
   const [folioPayAmount, setFolioPayAmount] = useState<number>(0);
@@ -747,6 +757,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
     if (checkoutTarget) {
       setLateCheckoutTime(checkoutTarget.checkOutTime || '14:00');
       setLateCheckoutFeeDraft(checkoutTarget.lateCheckoutFeeNgn || 0);
+      setConfirmAllBillsSettled(false);
+      setRefundCautionOnCheckout(
+        Boolean(
+          checkoutTarget.cautionDepositEnabled &&
+            (checkoutTarget.cautionDepositCollectedNgn || 0) > 0 &&
+            !checkoutTarget.cautionDepositRefunded
+        )
+      );
     }
   }, [checkoutTarget?.id]);
 
@@ -1344,7 +1362,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
     setBusyId('booking');
     try {
-      await createReservationWorkflow({
+      const created = await createReservationWorkflow({
         property,
         room: targetRoom,
         requestedRoomType: resolvedRoomType,
@@ -1404,6 +1422,23 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         onGuestCheckedIn?.({
           guestName: trimmedGuest,
           roomNumber: targetRoom.roomNumber,
+          bookingRef: created.bookingRef,
+          reservationId: created.id,
+        });
+      } else if (
+        hotelPaidNgnVal > 0 ||
+        computedPayStatus === 'Paid' ||
+        computedPayStatus === 'Partial' ||
+        computedPayStatus === 'Paid to OTA'
+      ) {
+        setReceiptModalState({
+          reservation: created.reservation,
+          mode: 'reservation_payment',
+          amountJustPaidNgn: hotelPaidNgnVal,
+          settlementMethodOverride:
+            !isOtaSource && paymentMethod === 'OTA Platform Payout'
+              ? 'Bank Transfer'
+              : paymentMethod,
         });
       }
       setShowBookingForm(false);
@@ -1503,7 +1538,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
     setBusyId('walk_in');
     try {
-      await createReservationWorkflow({
+      const createdWalkIn = await createReservationWorkflow({
         property,
         room: { ...targetRoom, nightlyRateNgn: effectiveRate },
         requestedRoomType: targetRoom.roomType,
@@ -1540,6 +1575,8 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       onGuestCheckedIn?.({
         guestName: fullGuestName,
         roomNumber: targetRoom.roomNumber,
+        bookingRef: createdWalkIn.bookingRef,
+        reservationId: createdWalkIn.id,
       });
       setWalkInFirstName('');
       setWalkInLastName('');
@@ -1765,6 +1802,10 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   const handleConfirmCheckout = async () => {
     if (!checkoutTarget) return;
+    if (!confirmAllBillsSettled) {
+      setActionError('Please confirm that all bills are settled before completing check-out.');
+      return;
+    }
     const lateFee = Math.max(0, checkoutTarget.lateCheckoutFeeNgn || 0);
     const checkoutSummary = getReservationPaymentSummary(
       checkoutTarget,
@@ -1782,12 +1823,36 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         paymentMethod: settlementMethod,
         checkOutTime: checkoutTarget.checkOutTime,
         lateCheckoutFeeNgn: lateFee,
+        cautionDepositRefunded: refundCautionOnCheckout
+          ? true
+          : checkoutTarget.cautionDepositRefunded,
+        allBillsSettledConfirmed: true,
         actorRole,
       });
+      const updatedCheckoutRes: ReservationRecord = {
+        ...checkoutTarget,
+        status: 'checked_out',
+        paidNgn: (checkoutTarget.paidNgn || 0) + balanceDue,
+        hotelPaidNgn: (checkoutTarget.hotelPaidNgn ?? checkoutTarget.paidNgn ?? 0) + balanceDue,
+        amountDueAtPropertyNgn: 0,
+        paymentConfirmed: true,
+        paymentStatus:
+          checkoutSummary.paymentCollectionMode === 'ota_prepaid' ? 'Paid to OTA' : 'Paid',
+        paymentMethod: balanceDue > 0 ? settlementMethod : checkoutTarget.paymentMethod,
+        cautionDepositRefunded: refundCautionOnCheckout
+          ? true
+          : checkoutTarget.cautionDepositRefunded,
+      };
       onNotify(
-        `Checked out ${checkoutTarget.roomNumber} · Settled ${formatNgn(balanceDue)} & dispatched Housekeeping`
+        `Checked out ${checkoutTarget.roomNumber} · All bills settled (${formatNgn(balanceDue)}) & Housekeeping dispatched`
       );
       setCheckoutTarget(null);
+      setReceiptModalState({
+        reservation: updatedCheckoutRes,
+        mode: 'check_out',
+        amountJustPaidNgn: balanceDue,
+        settlementMethodOverride: balanceDue > 0 ? settlementMethod : checkoutTarget.paymentMethod,
+      });
     } catch (err) {
       setActionError(parseReadableError(err));
     } finally {
@@ -4688,6 +4753,25 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               <Eye className="w-3 h-3" />
                               <span>View</span>
                             </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setReceiptModalState({
+                                  reservation: res,
+                                  mode:
+                                    res.status === 'checked_out'
+                                      ? 'check_out'
+                                      : res.status === 'checked_in'
+                                        ? 'check_in'
+                                        : 'reservation_payment',
+                                })
+                              }
+                              title="Print or download official receipt"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <Printer className="w-3 h-3" />
+                              <span>Receipt</span>
+                            </button>
                             {canManageRooms && (
                               <button
                                 type="button"
@@ -6784,9 +6868,37 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                     paymentMethod: folioPayMethod,
                                     actorRole,
                                   });
+                                  const nextHotelPaid =
+                                    (activeFolioReservation.hotelPaidNgn ??
+                                      activeFolioReservation.paidNgn ??
+                                      0) + folioPayAmount;
+                                  const folioSummaryNow = getReservationPaymentSummary(
+                                    activeFolioReservation,
+                                    property.usdExchangeRateNgn
+                                  );
+                                  const nextDue = Math.max(0, folioSummaryNow.balance - folioPayAmount);
                                   onNotify(
                                     `Posted ${formatNgn(folioPayAmount)} direct payment to ${activeFolioReservation.bookingRef}`
                                   );
+                                  setReceiptModalState({
+                                    reservation: {
+                                      ...activeFolioReservation,
+                                      paidNgn: nextHotelPaid,
+                                      hotelPaidNgn: nextHotelPaid,
+                                      amountDueAtPropertyNgn: nextDue,
+                                      paymentConfirmed: nextDue <= 0,
+                                      paymentStatus:
+                                        nextDue <= 0
+                                          ? folioSummaryNow.paymentCollectionMode === 'ota_prepaid'
+                                            ? 'Paid to OTA'
+                                            : 'Paid'
+                                          : 'Partial',
+                                      paymentMethod: folioPayMethod,
+                                    },
+                                    mode: 'reservation_payment',
+                                    amountJustPaidNgn: folioPayAmount,
+                                    settlementMethodOverride: folioPayMethod,
+                                  });
                                 } catch (err) {
                                   setActionError(parseReadableError(err));
                                 } finally {
@@ -9204,22 +9316,74 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               </select>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            {/* Caution Deposit Refund Checkbox (if collected and not yet refunded) */}
+            {checkoutTarget.cautionDepositEnabled &&
+              (checkoutTarget.cautionDepositCollectedNgn || 0) > 0 &&
+              !checkoutTarget.cautionDepositRefunded && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={refundCautionOnCheckout}
+                    onChange={(e) => setRefundCautionOnCheckout(e.target.checked)}
+                    className="mt-0.5 rounded border-blue-300 text-blue-700"
+                  />
+                  <div>
+                    <span className="font-semibold text-blue-950 block">
+                      Mark Caution Deposit Refunded (
+                      {formatNgn(checkoutTarget.cautionDepositCollectedNgn || 0)})
+                    </span>
+                    <span className="text-[11px] text-blue-800">
+                      Room inspected — return refundable security deposit to guest at check-out.
+                    </span>
+                  </div>
+                </label>
+              )}
+
+            {/* Mandatory Confirm All Bills Settled Checkbox */}
+            <label
+              className={`flex items-start gap-2.5 p-3.5 rounded-xl border text-xs cursor-pointer transition-colors ${
+                confirmAllBillsSettled
+                  ? 'bg-emerald-50/80 border-emerald-300'
+                  : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={confirmAllBillsSettled}
+                onChange={(e) => setConfirmAllBillsSettled(e.target.checked)}
+                className="mt-0.5 rounded border-slate-300 text-emerald-700"
+              />
+              <div>
+                <span className="font-bold text-slate-900 block">
+                  Confirm all bills settled
+                </span>
+                <span className="text-[11px] text-slate-600">
+                  I verify all Room, POS / Restaurant, Late Check-Out &amp; incidental charges are
+                  accounted for and settled. A printable check-out receipt will open next.
+                </span>
+              </div>
+            </label>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setCheckoutTarget(null)}
-                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={busyId === checkoutTarget.id}
+                disabled={busyId === checkoutTarget.id || !confirmAllBillsSettled}
                 onClick={handleConfirmCheckout}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Complete Check-Out &amp; Post Ledger</span>
+                <span>
+                  {busyId === checkoutTarget.id
+                    ? 'Completing Check-Out…'
+                    : 'Complete Check-Out & Print Receipt'}
+                </span>
               </button>
             </div>
           </div>
@@ -9537,6 +9701,17 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
             />
           );
         })()}
+      {receiptModalState && (
+        <PaymentReceiptModal
+          property={property}
+          reservation={receiptModalState.reservation}
+          mode={receiptModalState.mode}
+          amountJustPaidNgn={receiptModalState.amountJustPaidNgn}
+          settlementMethodOverride={receiptModalState.settlementMethodOverride}
+          onClose={() => setReceiptModalState(null)}
+          onNotify={onNotify}
+        />
+      )}
     </div>
   );
 };

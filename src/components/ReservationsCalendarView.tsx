@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Layers,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   X,
@@ -19,6 +20,7 @@ import {
   createBlockedDate,
   createReservationWorkflow,
   deleteBlockedDate,
+  syncOtaChannelWorkflow,
   transitionReservationStatus,
 } from '../services/pmsService';
 import {
@@ -28,6 +30,7 @@ import {
   getRoomSection,
   GuestRecord,
   isOtaBookingChannel,
+  OtaIntegrationRecord,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
@@ -47,6 +50,7 @@ import {
 import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
+import { PaymentReceiptModal } from './PaymentReceiptModal';
 import { useCms } from '../context/CmsContext';
 
 interface ReservationsCalendarViewProps {
@@ -54,6 +58,7 @@ interface ReservationsCalendarViewProps {
   rooms: RoomRecord[];
   reservations: ReservationRecord[];
   blockedDates: BlockedDateRecord[];
+  otaChannels?: OtaIntegrationRecord[];
   guests?: GuestRecord[];
   actorRole: string;
   onNotify: (msg: string) => void;
@@ -90,6 +95,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   rooms,
   reservations,
   blockedDates,
+  otaChannels = [],
   guests = [],
   actorRole,
   onNotify,
@@ -102,6 +108,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
 
   const [calendarStart, setCalendarStart] = useState<string>(todayIso);
   const [gridDaysCount, setGridDaysCount] = useState<14 | 30 | 60>(30);
+  const [syncingOta, setSyncingOta] = useState(false);
+  const [receiptTarget, setReceiptTarget] = useState<{
+    reservation: ReservationRecord;
+    amountPaid: number;
+  } | null>(null);
   const [cellClickMode, setCellClickMode] = useState<'book' | 'block'>('book');
   const [searchQuery, setSearchQuery] = useState('');
   const [sectionFilter, setSectionFilter] = useState<'ALL' | RoomSection>('ALL');
@@ -590,7 +601,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     const nightsCount = diffNights(bookCheckIn, bookCheckOut);
     setBusyId('book');
     try {
-      await createReservationWorkflow({
+      const createdRes = await createReservationWorkflow({
         property,
         room,
         guestName: trimmedGuest,
@@ -632,6 +643,13 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         onGuestCheckedIn?.({
           guestName: trimmedGuest,
           roomNumber: room.roomNumber,
+          bookingRef: createdRes.bookingRef,
+          reservationId: createdRes.id,
+        });
+      } else if (Math.max(0, depositNgn) > 0 || paymentStatus === 'Paid' || paymentStatus === 'Partial') {
+        setReceiptTarget({
+          reservation: createdRes.reservation,
+          amountPaid: Math.max(0, depositNgn),
         });
       }
       setModalMode('none');
@@ -670,6 +688,53 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     }
   };
 
+  const connectedIcalChannels = useMemo(
+    () => otaChannels.filter((ch) => ch.connected && Boolean(ch.icalImportUrl?.trim())),
+    [otaChannels]
+  );
+
+  const handleSyncAllOtaNow = async () => {
+    if (syncingOta) return;
+    if (connectedIcalChannels.length === 0) {
+      onNotify('No connected OTA iCal links found. Connect Airbnb or Booking.com in Channel Manager.');
+      return;
+    }
+    setSyncingOta(true);
+    setCalendarNotice(null);
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalEvents = 0;
+    const failedNames: string[] = [];
+    try {
+      for (const ch of connectedIcalChannels) {
+        try {
+          const res = await syncOtaChannelWorkflow({
+            property,
+            channel: ch,
+            rooms,
+            actorRole,
+          });
+          totalCreated += res.created;
+          totalUpdated += res.updated;
+          totalEvents += res.totalEvents;
+        } catch {
+          failedNames.push(ch.channelName);
+        }
+      }
+      if (failedNames.length > 0) {
+        onNotify(
+          `Synced ${connectedIcalChannels.length - failedNames.length}/${connectedIcalChannels.length} OTA feeds (${totalEvents} events; ${totalCreated} new, ${totalUpdated} updated). Failed: ${failedNames.join(', ')}.`
+        );
+      } else {
+        onNotify(
+          `Synced ${connectedIcalChannels.length} OTA channel${connectedIcalChannels.length === 1 ? '' : 's'} (${totalEvents} events checked · ${totalCreated} new, ${totalUpdated} updated)`
+        );
+      }
+    } finally {
+      setSyncingOta(false);
+    }
+  };
+
   const sectionsToRender: RoomSection[] = ['Serviced Apartment', 'Hotel Rooms'];
 
   return (
@@ -686,6 +751,17 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          {connectedIcalChannels.length > 0 && (
+            <button
+              type="button"
+              disabled={syncingOta}
+              onClick={() => void handleSyncAllOtaNow()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-900 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingOta ? 'animate-spin' : ''}`} />
+              <span>{syncingOta ? 'Syncing OTA...' : `Sync OTA Now (${connectedIcalChannels.length})`}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => openQuickAction('block')}
@@ -1386,41 +1462,51 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
 
                           if (res) {
                             const hasConflict = matchingRes.length > 1 || Boolean(blk);
-                            const isCheckedIn = res.status === 'checked_in';
-                            const isPending = res.status === 'pending';
-                            const isOta = isOtaBookingChannel(res.channel);
-                            const cellColor = hasConflict
-                              ? 'bg-rose-600 ring-2 ring-rose-900/50'
-                              : isCheckedIn
-                                ? 'bg-emerald-600'
-                                : isPending
-                                  ? 'bg-violet-600'
-                                  : isOta
-                                    ? 'bg-orange-500'
-                                    : 'bg-amber-500';
-                            const sourceTag = isOta
-                              ? ` · ${formatBookingSourceLabel(res.channel)}`
-                              : '';
-                            const conflictSuffix =
-                              matchingRes.length > 1
-                                ? ` [OVERLAP: ${matchingRes.map((m) => m.bookingRef).join(' & ')}]`
-                                : blk
-                                  ? ` [OVERLAPS BLOCK: ${blk.category}]`
-                                  : '';
                             return (
                               <td
                                 key={day}
-                                title={`${res.bookingRef} · ${res.guestName} (${res.status}${sourceTag}) · ${normalizeIsoDate(res.checkInDate)} → ${normalizeIsoDate(res.checkOutDate)}${conflictSuffix} — Click to open Folio`}
                                 className="p-1 border-r border-slate-100 last:border-r-0 align-middle"
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
-                                  className={`w-full text-left px-1.5 py-2 rounded text-[10px] font-semibold truncate text-white cursor-pointer transition-opacity hover:opacity-90 ${cellColor}`}
-                                >
-                                  {res.guestName.split(' ')[0]}
-                                  {matchingRes.length > 1 ? ` (!+${matchingRes.length - 1})` : blk ? ' (!)' : ''}
-                                </button>
+                                <div className="space-y-1">
+                                  {matchingRes.map((item) => {
+                                    const isCheckedIn = item.status === 'checked_in';
+                                    const isPending = item.status === 'pending';
+                                    const isOta = isOtaBookingChannel(item.channel);
+                                    const cellColor = hasConflict
+                                      ? 'bg-rose-600 ring-1 ring-rose-900/50'
+                                      : isCheckedIn
+                                        ? 'bg-emerald-600'
+                                        : isPending
+                                          ? 'bg-violet-600'
+                                          : isOta
+                                            ? 'bg-orange-500'
+                                            : 'bg-amber-500';
+                                    const sourceTag = isOta
+                                      ? ` · ${formatBookingSourceLabel(item.channel)}`
+                                      : '';
+                                    const conflictSuffix =
+                                      matchingRes.length > 1
+                                        ? ` [OVERLAP: ${matchingRes.map((m) => m.bookingRef).join(' & ')}]`
+                                        : blk
+                                          ? ` [OVERLAPS BLOCK: ${blk.category}]`
+                                          : '';
+                                    return (
+                                      <button
+                                        key={item.id}
+                                        type="button"
+                                        title={`${item.bookingRef} · ${item.guestName} (${item.status}${sourceTag}) · ${normalizeIsoDate(item.checkInDate)} → ${normalizeIsoDate(item.checkOutDate)}${conflictSuffix} — Click to open Folio`}
+                                        onClick={() => onOpenReservationFolio?.(item.id, 'front_desk')}
+                                        className={`w-full text-left px-1.5 ${
+                                          matchingRes.length > 1 ? 'py-1' : 'py-2'
+                                        } rounded text-[10px] font-semibold truncate text-white cursor-pointer transition-opacity hover:opacity-90 ${cellColor}`}
+                                      >
+                                        {item.guestName.split(' ')[0]}
+                                        {isOta ? ` (${formatBookingSourceLabel(item.channel).slice(0, 3)})` : ''}
+                                        {blk ? ' (!)' : ''}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
                               </td>
                             );
                           }
@@ -2529,6 +2615,17 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             onNotify(`Verified & checked in ${info.guestName} into ${info.roomNumber}`);
             onGuestCheckedIn?.(info);
           }}
+        />
+      )}
+
+      {receiptTarget && (
+        <PaymentReceiptModal
+          property={property}
+          reservation={receiptTarget.reservation}
+          mode="reservation_payment"
+          amountJustPaidNgn={receiptTarget.amountPaid}
+          onClose={() => setReceiptTarget(null)}
+          onOpenFolio={(resId) => onOpenReservationFolio?.(resId, 'front_desk')}
         />
       )}
     </div>

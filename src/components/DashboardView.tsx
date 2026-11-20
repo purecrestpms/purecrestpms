@@ -7,17 +7,24 @@ import {
   Calendar,
   CalendarPlus,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CreditCard,
   Globe,
   ListFilter,
+  Lock,
   LogIn,
   LogOut,
+  RefreshCw,
+  ShoppingCart,
   TrendingUp,
   Wallet,
   Zap,
 } from 'lucide-react';
+import { syncOtaChannelWorkflow } from '../services/pmsService';
 import {
   AttendanceRecord,
+  BlockedDateRecord,
   formatBookingSourceLabel,
   formatNgn,
   getReservationPaymentSummary,
@@ -29,6 +36,7 @@ import {
   LicenseRecord,
   MaintenanceTicketRecord,
   NavSectionId,
+  OtaIntegrationRecord,
   PortalMode,
   PosOrderRecord,
   PropertyRecord,
@@ -56,6 +64,8 @@ interface DashboardViewProps {
   property: PropertyRecord;
   rooms: RoomRecord[];
   reservations: ReservationRecord[];
+  blockedDates?: BlockedDateRecord[];
+  otaChannels?: OtaIntegrationRecord[];
   guests?: GuestRecord[];
   userAccounts?: PropertyUserAccountRecord[];
   ledgerEntries?: LedgerEntryRecord[];
@@ -166,6 +176,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   property,
   rooms,
   reservations,
+  blockedDates = [],
+  otaChannels = [],
   ledgerEntries = [],
   posOrders,
   housekeepingTasks = [],
@@ -191,6 +203,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [perfRange, setPerfRange] = useState<'7d' | '14d' | '30d'>('7d');
   const todayIso = getLocalIsoDate();
   const yesterdayIso = addDaysIso(todayIso, -1);
+  const [dashCalStartIso, setDashCalStartIso] = useState<string>(todayIso);
+  const [dashCalDaysCount, setDashCalDaysCount] = useState<14 | 30>(14);
+  const [syncingOta, setSyncingOta] = useState(false);
   const sortedRooms = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
 
   // Preserve Staff View Dashboard
@@ -458,15 +473,102 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return inHouseGuests.filter((r) => normalizeIsoDate(r.checkOutDate) <= todayIso);
   }, [inHouseGuests, todayIso]);
 
-  // Recent Reservations (top 6 most recent active/upcoming stays)
+  // Recent & Upcoming Active Reservations (top 10 so synced OTA stays are clearly visible)
   const recentReservations = useMemo(() => {
     return [...reservations]
       .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
       .sort((a, b) =>
         normalizeIsoDate(b.checkInDate).localeCompare(normalizeIsoDate(a.checkInDate))
       )
-      .slice(0, 6);
+      .slice(0, 10);
   }, [reservations]);
+
+  // Dashboard Calendar Data (live synced with Reservations & OTA iCal feeds)
+  const dashCalDays = useMemo(() => {
+    return Array.from({ length: dashCalDaysCount }, (_, idx) => {
+      const iso = addDaysIso(dashCalStartIso, idx);
+      const d = new Date(`${iso}T00:00:00Z`);
+      return {
+        iso,
+        weekday: d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
+        dayNum: d.getUTCDate(),
+        monthShort: d.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }),
+        isToday: iso === todayIso,
+      };
+    });
+  }, [dashCalStartIso, dashCalDaysCount, todayIso]);
+
+  const activeCalendarReservations = useMemo(() => {
+    return reservations
+      .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
+      .sort((a, b) =>
+        normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
+      );
+  }, [reservations]);
+
+  const currentAndUpcomingReservations = useMemo(() => {
+    return activeCalendarReservations.filter((r) => {
+      const out = normalizeIsoDate(r.checkOutDate);
+      return r.status === 'checked_in' || out >= todayIso;
+    });
+  }, [activeCalendarReservations, todayIso]);
+
+  const channelSummaryCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of currentAndUpcomingReservations) {
+      const label = formatBookingSourceLabel(r.channel);
+      map.set(label, (map.get(label) || 0) + 1);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+  }, [currentAndUpcomingReservations]);
+
+  const connectedOtaWithFeed = useMemo(
+    () =>
+      otaChannels.filter(
+        (ch) => Boolean((ch.icalImportUrl || '').trim()) || ch.connected
+      ),
+    [otaChannels]
+  );
+
+  const handleDashboardSyncOta = async () => {
+    if (syncingOta) return;
+    const feedChannels = otaChannels.filter((ch) => Boolean((ch.icalImportUrl || '').trim()));
+    if (feedChannels.length === 0) {
+      onNavigate('ota_channels');
+      onNotify?.('No OTA iCal import feeds configured yet. Connect Airbnb or Booking.com in Channel Manager.');
+      return;
+    }
+    setSyncingOta(true);
+    let totalImported = 0;
+    let totalUpdated = 0;
+    let totalEvents = 0;
+    let failedCount = 0;
+    try {
+      for (const ch of feedChannels) {
+        try {
+          const result = await syncOtaChannelWorkflow({
+            property,
+            channel: ch,
+            rooms,
+            reservations,
+            actorRole,
+          });
+          totalImported += result.created;
+          totalUpdated += result.updated;
+          totalEvents += result.totalEvents;
+        } catch {
+          failedCount += 1;
+        }
+      }
+      onNotify?.(
+        failedCount > 0
+          ? `OTA sync finished with ${failedCount} feed warning(s): ${totalImported} new, ${totalUpdated} updated (${totalEvents} feed events).`
+          : `OTA calendars synced: ${totalImported} new booking(s), ${totalUpdated} updated across ${totalEvents} feed event(s).`
+      );
+    } finally {
+      setSyncingOta(false);
+    }
+  };
 
   // SVG geometry for Occupancy Trend Area Chart
   const trendSvg = useMemo(() => {
@@ -722,6 +824,266 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* 2c. Live Dashboard Reservations & OTA Availability Calendar */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-[#0b5d34]" />
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Reservations &amp; OTA Calendar
+              </h2>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold font-mono-tabular text-[#0b5d34]">
+                {currentAndUpcomingReservations.length} active/upcoming
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Live room tape synchronized with Direct, Airbnb, Booking.com &amp; blocked dates
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setDashCalStartIso((d) => addDaysIso(d, -7))}
+                className="p-1.5 rounded-md hover:bg-white text-slate-600 cursor-pointer"
+                aria-label="Previous week"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashCalStartIso(todayIso)}
+                className="px-2.5 py-1 rounded-md hover:bg-white font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashCalStartIso((d) => addDaysIso(d, 7))}
+                className="p-1.5 rounded-md hover:bg-white text-slate-600 cursor-pointer"
+                aria-label="Next week"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setDashCalDaysCount(14)}
+                className={`px-2 py-1 rounded-md font-semibold cursor-pointer ${
+                  dashCalDaysCount === 14 ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                14d
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashCalDaysCount(30)}
+                className={`px-2 py-1 rounded-md font-semibold cursor-pointer ${
+                  dashCalDaysCount === 30 ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                30d
+              </button>
+            </div>
+
+            {connectedOtaWithFeed.length > 0 && (
+              <button
+                type="button"
+                disabled={syncingOta}
+                onClick={handleDashboardSyncOta}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 disabled:opacity-60 text-blue-800 text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncingOta ? 'animate-spin' : ''}`} />
+                <span>{syncingOta ? 'Syncing OTA…' : 'Sync OTA Now'}</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onNavigate('calendar')}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <span>Full Calendar</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Channel Breakdown & Jump Chips so EVERY synced reservation (including future Airbnb stays) is 1-click reachable */}
+        {currentAndUpcomingReservations.length > 0 && (
+          <div className="px-5 py-2.5 bg-slate-50/70 border-b border-slate-100 space-y-2">
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
+                Synced Bookings:
+              </span>
+              {channelSummaryCounts.map(([chLabel, count]) => (
+                <span
+                  key={chLabel}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 font-semibold text-slate-700 font-mono-tabular"
+                >
+                  <span>{chLabel}:</span>
+                  <span className="text-[#0b5d34]">{count}</span>
+                </span>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+              {currentAndUpcomingReservations.slice(0, 12).map((res) => {
+                const isOta = isOtaBookingChannel(res.channel);
+                const rIn = normalizeIsoDate(res.checkInDate);
+                const roomDisp = getReservationRoomDisplay(res, rooms);
+                return (
+                  <button
+                    key={res.id}
+                    type="button"
+                    onClick={() => {
+                      if (rIn) setDashCalStartIso(rIn);
+                    }}
+                    onDoubleClick={() => onOpenReservationFolio(res.id, 'reservations')}
+                    title="Click to jump calendar to stay dates · Double-click to open folio"
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                      isOta
+                        ? 'bg-orange-50/90 border-orange-200 text-orange-900 hover:bg-orange-100'
+                        : 'bg-emerald-50/80 border-emerald-200 text-emerald-900 hover:bg-emerald-100'
+                    }`}
+                  >
+                    <span className="font-bold">
+                      {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'}
+                    </span>
+                    <span>·</span>
+                    <span className="max-w-[120px] truncate">{res.guestName}</span>
+                    <span className="font-mono-tabular opacity-80">
+                      ({res.checkInDate.slice(5)} → {res.checkOutDate.slice(5)})
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-white/80 text-[10px] font-bold">
+                      {formatBookingSourceLabel(res.channel)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Compact Live Tape Matrix */}
+        {sortedRooms.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500">
+            Add rooms to view your live availability calendar.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[11px] min-w-[760px]">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="sticky left-0 z-10 bg-slate-50 py-2.5 px-4 text-left font-bold text-slate-700 w-40 border-r border-slate-200">
+                    Room
+                  </th>
+                  {dashCalDays.map((day) => (
+                    <th
+                      key={day.iso}
+                      className={`py-2 px-1 text-center font-mono-tabular border-r border-slate-100 min-w-[46px] ${
+                        day.isToday ? 'bg-emerald-50 text-[#0b5d34]' : 'text-slate-600'
+                      }`}
+                    >
+                      <div className="text-[9px] uppercase font-semibold opacity-75">
+                        {day.weekday}
+                      </div>
+                      <div className="font-bold text-xs leading-tight">{day.dayNum}</div>
+                      <div className="text-[9px] opacity-60">{day.monthShort}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sortedRooms.map((room) => {
+                  const roomResList = activeCalendarReservations.filter((r) =>
+                    matchesRoomRecord(room, r.roomId, r.roomNumber)
+                  );
+                  const roomBlocks = blockedDates.filter(
+                    (b) =>
+                      b.roomId === room.id ||
+                      b.roomId === 'ALL' ||
+                      (b.roomNumber && b.roomNumber === room.roomNumber)
+                  );
+                  return (
+                    <tr key={room.id} className="hover:bg-slate-50/40">
+                      <td className="sticky left-0 z-10 bg-white py-2 px-4 border-r border-slate-200 whitespace-nowrap">
+                        <div className="font-bold text-slate-900">{room.roomNumber}</div>
+                        <div className="text-[10px] text-slate-500 truncate max-w-[130px]">
+                          {room.roomType}
+                        </div>
+                      </td>
+                      {dashCalDays.map((day) => {
+                        const matchingRes = roomResList.filter((r) => {
+                          const rIn = normalizeIsoDate(r.checkInDate);
+                          const rOutRaw = normalizeIsoDate(r.checkOutDate);
+                          const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+                          return rIn <= day.iso && day.iso < rOut;
+                        });
+                        const matchingBlock = roomBlocks.find((b) => {
+                          const bStart = normalizeIsoDate(b.startDate);
+                          const bEnd = normalizeIsoDate(b.endDate);
+                          return bStart <= day.iso && day.iso < (bEnd > bStart ? bEnd : addDaysIso(bStart, 1));
+                        });
+
+                        return (
+                          <td
+                            key={day.iso}
+                            className={`p-0.5 align-top border-r border-slate-100 ${
+                              day.isToday ? 'bg-emerald-50/30' : ''
+                            }`}
+                          >
+                            {matchingRes.length > 0 ? (
+                              <div className="space-y-0.5">
+                                {matchingRes.map((res) => {
+                                  const isStart = normalizeIsoDate(res.checkInDate) === day.iso;
+                                  const isOta = isOtaBookingChannel(res.channel);
+                                  const barColor =
+                                    res.status === 'checked_in'
+                                      ? 'bg-emerald-600 text-white'
+                                      : isOta
+                                        ? 'bg-orange-500 text-white'
+                                        : 'bg-sky-600 text-white';
+                                  return (
+                                    <button
+                                      key={res.id}
+                                      type="button"
+                                      onClick={() => onOpenReservationFolio(res.id, 'reservations')}
+                                      title={`${res.guestName} · ${formatBookingSourceLabel(res.channel)} · ${res.checkInDate} → ${res.checkOutDate} (${RESERVATION_STATUS_LABELS[res.status]})`}
+                                      className={`w-full block text-left px-1 py-1 rounded text-[9px] font-bold truncate transition-opacity hover:opacity-90 cursor-pointer ${barColor}`}
+                                    >
+                                      {isStart || day.iso === dashCalStartIso
+                                        ? res.guestName
+                                        : '\u00A0'}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : matchingBlock ? (
+                              <div
+                                title={`Blocked (${matchingBlock.category || 'Hold'}): ${matchingBlock.reason || 'Unavailable'}`}
+                                className="w-full px-1 py-1 rounded bg-slate-200 text-slate-600 text-[9px] font-semibold flex items-center justify-center"
+                              >
+                                <Lock className="w-2.5 h-2.5" />
+                              </div>
+                            ) : (
+                              <div className="h-6" />
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* 3. Middle Row: Booking Performance Bar Chart + Dark Green Quick Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Booking Performance */}
@@ -818,7 +1180,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <button
               type="button"
-              onClick={() => onNavigate('walk_in')}
+              onClick={() => onNavigate('arrivals')}
               className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
               <LogIn className="w-6 h-6 text-[#0b5d34]" />
@@ -836,13 +1198,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <button
               type="button"
-              onClick={() => onNavigate('accounting')}
+              onClick={() => onNavigate('pos_kitchen')}
               className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              <CreditCard className="w-6 h-6 text-[#0b5d34]" />
-              <span className="text-xs font-semibold leading-tight">Record Payment</span>
+              <ShoppingCart className="w-6 h-6 text-[#0b5d34]" />
+              <span className="text-xs font-semibold leading-tight">Point of Sale</span>
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('accounting')}
+            className="mt-3 w-full py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <CreditCard className="w-3.5 h-3.5 text-emerald-300" />
+            <span>Payments &amp; Ledger</span>
+          </button>
         </div>
       </div>
 
@@ -1079,8 +1449,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         onClick={() => onOpenReservationFolio(res.id, 'reservations')}
                         className="hover:bg-slate-50/80 transition-colors cursor-pointer"
                       >
-                        <td className="py-3 px-5 font-semibold text-slate-900 whitespace-nowrap">
-                          {res.guestName}
+                        <td className="py-3 px-5 whitespace-nowrap">
+                          <div className="font-semibold text-slate-900">{res.guestName}</div>
+                          <div className="text-[10px] font-medium text-slate-500">
+                            {formatBookingSourceLabel(res.channel)}
+                          </div>
                         </td>
                         <td className="py-3 px-3 font-mono-tabular text-slate-700 whitespace-nowrap">
                           {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'}

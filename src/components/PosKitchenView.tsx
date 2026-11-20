@@ -7,8 +7,8 @@ import {
   Pencil,
   Plus,
   Printer,
-  Receipt,
   ShoppingBag,
+  ShoppingCart,
   Trash2,
   UtensilsCrossed,
   X,
@@ -77,7 +77,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
   const categories = useMemo(() => {
     const present = Array.from(new Set(effectiveMenu.map((m) => m.category))).filter(Boolean);
-    return ['All', ...present];
+    const defaults = present.length === 0 ? ['Beverage', 'Food'] : [];
+    return ['All', ...present, ...defaults];
   }, [effectiveMenu]);
 
   // Cart & Order Builder state
@@ -104,7 +105,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   const [menuModalOpen, setMenuModalOpen] = useState(false);
   const [editingMenuItem, setEditingMenuItem] = useState<PosMenuItemRecord | null>(null);
   const [menuName, setMenuName] = useState('');
-  const [menuCategory, setMenuCategory] = useState<string>('Nigerian Kitchen');
+  const [menuCategory, setMenuCategory] = useState<string>('Beverage');
   const [menuPrice, setMenuPrice] = useState(5000);
   const [menuCost, setMenuCost] = useState(2500);
   const [menuPrep, setMenuPrep] = useState(15);
@@ -278,7 +279,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   const openAddMenuModal = () => {
     setEditingMenuItem(null);
     setMenuName('');
-    setMenuCategory('Nigerian Kitchen');
+    setMenuCategory('Beverage');
     setMenuPrice(5000);
     setMenuCost(2500);
     setMenuPrep(15);
@@ -827,7 +828,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           >
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <Receipt className="w-4 h-4 text-[#1c46be]" />
+                <ShoppingCart className="w-4 h-4 text-[#1c46be]" />
                 <h2 className="font-display text-base font-bold text-slate-900">Order</h2>
               </div>
               <span className="font-mono-tabular text-xs text-slate-500">

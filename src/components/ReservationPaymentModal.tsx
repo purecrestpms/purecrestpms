@@ -5,9 +5,11 @@ import {
   Clock,
   CreditCard,
   Globe,
+  Printer,
   Save,
   X,
 } from 'lucide-react';
+import { PaymentReceiptModal } from './PaymentReceiptModal';
 import { updateReservationPaymentWorkflow } from '../services/pmsService';
 import {
   formatChannelCurrency,
@@ -78,6 +80,11 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
 
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [savedReceipt, setSavedReceipt] = useState<{
+    reservation: ReservationRecord;
+    amountJustPaidNgn: number;
+    methodOverride?: string;
+  } | null>(null);
 
   const effectiveCollectionMode: OtaPaymentCollectionMode = isOtaChannel
     ? paymentCollectionMode
@@ -167,18 +174,23 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
     const safePaymentStatus: PaymentStatusLabel =
       !isOtaChannel && paymentStatus === 'Paid to OTA' ? 'Paid' : paymentStatus;
     try {
+      const effectiveMethod =
+        !isOtaChannel && paymentMethod === 'OTA Platform Payout'
+          ? 'Bank Transfer'
+          : paymentMethod;
+      const cleanDue = Math.max(0, Math.round(amountDueAtPropertyNgn));
+      const cleanHotelPaid = Math.max(0, Math.round(hotelPaidNgn));
+      const cleanOtaPaid = isCollectedByOta ? Math.max(0, Math.round(otaPaidNgn)) : 0;
+
       await updateReservationPaymentWorkflow({
         property,
         reservation,
         paymentCollectionMode: effectiveCollectionMode,
         paymentStatus: safePaymentStatus,
-        amountDueAtPropertyNgn: Math.max(0, Math.round(amountDueAtPropertyNgn)),
-        otaPaidNgn: isCollectedByOta ? Math.max(0, Math.round(otaPaidNgn)) : 0,
-        hotelPaidNgn: Math.max(0, Math.round(hotelPaidNgn)),
-        paymentMethod:
-          !isOtaChannel && paymentMethod === 'OTA Platform Payout'
-            ? 'Bank Transfer'
-            : paymentMethod,
+        amountDueAtPropertyNgn: cleanDue,
+        otaPaidNgn: cleanOtaPaid,
+        hotelPaidNgn: cleanHotelPaid,
+        paymentMethod: effectiveMethod,
         otaPayoutStatus: isCollectedByOta ? otaPayoutStatus : 'pending',
         expectedPayoutNgn: Math.max(0, Math.round(expectedPayoutNgn)),
         actualPayoutReceivedNgn: effectiveActualPayout,
@@ -195,7 +207,30 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
           ? `Payment settings updated for ${reservation.bookingRef} (${formatPaymentCollectionLabel(effectiveCollectionMode)} · ${safePaymentStatus}).`
           : `Payment settings updated for ${reservation.bookingRef} (${safePaymentStatus}).`
       );
-      onClose();
+
+      const updatedReservationSnapshot: ReservationRecord = {
+        ...reservation,
+        paymentCollectionMode: effectiveCollectionMode,
+        paymentStatus: safePaymentStatus,
+        amountDueAtPropertyNgn: cleanDue,
+        otaPaidNgn: cleanOtaPaid,
+        paidNgn: cleanHotelPaid,
+        hotelPaidNgn: cleanHotelPaid,
+        paymentMethod: effectiveMethod,
+        paymentConfirmed:
+          safePaymentStatus === 'Paid' ||
+          safePaymentStatus === 'Paid to OTA' ||
+          cleanDue <= 0,
+        otaPayoutStatus: isCollectedByOta ? otaPayoutStatus : 'pending',
+        expectedPayoutNgn: Math.max(0, Math.round(expectedPayoutNgn)),
+        actualPayoutReceivedNgn: effectiveActualPayout,
+      };
+      const deltaPaid = Math.max(0, cleanHotelPaid - initialSummary.hotelPaidAmount);
+      setSavedReceipt({
+        reservation: updatedReservationSnapshot,
+        amountJustPaidNgn: deltaPaid > 0 ? deltaPaid : cleanHotelPaid,
+        methodOverride: effectiveMethod,
+      });
     } catch (err) {
       setErrorMsg(
         err instanceof Error ? err.message : 'Unable to save payment settings.'
@@ -204,6 +239,20 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
       setSaving(false);
     }
   };
+
+  if (savedReceipt) {
+    return (
+      <PaymentReceiptModal
+        property={property}
+        reservation={savedReceipt.reservation}
+        mode="reservation_payment"
+        amountJustPaidNgn={savedReceipt.amountJustPaidNgn}
+        settlementMethodOverride={savedReceipt.methodOverride}
+        onClose={onClose}
+        onNotify={onNotify}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 overflow-y-auto">
@@ -606,22 +655,38 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
         </div>
 
         {/* Footer Buttons */}
-        <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-200">
           <button
             type="button"
-            onClick={onClose}
-            className="h-9 px-4 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer whitespace-nowrap shrink-0"
+            onClick={() =>
+              setSavedReceipt({
+                reservation,
+                amountJustPaidNgn: initialSummary.hotelPaidAmount,
+                methodOverride: reservation.paymentMethod,
+              })
+            }
+            className="h-9 px-3.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
           >
-            Cancel
+            <Printer className="w-3.5 h-3.5 text-slate-500" />
+            <span>Print Receipt</span>
           </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="h-9 px-4 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] disabled:opacity-60 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <Save className="w-3.5 h-3.5" />
-            {saving ? 'Saving Payment…' : 'Save Payment Settings'}
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-9 px-4 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer whitespace-nowrap shrink-0"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="h-9 px-4 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] disabled:opacity-60 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <Save className="w-3.5 h-3.5" />
+              {saving ? 'Saving Payment…' : 'Save & Print Receipt'}
+            </button>
+          </div>
         </div>
       </form>
     </div>

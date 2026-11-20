@@ -26,6 +26,7 @@ import {
   Mail,
   Megaphone,
   Menu,
+  Printer,
   RefreshCw,
   ShieldCheck,
   X,
@@ -45,6 +46,7 @@ import { GuestsDirectoryView } from './components/GuestsDirectoryView';
 import { HelpDocsTrainingView } from './components/HelpDocsTrainingView';
 import { HousekeepingMaintenanceView } from './components/HousekeepingMaintenanceView';
 import { InvoicesView } from './components/InvoicesView';
+import { PaymentReceiptModal } from './components/PaymentReceiptModal';
 import { PchAdminDashboardView } from './components/PchAdminDashboardView';
 import { PortalGateway } from './components/PortalGateway';
 import { PosKitchenView } from './components/PosKitchenView';
@@ -218,9 +220,41 @@ function detectInitialPortal(): PortalMode {
   if (typeof window === 'undefined') return 'richgates-admin';
   const hostContext = getHostPortalContext(window.location.hostname);
   const path = window.location.pathname.toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  const p = params.get('portal')?.toLowerCase();
 
-  // Strict production domain separation
+  // Production domain separation with explicit portal path support
   if (hostContext.kind === 'public_marketing') {
+    if (
+      p === 'pch-admin' ||
+      path === '/pch-admin' ||
+      path.startsWith('/pch-admin/') ||
+      path === '/superadmin' ||
+      path.startsWith('/superadmin/')
+    ) {
+      return 'pch-admin';
+    }
+    if (
+      p === 'staff' ||
+      p === 'employee' ||
+      p === 'login' ||
+      path === '/login' ||
+      path.startsWith('/login/') ||
+      path === '/staff' ||
+      path.startsWith('/staff/') ||
+      path === '/employee' ||
+      path.startsWith('/employee/')
+    ) {
+      return 'staff';
+    }
+    if (
+      p === 'richgates-admin' ||
+      p === 'admin' ||
+      path === '/admin' ||
+      path.startsWith('/admin/')
+    ) {
+      return 'richgates-admin';
+    }
     return 'home';
   }
   if (hostContext.kind === 'super_admin') {
@@ -241,8 +275,6 @@ function detectInitialPortal(): PortalMode {
   }
 
   // Preview / localhost hosts allow explicit ?portal= or path selection
-  const params = new URLSearchParams(window.location.search);
-  const p = params.get('portal')?.toLowerCase();
   if (p === 'home' || p === 'marketing' || p === 'app') return 'home';
   if (p === 'pch-admin') return 'pch-admin';
   if (p === 'richgates-admin' || p === 'admin' || p === 'richgates' || p === 'richgates-login') {
@@ -279,11 +311,66 @@ function detectInitialPortal(): PortalMode {
   return 'richgates-admin';
 }
 
+const SECTION_ROUTE_ALIASES: Record<string, NavSectionId> = {
+  dashboard: 'dashboard',
+  rooms: 'rooms',
+  calendar: 'calendar',
+  reservations: 'reservations',
+  arrivals: 'arrivals',
+  'check-in': 'arrivals',
+  checkin: 'arrivals',
+  'in-house': 'in_house',
+  inhouse: 'in_house',
+  checkout: 'in_house',
+  'check-out': 'in_house',
+  'walk-in': 'walk_in',
+  walkin: 'walk_in',
+  'front-desk': 'front_desk',
+  frontdesk: 'front_desk',
+  pos: 'pos_kitchen',
+  'point-of-sale': 'pos_kitchen',
+  kitchen: 'pos_kitchen',
+  payments: 'accounting',
+  accounting: 'accounting',
+  invoices: 'invoices',
+  guests: 'guests',
+  housekeeping: 'housekeeping',
+  maintenance: 'maintenance',
+  channels: 'ota_channels',
+  'channel-manager': 'ota_channels',
+  ota: 'ota_channels',
+  reports: 'reports',
+  settings: 'profile',
+  profile: 'profile',
+  inventory: 'inventory',
+  procurement: 'procurement',
+  staff: 'staff',
+  users: 'user_management',
+  notifications: 'messages',
+  messages: 'messages',
+};
+
 function detectInitialSection(): NavSectionId {
   if (typeof window === 'undefined') return 'dashboard';
   const params = new URLSearchParams(window.location.search);
-  const page = params.get('page') as NavSectionId | null;
-  if (page && VALID_SECTIONS.includes(page)) return page;
+  const rawPage = (params.get('page') || '').trim().toLowerCase();
+  if (rawPage) {
+    if (VALID_SECTIONS.includes(rawPage as NavSectionId)) return rawPage as NavSectionId;
+    if (SECTION_ROUTE_ALIASES[rawPage]) return SECTION_ROUTE_ALIASES[rawPage];
+  }
+  const pathSegments = window.location.pathname
+    .toLowerCase()
+    .split('/')
+    .filter(Boolean);
+  const lastSegment = pathSegments[pathSegments.length - 1] || '';
+  if (lastSegment) {
+    if (VALID_SECTIONS.includes(lastSegment as NavSectionId)) {
+      return lastSegment as NavSectionId;
+    }
+    if (SECTION_ROUTE_ALIASES[lastSegment]) {
+      return SECTION_ROUTE_ALIASES[lastSegment];
+    }
+  }
   return 'dashboard';
 }
 
@@ -382,6 +469,7 @@ export default function App() {
     bookingRef?: string;
     reservationId?: string;
   } | null>(null);
+  const [checkInReceiptTarget, setCheckInReceiptTarget] = useState<ReservationRecord | null>(null);
   const [icalViewRoom, setIcalViewRoom] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
@@ -2066,6 +2154,8 @@ export default function App() {
                   property={activeProperty}
                   rooms={rooms}
                   reservations={reservations}
+                  blockedDates={blockedDates}
+                  otaChannels={otaChannels}
                   guests={guests}
                   ledgerEntries={ledgerEntries}
                   posOrders={posOrders}
@@ -2106,6 +2196,7 @@ export default function App() {
                   rooms={rooms}
                   reservations={reservations}
                   blockedDates={blockedDates}
+                  otaChannels={otaChannels}
                   guests={guests}
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
@@ -2604,7 +2695,64 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center justify-center gap-2.5 pt-1">
+            <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+              {activeProperty && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const matchedRes =
+                      (checkedInPopup.reservationId
+                        ? reservations.find((r) => r.id === checkedInPopup.reservationId)
+                        : undefined) ||
+                      (checkedInPopup.bookingRef
+                        ? reservations.find((r) => r.bookingRef === checkedInPopup.bookingRef)
+                        : undefined) ||
+                      reservations.find(
+                        (r) =>
+                          r.status === 'checked_in' &&
+                          r.guestName.toLowerCase() === checkedInPopup.guestName.toLowerCase() &&
+                          r.roomNumber === checkedInPopup.roomNumber
+                      );
+                    const today = new Date().toISOString().slice(0, 10);
+                    const receiptRecord: ReservationRecord = matchedRes || {
+                      id: checkedInPopup.reservationId || `chk-${Date.now()}`,
+                      propertyId: activeProperty.id,
+                      bookingRef: checkedInPopup.bookingRef || 'CHECK-IN',
+                      guestId: '',
+                      guestName: checkedInPopup.guestName,
+                      guestPhone: '',
+                      guestEmail: '',
+                      roomId: '',
+                      roomNumber: checkedInPopup.roomNumber,
+                      requestedRoomType: 'Suite',
+                      checkInDate: today,
+                      checkOutDate: today,
+                      nights: 1,
+                      adults: 1,
+                      children: 0,
+                      channel: 'Direct Walk-In',
+                      status: 'checked_in',
+                      nightlyRateNgn: 0,
+                      roomChargesNgn: 0,
+                      posChargesNgn: 0,
+                      paidNgn: 0,
+                      hotelPaidNgn: 0,
+                      paymentMethod: 'Cash NGN',
+                      paymentConfirmed: true,
+                      idVerified: true,
+                      keyIssued: true,
+                      authorizedEmails: [],
+                      ownerUid: '',
+                    };
+                    setCheckedInPopup(null);
+                    setCheckInReceiptTarget(receiptRecord);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Receipt</span>
+                </button>
+              )}
               {checkedInPopup.reservationId && (
                 <button
                   type="button"
@@ -2613,7 +2761,7 @@ export default function App() {
                     setCheckedInPopup(null);
                     handleOpenReservationFolio(resId, 'front_desk');
                   }}
-                  className="px-4 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg cursor-pointer"
+                  className="px-4 py-2 text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                 >
                   Open Guest Folio
                 </button>
@@ -2621,13 +2769,24 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setCheckedInPopup(null)}
-                className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 Done
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Post Check-In Printable Receipt Modal */}
+      {checkInReceiptTarget && activeProperty && (
+        <PaymentReceiptModal
+          property={activeProperty}
+          reservation={checkInReceiptTarget}
+          mode="check_in"
+          onClose={() => setCheckInReceiptTarget(null)}
+          onNotify={notify}
+        />
       )}
     </div>
   );

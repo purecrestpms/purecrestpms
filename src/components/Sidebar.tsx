@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity,
-  BarChart2,
   BarChart3,
   BedDouble,
   Bell,
@@ -92,7 +91,6 @@ const RESERVATION_SUB_ITEMS: SubMenuItem[] = [
 const ROOM_SUB_ITEMS: SubMenuItem[] = [
   { id: 'rooms', label: 'All Rooms', icon: BedDouble },
   { id: 'maintenance', label: 'Maintenance', icon: Wrench },
-  { id: 'pos_kitchen', label: 'Restaurant POS', icon: ChefHat },
   { id: 'inventory', label: 'Store Inventory', icon: Package },
   { id: 'procurement', label: 'Procurement & POs', icon: ShoppingCart },
 ];
@@ -152,9 +150,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { cms } = useCms();
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const collapsed = controlledCollapsed ?? internalCollapsed;
-  const [distributionSelection, setDistributionSelection] = useState<
-    'booking_channels' | 'channel_manager'
-  >('channel_manager');
   const [reportSelection, setReportSelection] = useState<
     'reports' | 'occupancy' | 'booking' | 'revenue' | 'guest'
   >('reports');
@@ -489,12 +484,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={() => handleNavClick('arrivals')}
-              title={isCollapsed ? 'Check-in / Check-out' : undefined}
+              title={isCollapsed ? 'Arrivals / Check-In' : undefined}
               className={navItemClass(activeSection === 'arrivals', isCollapsed)}
             >
               <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
                 <LogIn className={iconClass(activeSection === 'arrivals')} />
-                {!isCollapsed && <span className="truncate">Check-in / Check-out</span>}
+                {!isCollapsed && <span className="truncate">Arrivals / Check-In</span>}
+              </span>
+            </button>
+          )}
+          {canSee('in_house') && (
+            <button
+              type="button"
+              onClick={() => handleNavClick('in_house')}
+              title={isCollapsed ? 'In-House / Check-Out' : undefined}
+              className={navItemClass(activeSection === 'in_house', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <DoorOpen className={iconClass(activeSection === 'in_house')} />
+                {!isCollapsed && <span className="truncate">In-House / Check-Out</span>}
+              </span>
+            </button>
+          )}
+          {canSee('pos_kitchen') && (
+            <button
+              type="button"
+              onClick={() => handleNavClick('pos_kitchen')}
+              title={isCollapsed ? 'Point of Sale (POS)' : undefined}
+              className={navItemClass(activeSection === 'pos_kitchen', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <ChefHat className={iconClass(activeSection === 'pos_kitchen')} />
+                {!isCollapsed && <span className="truncate">POS</span>}
               </span>
             </button>
           )}
@@ -535,62 +556,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </p>
             )}
             {canSee('ota_channels') && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDistributionSelection('booking_channels');
-                    handleNavClick('ota_channels');
-                  }}
-                  title={isCollapsed ? 'Booking Channels' : undefined}
-                  className={navItemClass(
-                    activeSection === 'ota_channels' && distributionSelection === 'booking_channels',
-                    isCollapsed
-                  )}
-                >
-                  <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-                    <Globe
-                      className={iconClass(
-                        activeSection === 'ota_channels' && distributionSelection === 'booking_channels'
-                      )}
-                    />
-                    {!isCollapsed && <span className="truncate">Booking Channels</span>}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDistributionSelection('channel_manager');
-                    handleNavClick('ota_channels');
-                  }}
-                  title={isCollapsed ? 'Channel Manager' : undefined}
-                  className={navItemClass(
-                    activeSection === 'ota_channels' && distributionSelection === 'channel_manager',
-                    isCollapsed
-                  )}
-                >
-                  <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-                    <BarChart2
-                      className={iconClass(
-                        activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
-                      )}
-                    />
-                    {!isCollapsed && <span className="truncate">Channel Manager</span>}
-                  </span>
-                  {!isCollapsed && (
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold leading-none ${
-                        activeSection === 'ota_channels' && distributionSelection === 'channel_manager'
-                          ? 'bg-white text-[#0b5d34]'
-                          : 'bg-emerald-600 text-white'
-                      }`}
-                    >
-                      New
-                    </span>
-                  )}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => handleNavClick('ota_channels')}
+                title={isCollapsed ? 'Channel Manager' : undefined}
+                className={navItemClass(activeSection === 'ota_channels', isCollapsed)}
+              >
+                <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                  <Globe className={iconClass(activeSection === 'ota_channels')} />
+                  {!isCollapsed && <span className="truncate">Channel Manager</span>}
+                </span>
+              </button>
             )}
 
             {canSee('calendar') && (
