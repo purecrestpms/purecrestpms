@@ -415,20 +415,16 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
           )}
 
           {/* Housekeeping Status Summary */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             {(
               [
                 {
                   key: 'clean',
                   label: 'Clean & Ready',
-                  count: sortedRooms.filter((r) => r.housekeepingStatus === 'clean').length,
+                  count: sortedRooms.filter(
+                    (r) => r.housekeepingStatus === 'clean' || r.housekeepingStatus === 'inspected'
+                  ).length,
                   accent: 'text-emerald-700',
-                },
-                {
-                  key: 'inspected',
-                  label: 'Inspected',
-                  count: sortedRooms.filter((r) => r.housekeepingStatus === 'inspected').length,
-                  accent: 'text-[#1c46be]',
                 },
                 {
                   key: 'cleaning',
@@ -491,20 +487,20 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                           ? 'text-rose-700'
                           : r.housekeepingStatus === 'cleaning'
                             ? 'text-amber-700'
-                            : r.housekeepingStatus === 'inspected'
-                              ? 'text-[#1c46be]'
-                              : 'text-emerald-700'
+                            : 'text-emerald-700'
                       }`}
                     >
-                      {r.housekeepingStatus}
+                      {r.housekeepingStatus === 'inspected' ? 'clean' : r.housekeepingStatus}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 capitalize">
                     Occupancy: <span className="font-medium text-slate-700">{r.occupancyStatus.replace('_', ' ')}</span>
                   </p>
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
-                    {(['clean', 'inspected', 'dirty', 'cleaning'] as const).map((hk) => {
-                      const isActive = r.housekeepingStatus === hk;
+                  <div className="grid grid-cols-3 gap-1.5 pt-1">
+                    {(['clean', 'cleaning', 'dirty'] as const).map((hk) => {
+                      const normalizedHk =
+                        r.housekeepingStatus === 'inspected' ? 'clean' : r.housekeepingStatus;
+                      const isActive = normalizedHk === hk;
                       return (
                         <button
                           key={hk}
@@ -580,7 +576,9 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
                           <span className="capitalize font-medium text-slate-700">
-                            {task.status.replace('_', ' ')}
+                            {task.status === 'inspected'
+                              ? 'completed'
+                              : task.status.replace('_', ' ')}
                           </span>
                           {task.status === 'pending' && (
                             <button
@@ -622,27 +620,6 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                               className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium cursor-pointer"
                             >
                               Mark Clean
-                            </button>
-                          )}
-                          {task.status === 'completed' && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                setActionError(null);
-                                try {
-                                  await advanceHousekeepingTask({
-                                    property,
-                                    task,
-                                    nextStatus: 'inspected',
-                                    actorRole,
-                                  });
-                                } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
-                                }
-                              }}
-                              className="px-2.5 py-1 bg-emerald-700 text-white rounded font-medium cursor-pointer"
-                            >
-                              Verify Inspect
                             </button>
                           )}
                         </div>

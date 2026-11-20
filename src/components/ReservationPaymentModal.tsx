@@ -79,8 +79,11 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const isCollectedByOta = paymentCollectionMode === 'ota_prepaid';
-  const showOtaPayoutSection = isCollectedByOta || isOtaChannel;
+  const effectiveCollectionMode: OtaPaymentCollectionMode = isOtaChannel
+    ? paymentCollectionMode
+    : 'hotel_collect';
+  const isCollectedByOta = isOtaChannel && effectiveCollectionMode === 'ota_prepaid';
+  const showOtaPayoutSection = isOtaChannel;
   const effectiveActualPayout =
     isCollectedByOta && otaPayoutStatus === 'received'
       ? Math.max(0, Math.round(actualPayoutReceivedNgn))
@@ -161,16 +164,21 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
     e.preventDefault();
     setErrorMsg(null);
     setSaving(true);
+    const safePaymentStatus: PaymentStatusLabel =
+      !isOtaChannel && paymentStatus === 'Paid to OTA' ? 'Paid' : paymentStatus;
     try {
       await updateReservationPaymentWorkflow({
         property,
         reservation,
-        paymentCollectionMode,
-        paymentStatus,
+        paymentCollectionMode: effectiveCollectionMode,
+        paymentStatus: safePaymentStatus,
         amountDueAtPropertyNgn: Math.max(0, Math.round(amountDueAtPropertyNgn)),
         otaPaidNgn: isCollectedByOta ? Math.max(0, Math.round(otaPaidNgn)) : 0,
         hotelPaidNgn: Math.max(0, Math.round(hotelPaidNgn)),
-        paymentMethod,
+        paymentMethod:
+          !isOtaChannel && paymentMethod === 'OTA Platform Payout'
+            ? 'Bank Transfer'
+            : paymentMethod,
         otaPayoutStatus: isCollectedByOta ? otaPayoutStatus : 'pending',
         expectedPayoutNgn: Math.max(0, Math.round(expectedPayoutNgn)),
         actualPayoutReceivedNgn: effectiveActualPayout,
@@ -183,7 +191,9 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
         actorRole,
       });
       onNotify(
-        `Payment settings updated for ${reservation.bookingRef} (${formatPaymentCollectionLabel(paymentCollectionMode)} · ${paymentStatus}).`
+        isOtaChannel
+          ? `Payment settings updated for ${reservation.bookingRef} (${formatPaymentCollectionLabel(effectiveCollectionMode)} · ${safePaymentStatus}).`
+          : `Payment settings updated for ${reservation.bookingRef} (${safePaymentStatus}).`
       );
       onClose();
     } catch (err) {
@@ -253,13 +263,13 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
           </div>
         )}
 
-        {/* Section 1: Payment Collection Type */}
-        <div className="space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
-              Payment Collection Type
-            </label>
-            {(isOtaChannel || isCollectedByOta) && (
+        {/* Section 1: Payment Collection Type (OTA Bookings Only) */}
+        {isOtaChannel && (
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                Payment Collection Type
+              </label>
               <button
                 type="button"
                 onClick={handleMarkPaidToOtaZeroDue}
@@ -267,72 +277,70 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
               >
                 Mark Paid to OTA &amp; Set Due to ₦0
               </button>
-            )}
-          </div>
+            </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <button
-              type="button"
-              onClick={() => handleCollectionModeChange('ota_prepaid')}
-              className={`flex items-center gap-3 p-3.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                paymentCollectionMode === 'ota_prepaid'
-                  ? 'border-blue-600 bg-blue-50/60 text-slate-900'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <div
-                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => handleCollectionModeChange('ota_prepaid')}
+                className={`flex items-center gap-3 p-3.5 rounded-lg border text-left transition-colors cursor-pointer ${
                   paymentCollectionMode === 'ota_prepaid'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'border-blue-600 bg-blue-50/60 text-slate-900'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                 }`}
               >
-                <Globe className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-slate-900">
-                  Collected by OTA
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Guest paid {isOtaChannel ? reservation.channel : 'OTA'}; track OTA payout separately
-                </p>
-              </div>
-            </button>
+                <div
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                    paymentCollectionMode === 'ota_prepaid'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-slate-900">
+                    Collected by OTA
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Guest paid {reservation.channel}; track OTA payout separately
+                  </p>
+                </div>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => handleCollectionModeChange('hotel_collect')}
-              className={`flex items-center gap-3 p-3.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                paymentCollectionMode === 'hotel_collect'
-                  ? 'border-emerald-600 bg-emerald-50/60 text-slate-900'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <div
-                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+              <button
+                type="button"
+                onClick={() => handleCollectionModeChange('hotel_collect')}
+                className={`flex items-center gap-3 p-3.5 rounded-lg border text-left transition-colors cursor-pointer ${
                   paymentCollectionMode === 'hotel_collect'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'border-emerald-600 bg-emerald-50/60 text-slate-900'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                 }`}
               >
-                <Building2 className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-slate-900">
-                  Collect at Property
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Hotel collects payment directly from guest at front desk
-                </p>
-              </div>
-            </button>
-          </div>
-          {isOtaChannel && (
+                <div
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                    paymentCollectionMode === 'hotel_collect'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-slate-900">
+                    Collect at Property
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Hotel collects payment directly from guest at front desk
+                  </p>
+                </div>
+              </button>
+            </div>
             <p className="text-[11px] text-slate-500">
               Changes saved here are locked as manual property settings and will not be overwritten by future iCal syncs.
             </p>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Section 2: Guest Payment Status & Property Collection */}
         <div className="rounded-lg border border-slate-200 p-4 space-y-3 bg-slate-50/50">
@@ -347,18 +355,18 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
                 Guest Payment Status
               </label>
               <select
-                value={paymentStatus}
+                value={!isOtaChannel && paymentStatus === 'Paid to OTA' ? 'Paid' : paymentStatus}
                 onChange={(e) => {
                   const next = e.target.value as PaymentStatusLabel;
                   setPaymentStatus(next);
-                  if (next === 'Paid to OTA') {
+                  if (isOtaChannel && next === 'Paid to OTA') {
                     setPaymentCollectionMode('ota_prepaid');
                     setAmountDueAtPropertyNgn(0);
                   }
                 }}
                 className="w-full h-9 border border-slate-200 rounded-lg px-3 bg-white text-slate-900 font-medium"
               >
-                <option value="Paid to OTA">Paid to OTA</option>
+                {isOtaChannel && <option value="Paid to OTA">Paid to OTA</option>}
                 <option value="Paid">Paid (at Property)</option>
                 <option value="Partial">Partial</option>
                 <option value="Unpaid">Unpaid</option>
@@ -400,7 +408,11 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
                 Payment Method
               </label>
               <select
-                value={paymentMethod}
+                value={
+                  !isOtaChannel && paymentMethod === 'OTA Platform Payout'
+                    ? 'Bank Transfer'
+                    : paymentMethod
+                }
                 onChange={(e) =>
                   setPaymentMethod(
                     e.target.value as ReservationRecord['paymentMethod']
@@ -413,7 +425,7 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
                 <option value="Cash NGN">Cash NGN</option>
                 <option value="Corporate Invoice">Corporate Invoice</option>
                 <option value="Online Gateway">Online Gateway</option>
-                <option value="OTA Platform Payout">OTA Platform Payout</option>
+                {isOtaChannel && <option value="OTA Platform Payout">OTA Platform Payout</option>}
               </select>
             </div>
           </div>

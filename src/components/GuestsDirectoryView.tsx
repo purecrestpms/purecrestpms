@@ -3,11 +3,13 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarPlus,
+  Download,
   ExternalLink,
   Mail,
   MapPin,
   Pencil,
   Phone,
+  Printer,
   Save,
   Search,
   ShieldCheck,
@@ -15,6 +17,11 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
+import {
+  buildFormDataFromGuest,
+  downloadGuestRegistrationPdf,
+  printGuestRegistrationForm,
+} from '../utils/guestRegistrationForm';
 import {
   createGuestRecord,
   deleteGuestRecordWorkflow,
@@ -495,9 +502,65 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                 Register Guest Profile
               </h2>
             </div>
-            <span className="text-xs text-slate-500 font-medium">
-              {property.name}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const fullName = `${newFirstName.trim()} ${newLastName.trim()}`.trim();
+                  printGuestRegistrationForm({
+                    property,
+                    guest: {
+                      fullName,
+                      phone: newPhone.trim(),
+                      email: newEmail.trim(),
+                      address: newAddress.trim(),
+                      city: newCity.trim(),
+                      state: newState.trim(),
+                      country: newCountry.trim() || 'Nigeria',
+                      nationality: newCountry.trim() || 'Nigeria',
+                      idType: newIdType,
+                      idNumber: newIdNumber.trim(),
+                      vipTier: newVipTier,
+                      notes: newNotes.trim(),
+                    },
+                    rooms,
+                  });
+                }}
+                className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5 text-[#061539]" />
+                <span>Print Registration Form</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const fullName = `${newFirstName.trim()} ${newLastName.trim()}`.trim();
+                  downloadGuestRegistrationPdf({
+                    property,
+                    guest: {
+                      fullName,
+                      phone: newPhone.trim(),
+                      email: newEmail.trim(),
+                      address: newAddress.trim(),
+                      city: newCity.trim(),
+                      state: newState.trim(),
+                      country: newCountry.trim() || 'Nigeria',
+                      nationality: newCountry.trim() || 'Nigeria',
+                      idType: newIdType,
+                      idNumber: newIdNumber.trim(),
+                      vipTier: newVipTier,
+                      notes: newNotes.trim(),
+                    },
+                    rooms,
+                  });
+                  onNotify(`Downloaded guest registration PDF${fullName ? ` for ${fullName}` : ''}`);
+                }}
+                className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-xs font-semibold text-emerald-800 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download PDF</span>
+              </button>
+            </div>
           </div>
 
           {formError && (
@@ -765,6 +828,47 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const primaryStay =
+                  selectedEnriched.activeStay ||
+                  selectedEnriched.upcomingStay ||
+                  selectedEnriched.stays[0] ||
+                  null;
+                printGuestRegistrationForm({
+                  property,
+                  guest: buildFormDataFromGuest(g),
+                  latestReservation: primaryStay,
+                  rooms,
+                });
+              }}
+              className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5 text-[#061539]" />
+              <span>Print Registration Form</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const primaryStay =
+                  selectedEnriched.activeStay ||
+                  selectedEnriched.upcomingStay ||
+                  selectedEnriched.stays[0] ||
+                  null;
+                downloadGuestRegistrationPdf({
+                  property,
+                  guest: buildFormDataFromGuest(g),
+                  latestReservation: primaryStay,
+                  rooms,
+                });
+                onNotify(`Downloaded registration form PDF for ${g.fullName}`);
+              }}
+              className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-xs font-semibold text-emerald-800 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download PDF</span>
+            </button>
             {onStartNewReservationForGuest && (
               <button
                 type="button"

@@ -297,28 +297,126 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     blockedDates,
   ]);
 
-  const filteredReservations = useMemo(() => {
-    return activeReservations.filter((r) => {
-      if (!q) return true;
-      return (
-        r.guestName.toLowerCase().includes(q) ||
-        r.bookingRef.toLowerCase().includes(q) ||
-        r.roomNumber.toLowerCase().includes(q) ||
-        r.channel.toLowerCase().includes(q)
+  const unassignedActiveReservations = useMemo(() => {
+    return activeReservations
+      .filter((r) => {
+        const outIso = normalizeIsoDate(r.checkOutDate);
+        const inIso = normalizeIsoDate(r.checkInDate);
+        const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
+        const isCurrentOrFuture = r.status === 'checked_in' || effOut > todayIso;
+        if (!isCurrentOrFuture) return false;
+        return !sortedRooms.some((room) => matchesRoomRecord(room, r.roomId, r.roomNumber));
+      })
+      .sort((a, b) =>
+        normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
       );
+  }, [activeReservations, sortedRooms, todayIso]);
+
+  const calendarConflicts = useMemo(() => {
+    const conflicts: Array<{
+      id: string;
+      roomNumber: string;
+      startDate: string;
+      summary: string;
+      reservationId?: string;
+    }> = [];
+
+    sortedRooms.forEach((room) => {
+      const roomRes = activeReservations
+        .filter((r) => {
+          if (!matchesRoomRecord(room, r.roomId, r.roomNumber)) return false;
+          const outIso = normalizeIsoDate(r.checkOutDate);
+          const inIso = normalizeIsoDate(r.checkInDate);
+          const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
+          return r.status === 'checked_in' || effOut > todayIso;
+        })
+        .sort((a, b) =>
+          normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
+        );
+
+      // Pairwise double-booking check
+      for (let i = 0; i < roomRes.length; i += 1) {
+        const a = roomRes[i];
+        for (let j = i + 1; j < roomRes.length; j += 1) {
+          const b = roomRes[j];
+          const aIn = normalizeIsoDate(a.checkInDate);
+          const aOut = normalizeIsoDate(a.checkOutDate) > aIn ? normalizeIsoDate(a.checkOutDate) : addDaysIso(aIn, 1);
+          const bIn = normalizeIsoDate(b.checkInDate);
+          const bOut = normalizeIsoDate(b.checkOutDate) > bIn ? normalizeIsoDate(b.checkOutDate) : addDaysIso(bIn, 1);
+          if (aIn < bOut && bIn < aOut) {
+            conflicts.push({
+              id: `dup-${a.id}-${b.id}`,
+              roomNumber: room.roomNumber,
+              startDate: aIn > bIn ? aIn : bIn,
+              summary: `Double-booking overlap on ${room.roomNumber}: ${a.bookingRef} (${a.guestName}, ${aIn} → ${aOut}) overlaps ${b.bookingRef} (${b.guestName}, ${bIn} → ${bOut})`,
+              reservationId: a.id,
+            });
+          }
+        }
+
+        // Reservation vs blocked date overlap check
+        const aIn = normalizeIsoDate(a.checkInDate);
+        const aOut = normalizeIsoDate(a.checkOutDate) > aIn ? normalizeIsoDate(a.checkOutDate) : addDaysIso(aIn, 1);
+        blockedDates.forEach((blk) => {
+          if (!matchesRoomRecord(room, blk.roomId, blk.roomNumber)) return;
+          const bStart = normalizeIsoDate(blk.startDate);
+          const bEnd = normalizeIsoDate(blk.endDate) > bStart ? normalizeIsoDate(blk.endDate) : addDaysIso(bStart, 1);
+          if (aIn < bEnd && bStart < aOut) {
+            conflicts.push({
+              id: `blk-${a.id}-${blk.id}`,
+              roomNumber: room.roomNumber,
+              startDate: aIn > bStart ? aIn : bStart,
+              summary: `Reservation/Block conflict on ${room.roomNumber}: ${a.bookingRef} (${a.guestName}, ${aIn} → ${aOut}) overlaps ${blk.category} block (${bStart} → ${bEnd})`,
+              reservationId: a.id,
+            });
+          }
+        });
+      }
     });
-  }, [activeReservations, q]);
+
+    return conflicts;
+  }, [sortedRooms, activeReservations, blockedDates, todayIso]);
+
+  const filteredReservations = useMemo(() => {
+    return activeReservations
+      .filter((r) => {
+        const inIso = normalizeIsoDate(r.checkInDate);
+        const outIso = normalizeIsoDate(r.checkOutDate);
+        const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
+        // Keep all currently checked-in stays and all current/future reservations
+        if (r.status !== 'checked_in' && effOut <= todayIso) return false;
+        if (!q) return true;
+        return (
+          r.guestName.toLowerCase().includes(q) ||
+          r.bookingRef.toLowerCase().includes(q) ||
+          r.roomNumber.toLowerCase().includes(q) ||
+          r.channel.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) =>
+        normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
+      );
+  }, [activeReservations, q, todayIso]);
 
   const filteredBlocks = useMemo(() => {
-    return blockedDates.filter((b) => {
-      if (!q) return true;
-      return (
-        b.roomNumber.toLowerCase().includes(q) ||
-        b.reason.toLowerCase().includes(q) ||
-        b.category.toLowerCase().includes(q)
+    return blockedDates
+      .filter((b) => {
+        const bStart = normalizeIsoDate(b.startDate);
+        const bEnd = normalizeIsoDate(b.endDate);
+        const effEnd = bEnd > bStart ? bEnd : addDaysIso(bStart, 1);
+        // Keep all active & upcoming blocked dates
+        if (effEnd <= todayIso) return false;
+        if (!q) return true;
+        return (
+          b.roomNumber.toLowerCase().includes(q) ||
+          b.reason.toLowerCase().includes(q) ||
+          b.category.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) =>
+        normalizeIsoDate(a.startDate).localeCompare(normalizeIsoDate(b.startDate))
       );
-    });
-  }, [blockedDates, q]);
+  }, [blockedDates, q, todayIso]);
 
   const openQuickAction = (mode: 'block' | 'book', room?: RoomRecord, dayIso?: string) => {
     const chosenRoom =
@@ -849,6 +947,49 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         </div>
       )}
 
+      {calendarConflicts.length > 0 && (
+        <div
+          role="alert"
+          className="bg-rose-50 border border-rose-300 rounded-xl px-4 py-3.5 text-xs text-rose-950 space-y-2 shadow-xs"
+        >
+          <div className="flex items-center gap-2 font-bold text-rose-800">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              {calendarConflicts.length} Calendar Overlap Conflict
+              {calendarConflicts.length === 1 ? '' : 's'} Detected — Resolve to Prevent Double Bookings
+            </span>
+          </div>
+          <div className="space-y-1.5">
+            {calendarConflicts.slice(0, 5).map((conflict) => (
+              <div
+                key={conflict.id}
+                className="flex flex-wrap items-center justify-between gap-2 bg-white/80 border border-rose-200 rounded-lg px-3 py-1.5"
+              >
+                <span className="text-[11px] font-medium text-rose-900">{conflict.summary}</span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setCalendarStart(conflict.startDate)}
+                    className="px-2 py-1 rounded bg-rose-700 hover:bg-rose-800 text-white text-[10px] font-semibold cursor-pointer"
+                  >
+                    Jump to {conflict.startDate}
+                  </button>
+                  {conflict.reservationId && onOpenReservationFolio && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenReservationFolio(conflict.reservationId!, 'front_desk')}
+                      className="px-2 py-1 rounded border border-rose-300 bg-white hover:bg-rose-50 text-rose-800 text-[10px] font-semibold cursor-pointer"
+                    >
+                      Open Folio
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Advanced 14-Day / 30-Day Horizontal Availability Matrix */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/70">
@@ -946,6 +1087,13 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
               <span>Next</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
+            <button
+              type="button"
+              onClick={() => setCalendarStart(addDaysIso(calendarStart, 30))}
+              className="px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg font-medium text-slate-700 cursor-pointer whitespace-nowrap"
+            >
+              +30d
+            </button>
           </div>
         </div>
 
@@ -985,6 +1133,65 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 text-xs">
+              {unassignedActiveReservations.length > 0 && (
+                <tr className="bg-violet-50/60">
+                  <td className="py-2.5 px-4 sticky left-0 bg-violet-50 z-10 border-r border-violet-200">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-violet-950 text-xs">
+                        Unassigned Bookings
+                      </span>
+                      <span className="font-mono-tabular text-[10px] font-bold text-violet-700">
+                        {unassignedActiveReservations.length} pending
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-violet-700 mt-0.5">
+                      Click any booking to assign a room
+                    </p>
+                  </td>
+                  {calendarDays.map((day) => {
+                    const dayUnassigned = unassignedActiveReservations.filter((r) => {
+                      const rIn = normalizeIsoDate(r.checkInDate);
+                      const rOutRaw = normalizeIsoDate(r.checkOutDate);
+                      if (!rIn) return false;
+                      const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+                      return rIn <= day && day < rOut;
+                    });
+                    if (dayUnassigned.length === 0) {
+                      return (
+                        <td
+                          key={day}
+                          className="p-1 border-r border-violet-100 last:border-r-0 align-middle text-center text-[10px] text-violet-300"
+                        >
+                          —
+                        </td>
+                      );
+                    }
+                    const lead = dayUnassigned[0];
+                    return (
+                      <td
+                        key={day}
+                        title={dayUnassigned
+                          .map(
+                            (r) =>
+                              `${r.bookingRef} · ${r.guestName} (${r.requestedRoomType || 'Unassigned'}) · ${normalizeIsoDate(r.checkInDate)} → ${normalizeIsoDate(r.checkOutDate)}`
+                          )
+                          .join(' | ')}
+                        className="p-1 border-r border-violet-100 last:border-r-0 align-middle"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onOpenReservationFolio?.(lead.id, 'front_desk')}
+                          className="w-full text-left px-1.5 py-2 rounded bg-violet-600 hover:bg-violet-700 text-white text-[10px] font-semibold truncate cursor-pointer"
+                        >
+                          {lead.guestName.split(' ')[0]}
+                          {dayUnassigned.length > 1 ? ` +${dayUnassigned.length - 1}` : ''}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              )}
+
               {sectionsToRender.map((sectionName) => {
                 const sectionRooms = filteredRooms.filter((r) => getRoomSection(r) === sectionName);
                 if (sectionRooms.length === 0) return null;
@@ -1068,7 +1275,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         </td>
 
                         {calendarDays.map((day) => {
-                          const res = activeReservations.find((r) => {
+                          const matchingRes = activeReservations.filter((r) => {
                             if (!matchesRoomRecord(room, r.roomId, r.roomNumber)) return false;
                             const rIn = normalizeIsoDate(r.checkInDate);
                             const rOutRaw = normalizeIsoDate(r.checkOutDate);
@@ -1076,6 +1283,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                             const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
                             return rIn <= day && day < rOut;
                           });
+                          const res = matchingRes[0];
                           const blk = blockedDates.find((b) => {
                             if (!matchesRoomRecord(room, b.roomId, b.roomNumber)) return false;
                             const bStart = normalizeIsoDate(b.startDate);
@@ -1086,23 +1294,32 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                           });
 
                           if (res) {
+                            const hasConflict = matchingRes.length > 1 || Boolean(blk);
                             const isCheckedIn = res.status === 'checked_in';
                             const isPending = res.status === 'pending';
                             const isOta = isOtaBookingChannel(res.channel);
-                            const cellColor = isCheckedIn
-                              ? 'bg-emerald-600'
-                              : isPending
-                                ? 'bg-violet-600'
-                                : isOta
-                                  ? 'bg-orange-500'
-                                  : 'bg-amber-500';
+                            const cellColor = hasConflict
+                              ? 'bg-rose-600 ring-2 ring-rose-900/50'
+                              : isCheckedIn
+                                ? 'bg-emerald-600'
+                                : isPending
+                                  ? 'bg-violet-600'
+                                  : isOta
+                                    ? 'bg-orange-500'
+                                    : 'bg-amber-500';
                             const sourceTag = isOta
                               ? ` · ${formatBookingSourceLabel(res.channel)}`
                               : '';
+                            const conflictSuffix =
+                              matchingRes.length > 1
+                                ? ` [OVERLAP: ${matchingRes.map((m) => m.bookingRef).join(' & ')}]`
+                                : blk
+                                  ? ` [OVERLAPS BLOCK: ${blk.category}]`
+                                  : '';
                             return (
                               <td
                                 key={day}
-                                title={`${res.bookingRef} · ${res.guestName} (${res.status}${sourceTag}) · ${normalizeIsoDate(res.checkInDate)} → ${normalizeIsoDate(res.checkOutDate)} — Click to open Folio`}
+                                title={`${res.bookingRef} · ${res.guestName} (${res.status}${sourceTag}) · ${normalizeIsoDate(res.checkInDate)} → ${normalizeIsoDate(res.checkOutDate)}${conflictSuffix} — Click to open Folio`}
                                 className="p-1 border-r border-slate-100 last:border-r-0 align-middle"
                               >
                                 <button
@@ -1111,6 +1328,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                                   className={`w-full text-left px-1.5 py-2 rounded text-[10px] font-semibold truncate text-white cursor-pointer transition-opacity hover:opacity-90 ${cellColor}`}
                                 >
                                   {res.guestName.split(' ')[0]}
+                                  {matchingRes.length > 1 ? ` (!+${matchingRes.length - 1})` : blk ? ' (!)' : ''}
                                 </button>
                               </td>
                             );
@@ -1243,20 +1461,29 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     {blk.startDate} → {blk.endDate}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={busyId === blk.id}
-                  onClick={() => handleUnblock(blk)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-rose-700 border border-rose-200 hover:bg-rose-50 rounded-lg shrink-0 cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Unblock</span>
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setCalendarStart(normalizeIsoDate(blk.startDate) || todayIso)}
+                    className="px-2.5 py-1.5 text-xs font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
+                  >
+                    View
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === blk.id}
+                    onClick={() => handleUnblock(blk)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-rose-700 border border-rose-200 hover:bg-rose-50 rounded-lg shrink-0 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Unblock</span>
+                  </button>
+                </div>
               </div>
             ))}
             {filteredBlocks.length === 0 && (
               <p className="py-8 text-center text-xs text-slate-500">
-                No blocked dates match your filter.
+                No active or upcoming blocked dates match your filter.
               </p>
             )}
           </div>
@@ -1267,10 +1494,10 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
           <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 className="font-display text-sm font-bold text-slate-900">
-                Active &amp; Upcoming Reservations
+                Current &amp; Future Reservations ({filteredReservations.length})
               </h3>
               <p className="text-xs text-slate-500">
-                Filtered live against your calendar search
+                Chronological view of all in-house, confirmed, pending &amp; OTA stays
               </p>
             </div>
             <button
@@ -1283,29 +1510,42 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             </button>
           </div>
           <div className="divide-y divide-slate-100">
-            {filteredReservations.map((res) => (
+            {filteredReservations.map((res) => {
+              const normIn = normalizeIsoDate(res.checkInDate);
+              const isFutureStay = normIn > todayIso;
+              return (
               <div
                 key={res.id}
                 onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
                 className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-emerald-50/40 cursor-pointer transition-colors"
               >
                 <div className="space-y-0.5 min-w-0">
-                  <div className="flex items-center gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="font-mono-tabular font-bold text-slate-900">
                       {res.bookingRef}
                     </span>
                     <span className="font-mono-tabular text-slate-600">{res.roomNumber}</span>
                     <span
                       className={`font-semibold ${
-                        res.status === 'checked_in' ? 'text-emerald-700' : 'text-amber-700'
+                        res.status === 'checked_in'
+                          ? 'text-emerald-700'
+                          : res.status === 'pending'
+                            ? 'text-violet-700'
+                            : 'text-amber-700'
                       }`}
                     >
-                      {res.status === 'checked_in' ? 'Checked In' : 'Confirmed'}
+                      {res.status === 'checked_in'
+                        ? 'In-House'
+                        : res.status === 'pending'
+                          ? 'Pending Hold'
+                          : isFutureStay
+                            ? 'Future Confirmed'
+                            : 'Confirmed'}
                     </span>
                   </div>
                   <p className="text-xs font-semibold text-slate-900 truncate">{res.guestName}</p>
                   <p className="font-mono-tabular text-[11px] text-slate-500">
-                    {res.checkInDate} → {res.checkOutDate} ({res.nights}n) ·{' '}
+                    {normIn} → {normalizeIsoDate(res.checkOutDate)} ({res.nights}n) ·{' '}
                     {formatBookingSourceLabel(res.channel)}
                   </p>
                 </div>
@@ -1314,6 +1554,13 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   className="flex items-center gap-2 shrink-0"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <button
+                    type="button"
+                    onClick={() => setCalendarStart(normIn || todayIso)}
+                    className="px-2.5 py-1.5 text-xs font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
+                  >
+                    Jump
+                  </button>
                   <button
                     type="button"
                     onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
@@ -1364,7 +1611,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
             {filteredReservations.length === 0 && (
               <p className="py-8 text-center text-xs text-slate-500">
                 No active reservations match your search.
@@ -1971,7 +2219,9 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       <option value="Cash NGN">Cash NGN</option>
                       <option value="Online Gateway">Online Gateway</option>
                       <option value="Corporate Invoice">Corporate Invoice</option>
-                      <option value="OTA Platform Payout">OTA Platform Payout</option>
+                      {isOtaBookingChannel(channel) && (
+                        <option value="OTA Platform Payout">OTA Platform Payout</option>
+                      )}
                     </select>
                   </div>
                   <div>

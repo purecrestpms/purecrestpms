@@ -280,6 +280,7 @@ export async function createReservationWorkflow(params: {
   // Enforce real Firestore-level room availability check to block double-booking
   // against any active direct reservation, OTA booking (Airbnb/Booking.com/Expedia/VRBO), or blocked date.
   if (params.room) {
+    let liveConflictMessage: string | null = null;
     try {
       const [liveResSnap, liveBlkSnap] = await Promise.all([
         getDocs(collection(db, 'properties', params.property.id, 'reservations')),
@@ -301,13 +302,13 @@ export async function createReservationWorkflow(params: {
         blockedDates: liveBlocks,
       });
       if (!liveCheck.available) {
-        throw new Error(liveCheck.message);
+        liveConflictMessage = liveCheck.message;
       }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('unavailable')) {
-        throw err;
-      }
+    } catch {
       // If offline/transient read error, let client-side check govern rather than blocking unexpectedly
+    }
+    if (liveConflictMessage) {
+      throw new Error(liveConflictMessage);
     }
   }
 
@@ -952,6 +953,40 @@ export async function changeInHouseRoomWorkflow(params: {
   if (params.newRoom.id === params.reservation.roomId) {
     throw new Error('Selected room is already assigned to this guest.');
   }
+
+  // Enforce live Firestore availability check on the target room before moving guest
+  let moveConflictMessage: string | null = null;
+  try {
+    const [liveResSnap, liveBlkSnap] = await Promise.all([
+      getDocs(collection(db, 'properties', params.property.id, 'reservations')),
+      getDocs(collection(db, 'properties', params.property.id, 'blocked_dates')),
+    ]);
+    const liveReservations = liveResSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<ReservationRecord, 'id'>),
+    }));
+    const liveBlocks = liveBlkSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<BlockedDateRecord, 'id'>),
+    }));
+    const moveCheck = checkRoomDateRangeAvailability({
+      room: params.newRoom,
+      checkInDate: params.reservation.checkInDate,
+      checkOutDate: params.reservation.checkOutDate,
+      reservations: liveReservations,
+      blockedDates: liveBlocks,
+      excludeReservationId: params.reservation.id,
+    });
+    if (!moveCheck.available) {
+      moveConflictMessage = moveCheck.message;
+    }
+  } catch {
+    // Allow fallback when offline
+  }
+  if (moveConflictMessage) {
+    throw new Error(moveConflictMessage);
+  }
+
   const batch = writeBatch(db);
   const now = serverTimestamp();
 
@@ -1067,6 +1102,57 @@ export async function updateReservationDetailsWorkflow(params: {
     'Studio';
   const isOta = isOtaBookingChannel(params.channel);
   const roomChanged = targetRoomId !== params.reservation.roomId;
+  const nextStatusCheck = params.status ?? params.reservation.status;
+  const willBlockInventory =
+    nextStatusCheck === 'confirmed' ||
+    nextStatusCheck === 'checked_in' ||
+    nextStatusCheck === 'pending';
+
+  // Enforce live Firestore overlap verification when editing dates, room assignment, or reactivating a booking
+  if (willBlockInventory && targetRoomId) {
+    let editConflictMessage: string | null = null;
+    try {
+      const [liveResSnap, liveBlkSnap, liveRoomsSnap] = await Promise.all([
+        getDocs(collection(db, 'properties', params.property.id, 'reservations')),
+        getDocs(collection(db, 'properties', params.property.id, 'blocked_dates')),
+        params.newRoom
+          ? Promise.resolve(null)
+          : getDocs(collection(db, 'properties', params.property.id, 'rooms')),
+      ]);
+      const resolvedTargetRoom: RoomRecord | undefined =
+        params.newRoom ||
+        liveRoomsSnap?.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<RoomRecord, 'id'>) }))
+          .find((rm) => rm.id === targetRoomId);
+
+      if (resolvedTargetRoom) {
+        const liveReservations = liveResSnap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<ReservationRecord, 'id'>),
+        }));
+        const liveBlocks = liveBlkSnap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<BlockedDateRecord, 'id'>),
+        }));
+        const editCheck = checkRoomDateRangeAvailability({
+          room: resolvedTargetRoom,
+          checkInDate: params.checkInDate,
+          checkOutDate: params.checkOutDate,
+          reservations: liveReservations,
+          blockedDates: liveBlocks,
+          excludeReservationId: params.reservation.id,
+        });
+        if (!editCheck.available) {
+          editConflictMessage = editCheck.message;
+        }
+      }
+    } catch {
+      // Allow fallback when offline
+    }
+    if (editConflictMessage) {
+      throw new Error(editConflictMessage);
+    }
+  }
   const baseNightlyRate =
     typeof params.nightlyRateNgn === 'number' && params.nightlyRateNgn >= 0
       ? Math.round(params.nightlyRateNgn)
@@ -1123,10 +1209,11 @@ export async function updateReservationDetailsWorkflow(params: {
       ? Math.max(0, Math.round(params.hotelPaidNgn))
       : Math.max(0, Math.round(params.reservation.hotelPaidNgn ?? 0));
 
-  const nextMode: OtaPaymentCollectionMode =
-    params.paymentCollectionMode ||
-    params.reservation.paymentCollectionMode ||
-    (isOta || nextOtaPaidSourceAmount > 0 || nextOtaPaidNgn > 0 ? 'ota_prepaid' : 'hotel_collect');
+  const nextMode: OtaPaymentCollectionMode = isOta
+    ? params.paymentCollectionMode ||
+      params.reservation.paymentCollectionMode ||
+      'ota_prepaid'
+    : 'hotel_collect';
   const resolvedOtaPaidNgn =
     nextMode === 'ota_prepaid' ? (nextOtaPaidNgn > 0 ? nextOtaPaidNgn : nextRoomCharges) : 0;
   const resolvedOtaPaidSource =
@@ -1883,6 +1970,42 @@ export async function createBlockedDate(params: {
   category: BlockedDateRecord['category'];
   actorRole: string;
 }) {
+  if (!params.startDate || !params.endDate || params.endDate <= params.startDate) {
+    throw new Error('Block release date must be at least 1 day after the start date.');
+  }
+
+  // Live Firestore overlap check so a date block cannot overwrite an active reservation or duplicate an existing block
+  let blockConflictMessage: string | null = null;
+  try {
+    const [liveResSnap, liveBlkSnap] = await Promise.all([
+      getDocs(collection(db, 'properties', params.property.id, 'reservations')),
+      getDocs(collection(db, 'properties', params.property.id, 'blocked_dates')),
+    ]);
+    const liveReservations = liveResSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<ReservationRecord, 'id'>),
+    }));
+    const liveBlocks = liveBlkSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<BlockedDateRecord, 'id'>),
+    }));
+    const availCheck = checkRoomDateRangeAvailability({
+      room: params.room,
+      checkInDate: params.startDate,
+      checkOutDate: params.endDate,
+      reservations: liveReservations,
+      blockedDates: liveBlocks,
+    });
+    if (!availCheck.available && availCheck.status !== 'out_of_order') {
+      blockConflictMessage = availCheck.message;
+    }
+  } catch {
+    // Allow fallback when offline
+  }
+  if (blockConflictMessage) {
+    throw new Error(blockConflictMessage);
+  }
+
   const { uid, email } = getActorContext();
   const id = cleanId('blk');
   const ref = doc(db, 'properties', params.property.id, 'blocked_dates', id);
