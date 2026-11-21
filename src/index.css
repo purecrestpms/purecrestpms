@@ -57,17 +57,4 @@
     border: none !important;
     box-shadow: none !important;
   }
-
-  body.pos-printing > *:not(#pos-print-portal) {
-    display: none !important;
-  }
-
-  #pos-print-portal {
-    display: block !important;
-    position: static !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: #ffffff !important;
-  }
 }

@@ -4,6 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatNgn, PropertyRecord } from '../types/pms';
 import { useCms } from '../context/CmsContext';
+import { printPurchaseInvoiceDocument } from '../utils/printPosDocument';
 
 export interface PurchaseInvoiceLineItem {
   description: string;
@@ -347,7 +348,14 @@ export const PurchaseInvoiceModal: React.FC<PurchaseInvoiceModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => window.print()}
+                onClick={() => {
+                  printPurchaseInvoiceDocument({
+                    property,
+                    invoice,
+                    footerNote:
+                      cms.brand.folioFooterNote || `Thank you for your business — ${property.name}.`,
+                  });
+                }}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold cursor-pointer whitespace-nowrap"
               >
                 <Printer className="w-3.5 h-3.5" />

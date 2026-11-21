@@ -73,7 +73,7 @@ const PLANS: PlanSpec[] = [
     featured: true,
     highlights: [
       'Up to 35 rooms or serviced suites',
-      'Restaurant POS, Kitchen Display (KDS) & folio posting',
+      'Restaurant POS, order management & folio posting',
       'Booking.com, Airbnb, Expedia & VRBO iCal sync',
       'Daily room reports, ADR, RevPAR & P&L exports',
       'Daily USD FX rate sync, staff shifts & payroll',
@@ -129,7 +129,7 @@ const CAPABILITIES = [
   },
   {
     num: '03.',
-    title: 'Restaurant POS, Kitchen Display & Inventory',
+    title: 'Restaurant POS, Order Management & Inventory',
     body: 'Process dine-in, bar lounge, and room-service tickets with direct guest folio posting alongside live store inventory control and supplier purchase orders.',
     spanTwo: true,
     hasImage: 'dining' as const,

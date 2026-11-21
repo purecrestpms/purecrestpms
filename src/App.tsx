@@ -17,6 +17,7 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronDown,
   Copy,
   DoorOpen,
   ExternalLink,
@@ -29,6 +30,7 @@ import {
   Printer,
   RefreshCw,
   ShieldCheck,
+  UserCircle2,
   X,
 } from 'lucide-react';
 import { AdminLicensingView } from './components/AdminLicensingView';
@@ -464,7 +466,27 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showPortalModal, setShowPortalModal] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
   const [copiedPortalId, setCopiedPortalId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!showUserMenu) return;
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowUserMenu(false);
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [showUserMenu]);
   const [checkedInPopup, setCheckedInPopup] = useState<{
     guestName: string;
     roomNumber: string;
@@ -1912,7 +1934,10 @@ export default function App() {
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setShowNotifications((v) => !v)}
+                onClick={() => {
+                  setShowUserMenu(false);
+                  setShowNotifications((v) => !v);
+                }}
                 aria-label="Message Alerts"
                 className="relative p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors cursor-pointer"
               >
@@ -1990,35 +2015,116 @@ export default function App() {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => handleSelectSection('profile')}
-              className="hidden sm:inline-flex items-center gap-2 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-colors text-left cursor-pointer"
-            >
-              <span className="w-7 h-7 rounded-lg bg-blue-50 text-[#1c46be] font-mono-tabular text-[11px] font-bold flex items-center justify-center">
-                {(matchedUserAccount?.fullName || userProfile?.displayName || user.displayName || 'PA')
-                  .split(/\s+/)
-                  .slice(0, 2)
-                  .map((p) => p[0]?.toUpperCase() || '')
-                  .join('')}
-              </span>
-              <span className="leading-tight">
-                <span className="block text-xs font-semibold text-slate-900">
-                  {matchedUserAccount?.fullName ||
-                    userProfile?.displayName ||
-                    user.displayName ||
-                    'Property Admin'}
+            {/* Top-Right User Account Menu Dropdown with Logout */}
+            <div ref={userMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNotifications(false);
+                  setShowUserMenu((v) => !v);
+                }}
+                aria-haspopup="menu"
+                aria-expanded={showUserMenu}
+                className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-blue-50/60 hover:border-[#0a367a]/40 transition-colors text-left cursor-pointer"
+              >
+                <span className="w-7 h-7 rounded-lg bg-[#0a367a] text-white font-mono-tabular text-[11px] font-bold flex items-center justify-center shrink-0">
+                  {(matchedUserAccount?.fullName || userProfile?.displayName || user.displayName || 'PA')
+                    .split(/\s+/)
+                    .slice(0, 2)
+                    .map((p) => p[0]?.toUpperCase() || '')
+                    .join('')}
                 </span>
-                <span className="block text-[10px] text-slate-500">
-                  {ROLE_LABELS[effectiveRole]}
+                <span className="hidden sm:block leading-tight">
+                  <span className="block text-xs font-semibold text-[#061f4d] max-w-[130px] truncate">
+                    {matchedUserAccount?.fullName ||
+                      userProfile?.displayName ||
+                      user.displayName ||
+                      'Property Admin'}
+                  </span>
+                  <span className="block text-[10px] text-slate-500">
+                    {ROLE_LABELS[effectiveRole]}
+                  </span>
                 </span>
-              </span>
-            </button>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-500 transition-transform ${
+                    showUserMenu ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {showUserMenu && (
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-40 overflow-hidden"
+                >
+                  <div className="bg-[#0a367a] text-white px-4 py-3">
+                    <p className="text-xs font-bold truncate">
+                      {matchedUserAccount?.fullName ||
+                        userProfile?.displayName ||
+                        user.displayName ||
+                        'Property Admin'}
+                    </p>
+                    {user.email && (
+                      <p className="text-[11px] text-blue-100 truncate mt-0.5">{user.email}</p>
+                    )}
+                    <p className="text-[10px] font-semibold text-blue-200 uppercase tracking-wider mt-1">
+                      {ROLE_LABELS[effectiveRole]}
+                      {activeProperty ? ` · ${activeProperty.name}` : ''}
+                    </p>
+                  </div>
+
+                  <div className="p-1.5 space-y-0.5 text-xs">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        handleSelectSection('profile');
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-700 hover:bg-blue-50 hover:text-[#0a367a] font-semibold transition-colors cursor-pointer"
+                    >
+                      <UserCircle2 className="w-4 h-4 text-[#0a367a]" />
+                      <span>My Profile &amp; Property Settings</span>
+                    </button>
+
+                    {portalMode === 'pch-admin' && isSignedInBootstrapped && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          setShowPortalModal(true);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-700 hover:bg-blue-50 hover:text-[#0a367a] font-semibold transition-colors cursor-pointer"
+                      >
+                        <ExternalLink className="w-4 h-4 text-[#0a367a]" />
+                        <span>{cms.brand.portalLinksButton || 'Portal Links'}</span>
+                      </button>
+                    )}
+
+                    <div className="my-1 border-t border-slate-100" />
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        void handleSignOut();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-rose-700 hover:bg-rose-50 font-bold transition-colors cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4 text-rose-600" />
+                      <span>Log Out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             {portalMode === 'pch-admin' && isSignedInBootstrapped && (
               <button
                 type="button"
                 onClick={() => setShowPortalModal(true)}
-                className="px-3.5 py-1.5 text-xs font-semibold bg-[#0B245B] hover:bg-[#082c70] text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="hidden md:inline-flex px-3.5 py-1.5 text-xs font-semibold bg-[#0B245B] hover:bg-[#082c70] text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {cms.brand.portalLinksButton || 'Portal Links'}
               </button>

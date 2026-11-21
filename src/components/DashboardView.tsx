@@ -172,7 +172,40 @@ function getReservationStatusBadge(status: ReservationRecord['status']): {
   }
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({
+export const DashboardView: React.FC<DashboardViewProps> = (props) => {
+  // Preserve Staff View Dashboard without violating Rules of Hooks
+  if (!props.canManageRooms || props.portalMode === 'staff') {
+    return (
+      <StaffDashboardView
+        property={props.property}
+        rooms={props.rooms}
+        reservations={props.reservations}
+        posOrders={props.posOrders}
+        housekeepingTasks={props.housekeepingTasks ?? []}
+        maintenanceTickets={props.maintenanceTickets}
+        allowedSections={props.allowedSections}
+        actorRole={props.actorRole ?? 'Property Admin'}
+        activeRole={props.activeRole}
+        userUid={props.userUid}
+        userEmail={props.userEmail}
+        userName={props.userName}
+        staffMembers={props.staffMembers ?? []}
+        staffSessions={props.staffSessions ?? []}
+        shifts={props.shifts ?? []}
+        attendance={props.attendance ?? []}
+        onNotify={props.onNotify}
+        onNavigate={props.onNavigate}
+        onOpenReservationFolio={props.onOpenReservationFolio}
+        onInspectRoom={props.onInspectRoom}
+        onSignOut={props.onSignOut}
+      />
+    );
+  }
+
+  return <AdminDashboardView {...props} />;
+};
+
+const AdminDashboardView: React.FC<DashboardViewProps> = ({
   property,
   rooms,
   reservations,
@@ -180,25 +213,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   otaChannels = [],
   ledgerEntries = [],
   posOrders,
-  housekeepingTasks = [],
   maintenanceTickets,
-  canManageRooms,
-  portalMode,
-  activeRole,
-  userUid,
-  userEmail,
   userName,
-  staffMembers = [],
-  staffSessions = [],
-  shifts = [],
-  attendance = [],
-  allowedSections,
   actorRole = 'Property Admin',
   onNotify,
   onNavigate,
   onOpenReservationFolio,
-  onInspectRoom,
-  onSignOut,
 }) => {
   const [perfRange, setPerfRange] = useState<'7d' | '14d' | '30d'>('7d');
   const todayIso = getLocalIsoDate();
@@ -207,35 +227,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [dashCalDaysCount, setDashCalDaysCount] = useState<14 | 30>(14);
   const [syncingOta, setSyncingOta] = useState(false);
   const sortedRooms = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
-
-  // Preserve Staff View Dashboard
-  if (!canManageRooms || portalMode === 'staff') {
-    return (
-      <StaffDashboardView
-        property={property}
-        rooms={rooms}
-        reservations={reservations}
-        posOrders={posOrders}
-        housekeepingTasks={housekeepingTasks}
-        maintenanceTickets={maintenanceTickets}
-        allowedSections={allowedSections}
-        actorRole={actorRole}
-        activeRole={activeRole}
-        userUid={userUid}
-        userEmail={userEmail}
-        userName={userName}
-        staffMembers={staffMembers}
-        staffSessions={staffSessions}
-        shifts={shifts}
-        attendance={attendance}
-        onNotify={onNotify}
-        onNavigate={onNavigate}
-        onOpenReservationFolio={onOpenReservationFolio}
-        onInspectRoom={onInspectRoom}
-        onSignOut={onSignOut}
-      />
-    );
-  }
 
   const heroImageUrl = useMemo(() => {
     const firstWithImage = sortedRooms.find((r) => r.imageUrl && r.imageUrl.trim().length > 0);

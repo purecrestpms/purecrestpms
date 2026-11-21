@@ -196,7 +196,7 @@ const TRAINING_MODULES: TrainingModule[] = [
         actionButton: 'Print Receipt',
         metrics: [
           { label: 'Folio Sync', value: 'Posted' },
-          { label: 'KDS Queue', value: 'Preparing' },
+          { label: 'Order Queue', value: 'Preparing' },
           { label: 'Receipt', value: 'Print Ready' },
         ],
       },
@@ -304,7 +304,7 @@ const DOC_TOPICS = [
     summary:
       'Restaurant POS supports instant dining, bar, and room-folio billing with 7.5% VAT and printed receipts.',
     bullets: [
-      'Admins can add, edit price/cost, or toggle availability on menu items directly inside Restaurant POS & KDS.',
+      'Admins can add, edit price/cost, or toggle availability on menu items directly inside Restaurant POS.',
       'Use Record Purchase inside POS to log kitchen/bar ingredient purchases directly into Procurement & the Accounting Ledger.',
       'Click Print Receipt on any completed order to produce a clean Richgates Apartments thermal/A4 receipt.',
     ],
@@ -468,7 +468,7 @@ export const HelpDocsTrainingView: React.FC<HelpDocsTrainingViewProps> = ({
     ctx.fillText('Richgates PMS', 64, 48);
 
     // Sidebar mock nav rows
-    const navItems = ['Dashboard', 'Reservations', 'Rooms & Rates', 'POS & KDS', 'Messages', 'Reports'];
+    const navItems = ['Dashboard', 'Reservations', 'Rooms & Rates', 'POS', 'Messages', 'Reports'];
     navItems.forEach((label, idx) => {
       const y = 84 + idx * 34;
       const isHighlighted = idx === (currentStepIndex % navItems.length);

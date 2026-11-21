@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Banknote,
@@ -8,6 +7,7 @@ import {
   Check,
   CheckCircle2,
   ChefHat,
+  ClipboardList,
   CreditCard,
   Download,
   FileText,
@@ -55,6 +55,7 @@ import {
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 import { PurchaseInvoiceData, PurchaseInvoiceModal } from './PurchaseInvoiceModal';
+import { printPosOrderDocument } from '../utils/printPosDocument';
 
 interface PosKitchenViewProps {
   property: PropertyRecord;
@@ -199,9 +200,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     cms.brand.folioFooterNote ||
     `Thank you for dining with ${property.name}.`;
 
-  // Top-level POS tabs: POS Terminal | Orders & KDS | POS Dashboard
+  // Top-level POS tabs: POS Terminal | Order Summary | POS Dashboard
   const [posModuleTab, setPosModuleTab] = useState<'terminal' | 'orders' | 'dashboard'>('terminal');
-  const [ordersSubTab, setOrdersSubTab] = useState<'kds' | 'purchases'>('kds');
+  const [ordersSubTab, setOrdersSubTab] = useState<'orders' | 'purchases'>('orders');
+  const [ordersSearchQuery, setOrdersSearchQuery] = useState('');
+  const [ordersPaymentFilter, setOrdersPaymentFilter] = useState<'all' | 'direct' | 'room_folio'>('all');
+  const [ordersStatusFilter, setOrdersStatusFilter] = useState<'all' | PosOrderRecord['kitchenStatus']>('all');
 
   // Primary section tab (Kitchen vs Food & Beverage) + category filter + search
   const [activeSectionTab, setActiveSectionTab] = useState<PosSection>('Kitchen');
@@ -233,7 +237,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   // Last created order line items cache (for rich itemized receipt right after sale)
   const [orderLineCache, setOrderLineCache] = useState<Record<string, PrintableOrderItem[]>>({});
 
-  // Print Receipt / Print Invoice modal state
+  // Print Receipt / Print Invoice modal & post-purchase print confirmation alert
+  const [completedOrderPrompt, setCompletedOrderPrompt] = useState<PrintablePosDocument | null>(
+    null
+  );
   const [printDoc, setPrintDoc] = useState<PrintablePosDocument | null>(null);
   const [printFormat, setPrintFormat] = useState<'receipt' | 'invoice'>('receipt');
   const [purchaseInvoice, setPurchaseInvoice] = useState<PurchaseInvoiceData | null>(null);
@@ -292,17 +299,25 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   const [purRestockQty, setPurRestockQty] = useState(0);
   const [savingPurchase, setSavingPurchase] = useState(false);
 
-  // Cleanup print class after browser print completes
-  useEffect(() => {
-    const handleAfterPrint = () => {
-      document.body.classList.remove('pos-printing');
-    };
-    window.addEventListener('afterprint', handleAfterPrint);
-    return () => {
-      window.removeEventListener('afterprint', handleAfterPrint);
-      document.body.classList.remove('pos-printing');
-    };
-  }, []);
+  // Filtered POS orders for redesigned Order Summary page
+  const filteredSummaryOrders = useMemo(() => {
+    const q = ordersSearchQuery.trim().toLowerCase();
+    return posOrders.filter((ord) => {
+      if (ordersPaymentFilter === 'room_folio') {
+        if (ord.paymentMethod !== 'Room Folio' && ord.paymentStatus !== 'room_folio') return false;
+      } else if (ordersPaymentFilter === 'direct') {
+        if (ord.paymentMethod === 'Room Folio' || ord.paymentStatus === 'room_folio') return false;
+      }
+      if (ordersStatusFilter !== 'all' && ord.kitchenStatus !== ordersStatusFilter) {
+        return false;
+      }
+      if (q) {
+        const hay = `${ord.orderNumber} ${ord.guestName || ''} ${ord.tableOrRoom || ''} ${ord.itemsSummary || ''} ${ord.paymentMethod || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [posOrders, ordersSearchQuery, ordersPaymentFilter, ordersStatusFilter]);
 
   // In-house guests synced live from PMS reservations
   const inHouseGuests = useMemo(
@@ -673,53 +688,68 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         actorRole,
       });
 
-      if (created) {
-        setOrderLineCache((prev) => ({ ...prev, [created.id]: snapshotLines }));
-        setPrintFormat('receipt');
-        setPrintDoc({
-          orderNumber: created.orderNumber,
-          orderDate: created.orderDate || todayIso,
-          serviceType: created.serviceType,
-          tableOrRoom: created.tableOrRoom,
-          guestName: created.guestName || 'Walk-in Guest',
-          itemsSummary: created.itemsSummary,
-          itemCount: created.itemCount,
-          lineItems: snapshotLines,
-          subtotalNgn: created.subtotalNgn,
-          discountNgn: created.discountNgn || 0,
-          serviceChargeNgn: created.serviceChargeNgn || 0,
-          serviceChargeRatePct,
-          vatNgn: created.vatNgn || 0,
-          taxRatePct,
-          totalNgn: created.totalNgn,
-          paymentMethod: created.paymentMethod,
-          paymentStatus: created.paymentStatus,
-          notes: created.notes,
-          isPreview: false,
-        });
+      if (!created) {
+        setPosError('Unable to complete purchase. Please verify your connection and try again.');
+        return;
       }
+
+      setOrderLineCache((prev) => ({ ...prev, [created.id]: snapshotLines }));
+      const printablePayload: PrintablePosDocument = {
+        orderNumber: created.orderNumber,
+        orderDate: created.orderDate || todayIso,
+        serviceType: created.serviceType,
+        tableOrRoom: created.tableOrRoom,
+        guestName: created.guestName || 'Walk-in Guest',
+        itemsSummary: created.itemsSummary,
+        itemCount: created.itemCount,
+        lineItems: snapshotLines,
+        subtotalNgn: created.subtotalNgn,
+        discountNgn: created.discountNgn || 0,
+        serviceChargeNgn: created.serviceChargeNgn || 0,
+        serviceChargeRatePct,
+        vatNgn: created.vatNgn || 0,
+        taxRatePct,
+        totalNgn: created.totalNgn,
+        paymentMethod: created.paymentMethod,
+        paymentStatus: created.paymentStatus,
+        notes: created.notes,
+        isPreview: false,
+      };
 
       onNotify(
         paymentMethod === 'Room Folio' && linkedRes
-          ? `Charged ${formatNgn(totalNgn)} to Room ${linkedRes.roomNumber} (${linkedRes.guestName})`
-          : `Payment processed (${formatPaymentMethodLabel(paymentMethod)}): ${formatNgn(totalNgn)}`
+          ? `Charged ${formatNgn(created.totalNgn)} to Room ${linkedRes.roomNumber} (${linkedRes.guestName})`
+          : `Purchase completed (${formatPaymentMethodLabel(paymentMethod)}): ${formatNgn(created.totalNgn)}`
       );
       clearSale();
+      // Immediately ask the user whether to print the receipt/invoice or close
+      setCompletedOrderPrompt(printablePayload);
     } catch (err) {
       setPosError(
-        err instanceof Error ? err.message : 'Unable to process POS order. Please try again.'
+        err instanceof Error ? err.message : 'Unable to complete purchase. Please try again.'
       );
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Trigger native print using dedicated #pos-print-portal
+  // Reliable standalone iframe printing for 80mm thermal receipt or A4 invoice
+  const handlePrintPosDoc = (docData: PrintablePosDocument, mode: 'receipt' | 'invoice') => {
+    const ok = printPosOrderDocument({
+      property,
+      doc: docData,
+      mode,
+      receiptHeaderNote,
+      receiptFooterNote,
+    });
+    if (!ok) {
+      setPosError('Unable to open print dialog. Use Download PDF instead.');
+    }
+  };
+
   const handleTriggerBrowserPrint = () => {
-    document.body.classList.add('pos-printing');
-    window.setTimeout(() => {
-      window.print();
-    }, 60);
+    if (!printDoc) return;
+    handlePrintPosDoc(printDoc, printFormat);
   };
 
   // Download crisp PDF (80mm Thermal Receipt OR A4 Formal Invoice)
@@ -1499,7 +1529,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         {/* Top Bar: POS – Point of Sale + Room Selector + Module Tabs + Property Admin Controls */}
         <div className="bg-white border border-slate-200 rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="font-display text-xl font-extrabold text-[#0a367a] tracking-tight">
+            <h1 className="font-display text-lg sm:text-xl font-bold text-[#061f4d] tracking-tight">
               POS – Point of Sale
             </h1>
             <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
@@ -1524,8 +1554,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <ChefHat className="w-3.5 h-3.5" />
-                <span>Orders &amp; KDS ({posOrders.length})</span>
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span>Order Summary ({posOrders.length})</span>
               </button>
               <button
                 type="button"
@@ -2008,12 +2038,20 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               </div>
             </div>
 
-            {/* RIGHT COLUMN (5/12 on Tablet & Desktop): Current Sale Panel */}
-            <div className="md:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs md:sticky md:top-4">
+            {/* RIGHT COLUMN (5/12 on Tablet & Desktop): Order Summary Panel */}
+            <div className="md:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs md:sticky md:top-4 flex flex-col">
               {/* Dark Blue Header */}
               <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
-                <h2 className="font-display text-base font-bold tracking-tight">Current Sale</h2>
-                <span className="font-mono-tabular text-xs font-semibold text-blue-100">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Receipt className="w-4 h-4 text-blue-200 shrink-0" />
+                  <h2 className="font-display text-sm font-bold tracking-tight">Order Summary</h2>
+                  {itemCount > 0 && (
+                    <span className="px-2 py-0.5 rounded bg-white/15 text-[11px] font-mono-tabular font-bold text-white">
+                      {itemCount} item{itemCount === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </div>
+                <span className="font-mono-tabular text-xs font-semibold text-blue-100 shrink-0">
                   #{previewOrderNumber}
                 </span>
               </div>
@@ -2023,7 +2061,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 {selectedInHouseGuest ? (
                   <div className="flex items-center gap-2 min-w-0">
                     <BedDouble className="w-4 h-4 text-[#0a367a] shrink-0" />
-                    <span className="font-bold text-slate-900">
+                    <span className="font-bold text-[#061f4d]">
                       Room {selectedInHouseGuest.roomNumber}
                     </span>
                     <span className="text-slate-600 truncate">
@@ -2062,21 +2100,20 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 </select>
               </div>
 
-              {/* Itemized Cart Table */}
+              {/* Itemized Cart List */}
               <div className="px-4 pt-3 pb-2">
-                <div className="grid grid-cols-12 text-[11px] font-bold text-slate-600 pb-2 border-b border-slate-200">
-                  <span className="col-span-4">Item</span>
+                <div className="grid grid-cols-12 text-[11px] font-bold text-slate-500 uppercase tracking-wider pb-2 border-b border-slate-200">
+                  <span className="col-span-5">Item</span>
                   <span className="col-span-3 text-center">Qty</span>
-                  <span className="col-span-2 text-right">Unit</span>
-                  <span className="col-span-2 text-right">Total</span>
+                  <span className="col-span-3 text-right">Amount</span>
                   <span className="col-span-1" />
                 </div>
 
                 {cart.length === 0 ? (
                   <div className="py-10 text-center space-y-1">
-                    <p className="text-xs font-semibold text-slate-500">No items in current sale</p>
+                    <p className="text-xs font-semibold text-slate-600">No items added yet</p>
                     <p className="text-[11px] text-slate-400">
-                      Click any product on the left to add it to the order.
+                      Select products from the menu on the left to build this order.
                     </p>
                   </div>
                 ) : (
@@ -2086,9 +2123,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                         key={line.id}
                         className="grid grid-cols-12 items-center py-2.5 text-xs gap-1"
                       >
-                        <span className="col-span-4 font-semibold text-slate-900 truncate pr-1">
-                          {line.name}
-                        </span>
+                        <div className="col-span-5 min-w-0 pr-1">
+                          <p className="font-semibold text-slate-900 truncate">{line.name}</p>
+                          <p className="text-[11px] font-mono-tabular text-slate-500">
+                            {formatNgn(line.priceNgn)} each
+                          </p>
+                        </div>
                         <div className="col-span-3 flex items-center justify-center gap-1">
                           <button
                             type="button"
@@ -2110,10 +2150,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                             <Plus className="w-3 h-3" />
                           </button>
                         </div>
-                        <span className="col-span-2 text-right font-mono-tabular text-slate-600 text-[11px]">
-                          {formatNgn(line.priceNgn)}
-                        </span>
-                        <span className="col-span-2 text-right font-mono-tabular font-bold text-slate-900 text-[11px]">
+                        <span className="col-span-3 text-right font-mono-tabular font-bold text-[#061f4d]">
                           {formatNgn(line.priceNgn * line.qty)}
                         </span>
                         <div className="col-span-1 flex justify-end">
@@ -2132,9 +2169,9 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 )}
               </div>
 
-              {/* Order Summary (Subtotal, Discount, Service Charge, Tax, Mint Total) */}
-              <div className="px-4 py-3 border-t border-slate-200 space-y-1.5 text-xs">
-                <div className="flex items-center justify-between text-slate-700">
+              {/* Financial Breakdown */}
+              <div className="px-4 py-3 border-t border-slate-200 bg-slate-50/60 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between text-slate-600">
                   <span>Subtotal</span>
                   <span className="font-mono-tabular font-semibold text-slate-900">
                     {formatNgn(subtotalNgn)}
@@ -2149,7 +2186,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   </div>
                 )}
                 {serviceChargeRatePct > 0 && (
-                  <div className="flex items-center justify-between text-slate-700">
+                  <div className="flex items-center justify-between text-slate-600">
                     <span>Service Charge ({serviceChargeRatePct}%)</span>
                     <span className="font-mono-tabular font-semibold text-slate-900">
                       {formatNgn(serviceChargeNgn)}
@@ -2157,7 +2194,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   </div>
                 )}
                 {taxRatePct > 0 && (
-                  <div className="flex items-center justify-between text-slate-700">
+                  <div className="flex items-center justify-between text-slate-600">
                     <span>Tax / VAT ({taxRatePct}%)</span>
                     <span className="font-mono-tabular font-semibold text-slate-900">
                       {formatNgn(vatNgn)}
@@ -2167,15 +2204,17 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               </div>
 
               <div className="px-4 py-3 bg-blue-50 border-y border-blue-200 flex items-center justify-between">
-                <span className="font-display text-base font-extrabold text-[#0a367a]">Total</span>
-                <span className="font-mono-tabular text-xl font-extrabold text-slate-900">
+                <span className="font-display text-sm font-extrabold text-[#0a367a] uppercase tracking-wide">
+                  Total Payable
+                </span>
+                <span className="font-mono-tabular text-xl font-extrabold text-[#061f4d]">
                   {formatNgn(totalNgn)}
                 </span>
               </div>
 
-              {/* Payment Method 4-Tile Selector (Card | Cash | Bank Transfer | Room Charge) */}
+              {/* Payment Method Selector */}
               <div className="p-4 space-y-3">
-                <p className="font-display text-xs font-bold text-slate-900">Payment Method</p>
+                <p className="font-display text-xs font-bold text-[#061f4d]">Payment Method</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {(
                     [
@@ -2206,7 +2245,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 </div>
 
                 {paymentMethod === 'Room Folio' && (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-2.5 text-[11px] text-emerald-950 flex items-center justify-between gap-2">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-2.5 text-[11px] text-[#061f4d] flex items-center justify-between gap-2">
                     {selectedInHouseGuest ? (
                       <>
                         <span>
@@ -2233,7 +2272,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   </p>
                 )}
 
-                {/* Bottom Action Buttons: Print Receipt | Process Payment */}
+                {/* Bottom Action Buttons: Print Receipt | Complete Purchase */}
                 <div className="grid grid-cols-12 gap-2.5 pt-1">
                   <button
                     type="button"
@@ -2250,7 +2289,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     className="col-span-7 h-11 inline-flex items-center justify-center gap-2 rounded-xl bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-bold disabled:opacity-50 cursor-pointer shadow-xs"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>{submitting ? 'Processing...' : 'Process Payment'}</span>
+                    <span>{submitting ? 'Completing...' : 'Complete Purchase'}</span>
                   </button>
                 </div>
               </div>
@@ -2259,114 +2298,237 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 2: ORDERS, KITCHEN DISPLAY (KDS) & F&B PURCHASES                     */}
+        {/* VIEW 2: REDESIGNED POS ORDER SUMMARY & F&B PURCHASES                      */}
         {/* ========================================================================= */}
         {posModuleTab === 'orders' && (
-          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setOrdersSubTab('kds')}
-                  className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer ${
-                    ordersSubTab === 'kds'
-                      ? 'bg-[#0a367a] text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <ChefHat className="w-3.5 h-3.5" />
-                  <span>Orders &amp; KDS ({posOrders.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOrdersSubTab('purchases')}
-                  className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer ${
-                    ordersSubTab === 'purchases'
-                      ? 'bg-[#0a367a] text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <ShoppingBag className="w-3.5 h-3.5" />
-                  <span>F&amp;B Purchases ({posPurchasesLedger.length})</span>
-                </button>
+          <div className="space-y-4">
+            {/* Order Summary KPI Strip */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <p className="text-xs font-semibold text-slate-500">Total POS Orders</p>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1">
+                  {posOrders.length}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {posDashboardMetrics.todayOrdersCount} recorded today
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setPosModuleTab('terminal')}
-                className="text-xs font-semibold text-[#0a367a] hover:underline cursor-pointer"
-              >
-                + New POS Sale
-              </button>
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <p className="text-xs font-semibold text-slate-500">Gross POS Sales</p>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#0a367a] mt-1">
+                  {formatNgn(posDashboardMetrics.allTimeRevenue)}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Avg ticket {formatNgn(posDashboardMetrics.avgTicketNgn)}
+                </p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <p className="text-xs font-semibold text-slate-500">Room Folio Charges</p>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#0a367a] mt-1">
+                  {formatNgn(posDashboardMetrics.billedToRoomsTotal)}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Linked to active stays</p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <p className="text-xs font-semibold text-slate-500">Direct Settlements</p>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-emerald-700 mt-1">
+                  {formatNgn(posDashboardMetrics.directPaidTotal)}
+                </p>
+                <p className="text-[11px] text-slate-500 font-mono-tabular mt-0.5">
+                  Card {formatNgn(posDashboardMetrics.cardTotal)} · Cash{' '}
+                  {formatNgn(posDashboardMetrics.cashTotal)}
+                </p>
+              </div>
             </div>
 
-            {ordersSubTab === 'kds' ? (
-              posOrders.length === 0 ? (
-                <p className="text-xs text-slate-500 py-8 text-center">
-                  No POS orders recorded yet. Complete a sale from the POS Terminal to see it here.
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
-                        <th className="py-3 px-3">Order #</th>
-                        <th className="py-3 px-3">Date</th>
-                        <th className="py-3 px-3">Room / Table</th>
-                        <th className="py-3 px-3">Items</th>
-                        <th className="py-3 px-3">Payment</th>
-                        <th className="py-3 px-3">Kitchen</th>
-                        <th className="py-3 px-3 text-right">Total</th>
-                        <th className="py-3 px-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {posOrders.map((ord) => (
-                        <tr key={ord.id} className="hover:bg-slate-50/70">
-                          <td className="py-3 px-3 font-mono-tabular font-bold text-slate-900 whitespace-nowrap">
-                            #{ord.orderNumber}
-                          </td>
-                          <td className="py-3 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
-                            {ord.orderDate}
-                          </td>
-                          <td className="py-3 px-3">
-                            <p className="font-semibold text-slate-900">{ord.tableOrRoom}</p>
-                            {ord.guestName && (
-                              <p className="text-[11px] text-slate-500">{ord.guestName}</p>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 text-slate-700 max-w-xs">
-                            <p className="truncate">{ord.itemsSummary}</p>
-                            {ord.notes && (
-                              <p className="text-[10px] text-amber-800 truncate">
-                                Note: {ord.notes}
-                              </p>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-                                ord.paymentMethod === 'Room Folio' ||
-                                ord.paymentStatus === 'room_folio'
-                                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                              }`}
-                            >
-                              {formatPaymentMethodLabel(ord.paymentMethod)}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            <div className="flex items-center gap-1.5">
+            {/* Order Summary Main Card */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <div className="bg-[#0a367a] text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <ClipboardList className="w-4 h-4 text-blue-200" />
+                  <div>
+                    <h2 className="font-display text-sm font-bold">POS Order Summary</h2>
+                    <p className="text-[11px] text-blue-100">
+                      Review completed purchases, print receipts or invoices, and manage order status
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPosModuleTab('terminal')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-[#0a367a] hover:bg-blue-50 text-xs font-bold cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New POS Sale</span>
+                </button>
+              </div>
+
+              {/* Sub-Tabs & Filter Toolbar */}
+              <div className="px-5 py-3.5 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setOrdersSubTab('orders')}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
+                      ordersSubTab === 'orders'
+                        ? 'bg-[#0a367a] text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>POS Orders ({posOrders.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrdersSubTab('purchases')}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
+                      ordersSubTab === 'purchases'
+                        ? 'bg-[#0a367a] text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    <span>F&amp;B Purchases ({posPurchasesLedger.length})</span>
+                  </button>
+                </div>
+
+                {ordersSubTab === 'orders' && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={ordersSearchQuery}
+                        onChange={(e) => setOrdersSearchQuery(e.target.value)}
+                        placeholder="Search order #, room, guest..."
+                        className="h-8 pl-8 pr-3 w-52 border border-slate-200 bg-white rounded-lg text-xs focus:outline-none focus:border-[#0a367a]"
+                      />
+                    </div>
+                    <select
+                      value={ordersPaymentFilter}
+                      onChange={(e) =>
+                        setOrdersPaymentFilter(e.target.value as 'all' | 'direct' | 'room_folio')
+                      }
+                      className="h-8 px-2.5 border border-slate-200 bg-white rounded-lg text-xs font-semibold text-slate-700"
+                    >
+                      <option value="all">All Payments</option>
+                      <option value="direct">Direct Paid</option>
+                      <option value="room_folio">Room Charge</option>
+                    </select>
+                    <select
+                      value={ordersStatusFilter}
+                      onChange={(e) =>
+                        setOrdersStatusFilter(
+                          e.target.value as 'all' | PosOrderRecord['kitchenStatus']
+                        )
+                      }
+                      className="h-8 px-2.5 border border-slate-200 bg-white rounded-lg text-xs font-semibold text-slate-700"
+                    >
+                      <option value="all">All Statuses</option>
+                      <option value="queued">Queued</option>
+                      <option value="preparing">Preparing</option>
+                      <option value="ready">Ready</option>
+                      <option value="served">Served</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {ordersSubTab === 'orders' ? (
+                filteredSummaryOrders.length === 0 ? (
+                  <div className="py-12 px-4 text-center space-y-1">
+                    <p className="text-xs font-semibold text-slate-600">
+                      {posOrders.length === 0
+                        ? 'No POS orders recorded yet.'
+                        : 'No orders match your current filter.'}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Complete a sale from the POS Terminal to view and print receipts here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {filteredSummaryOrders.map((ord) => {
+                      const isRoomFolio =
+                        ord.paymentMethod === 'Room Folio' || ord.paymentStatus === 'room_folio';
+                      const printable = buildPrintableFromOrder(ord);
+                      return (
+                        <div
+                          key={ord.id}
+                          className="p-4 sm:px-5 hover:bg-blue-50/30 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs"
+                        >
+                          <div className="space-y-1.5 min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono-tabular font-extrabold text-[#061f4d]">
+                                #{ord.orderNumber}
+                              </span>
+                              <span className="font-mono-tabular text-[11px] text-slate-500">
+                                {ord.orderDate}
+                              </span>
                               <span
-                                className={`text-[11px] font-semibold capitalize ${
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  isRoomFolio
+                                    ? 'bg-blue-50 text-[#0a367a] border border-blue-200'
+                                    : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                }`}
+                              >
+                                {formatPaymentMethodLabel(ord.paymentMethod)}
+                              </span>
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold capitalize ${
                                   ord.kitchenStatus === 'served'
-                                    ? 'text-emerald-700'
+                                    ? 'bg-emerald-50 text-emerald-700'
                                     : ord.kitchenStatus === 'ready'
-                                      ? 'text-blue-700'
-                                      : 'text-amber-700'
+                                      ? 'bg-sky-50 text-sky-700'
+                                      : 'bg-amber-50 text-amber-800'
                                 }`}
                               >
                                 {ord.kitchenStatus}
                               </span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-700">
+                              <span className="font-semibold text-slate-900">
+                                {ord.tableOrRoom}
+                              </span>
+                              {ord.guestName && (
+                                <span className="text-slate-500">Guest: {ord.guestName}</span>
+                              )}
+                              <span className="text-slate-500">· {ord.serviceType}</span>
+                            </div>
+
+                            <p className="text-slate-700 leading-relaxed">{ord.itemsSummary}</p>
+
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono-tabular text-slate-500">
+                              <span>Subtotal: {formatNgn(ord.subtotalNgn)}</span>
+                              {(ord.discountNgn || 0) > 0 && (
+                                <span className="text-rose-700">
+                                  Discount: -{formatNgn(ord.discountNgn || 0)}
+                                </span>
+                              )}
+                              {(ord.serviceChargeNgn || 0) > 0 && (
+                                <span>Service: {formatNgn(ord.serviceChargeNgn || 0)}</span>
+                              )}
+                              {(ord.vatNgn || 0) > 0 && (
+                                <span>Tax: {formatNgn(ord.vatNgn || 0)}</span>
+                              )}
+                              {ord.notes && (
+                                <span className="font-sans text-amber-800">
+                                  Note: {ord.notes}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap lg:flex-col lg:items-end justify-between gap-2.5 shrink-0">
+                            <div className="text-left lg:text-right">
+                              <p className="text-[11px] text-slate-500 font-semibold">Order Total</p>
+                              <p className="font-display font-mono-tabular text-lg font-extrabold text-[#0a367a]">
+                                {formatNgn(ord.totalNgn)}
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5">
                               {ord.kitchenStatus !== 'served' && (
                                 <button
                                   type="button"
@@ -2383,126 +2545,124 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                                       nextKitchenStatus: nextStatus,
                                     });
                                     onNotify(
-                                      `Updated #${ord.orderNumber} kitchen status to ${nextStatus}`
+                                      `Updated #${ord.orderNumber} status to ${nextStatus}`
                                     );
                                   }}
-                                  className="px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-100 text-[10px] font-semibold text-slate-700 cursor-pointer"
+                                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-[11px] font-semibold text-slate-700 cursor-pointer"
                                 >
-                                  Advance
+                                  Mark{' '}
+                                  {ord.kitchenStatus === 'queued'
+                                    ? 'Preparing'
+                                    : ord.kitchenStatus === 'preparing'
+                                      ? 'Ready'
+                                      : 'Served'}
                                 </button>
                               )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono-tabular font-bold text-slate-900 whitespace-nowrap">
-                            {formatNgn(ord.totalNgn)}
-                          </td>
-                          <td className="py-3 px-3 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center gap-1.5">
                               <button
                                 type="button"
-                                onClick={() => openOrderDocumentModal(ord, 'receipt')}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold cursor-pointer"
+                                onClick={() => handlePrintPosDoc(printable, 'receipt')}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-[11px] font-semibold cursor-pointer"
                               >
                                 <Printer className="w-3 h-3" />
-                                <span>Receipt</span>
+                                <span>Print Receipt</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => openOrderDocumentModal(ord, 'invoice')}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#0a367a] font-semibold cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#0a367a] text-[11px] font-semibold cursor-pointer"
                               >
                                 <FileText className="w-3 h-3" />
-                                <span>Invoice</span>
+                                <span>Invoice / PDF</span>
                               </button>
                               {canManageMenu && (
                                 <button
                                   type="button"
                                   onClick={() => openEditOrderModal(ord)}
                                   title="Edit order & transaction details (Property Admin)"
-                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 bg-white hover:border-[#0a367a] text-slate-700 hover:text-[#0a367a] font-semibold cursor-pointer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:border-[#0a367a] text-slate-700 hover:text-[#0a367a] text-[11px] font-semibold cursor-pointer"
                                 >
                                   <Pencil className="w-3 h-3" />
                                   <span>Edit</span>
                                 </button>
                               )}
                             </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : posPurchasesLedger.length === 0 ? (
+                <p className="text-xs text-slate-500 py-10 text-center">
+                  No kitchen or bar supply purchases recorded yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                        <th className="py-3 px-4">Date</th>
+                        <th className="py-3 px-3">Ref</th>
+                        <th className="py-3 px-3">Description</th>
+                        <th className="py-3 px-3">Method</th>
+                        <th className="py-3 px-3 text-right">Amount</th>
+                        <th className="py-3 px-4 text-right">Invoice</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {posPurchasesLedger.map((entry) => (
+                        <tr key={entry.id} className="hover:bg-slate-50">
+                          <td className="py-3 px-4 font-mono-tabular text-slate-600">
+                            {entry.entryDate}
+                          </td>
+                          <td className="py-3 px-3 font-mono-tabular font-semibold text-slate-800">
+                            {entry.reference}
+                          </td>
+                          <td className="py-3 px-3 text-slate-800">{entry.description}</td>
+                          <td className="py-3 px-3 text-slate-600">{entry.paymentMethod}</td>
+                          <td className="py-3 px-3 text-right font-mono-tabular font-bold text-rose-700">
+                            {formatNgn(entry.amountNgn)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPurchaseInvoice({
+                                  invoiceNumber: entry.reference || entry.id,
+                                  date: entry.entryDate,
+                                  title: 'Purchase Invoice',
+                                  subtitle: 'Recorded F&B purchase invoice',
+                                  partyLabel: 'Category',
+                                  partyName: entry.category,
+                                  category: entry.category,
+                                  paymentMethod: entry.paymentMethod,
+                                  status: 'Paid',
+                                  items: [
+                                    {
+                                      description: entry.description,
+                                      quantity: 1,
+                                      unitCostNgn: entry.amountNgn,
+                                      totalNgn: entry.amountNgn,
+                                    },
+                                  ],
+                                  subtotalNgn: entry.amountNgn,
+                                  vatNgn: 0,
+                                  totalNgn: entry.amountNgn,
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold cursor-pointer"
+                            >
+                              <Printer className="w-3 h-3" />
+                              <span>Print Invoice</span>
+                            </button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              )
-            ) : posPurchasesLedger.length === 0 ? (
-              <p className="text-xs text-slate-500 py-8 text-center">
-                No kitchen or bar supply purchases recorded yet.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
-                      <th className="py-3 px-3">Date</th>
-                      <th className="py-3 px-3">Ref</th>
-                      <th className="py-3 px-3">Description</th>
-                      <th className="py-3 px-3">Method</th>
-                      <th className="py-3 px-3 text-right">Amount</th>
-                      <th className="py-3 px-3 text-right">Invoice</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {posPurchasesLedger.map((entry) => (
-                      <tr key={entry.id} className="hover:bg-slate-50">
-                        <td className="py-3 px-3 font-mono-tabular text-slate-600">
-                          {entry.entryDate}
-                        </td>
-                        <td className="py-3 px-3 font-mono-tabular font-semibold text-slate-800">
-                          {entry.reference}
-                        </td>
-                        <td className="py-3 px-3 text-slate-800">{entry.description}</td>
-                        <td className="py-3 px-3 text-slate-600">{entry.paymentMethod}</td>
-                        <td className="py-3 px-3 text-right font-mono-tabular font-bold text-rose-700">
-                          {formatNgn(entry.amountNgn)}
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPurchaseInvoice({
-                                invoiceNumber: entry.reference || entry.id,
-                                date: entry.entryDate,
-                                title: 'Purchase Invoice',
-                                subtitle: 'Recorded F&B purchase invoice',
-                                partyLabel: 'Category',
-                                partyName: entry.category,
-                                category: entry.category,
-                                paymentMethod: entry.paymentMethod,
-                                status: 'Paid',
-                                items: [
-                                  {
-                                    description: entry.description,
-                                    quantity: 1,
-                                    unitCostNgn: entry.amountNgn,
-                                    totalNgn: entry.amountNgn,
-                                  },
-                                ],
-                                subtotalNgn: entry.amountNgn,
-                                vatNgn: 0,
-                                totalNgn: entry.amountNgn,
-                              })
-                            }
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold cursor-pointer"
-                          >
-                            <Printer className="w-3 h-3" />
-                            <span>Print Invoice</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
@@ -2511,12 +2671,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         {/* ========================================================================= */}
         {posModuleTab === 'dashboard' && (
           <div className="space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <p className="text-xs font-semibold text-slate-500">
                   Today&apos;s POS Sales
                 </p>
-                <p className="font-mono-tabular text-2xl font-bold text-[#0a367a]">
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d]">
                   {formatNgn(posDashboardMetrics.todayRevenue)}
                 </p>
                 <p className="text-[11px] text-slate-500">
@@ -2525,10 +2685,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 </p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <p className="text-xs font-semibold text-slate-500">
                   Charged to Guest Rooms
                 </p>
-                <p className="font-mono-tabular text-2xl font-bold text-[#1c46be]">
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#0a367a]">
                   {formatNgn(posDashboardMetrics.billedToRoomsTotal)}
                 </p>
                 <p className="text-[11px] text-slate-500">
@@ -2536,10 +2696,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 </p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <p className="text-xs font-semibold text-slate-500">
                   Direct Settlements
                 </p>
-                <p className="font-mono-tabular text-2xl font-bold text-slate-900">
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d]">
                   {formatNgn(posDashboardMetrics.directPaidTotal)}
                 </p>
                 <p className="text-[11px] text-slate-500 font-mono-tabular">
@@ -2548,10 +2708,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 </p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <p className="text-xs font-semibold text-slate-500">
                   Average Ticket
                 </p>
-                <p className="font-mono-tabular text-2xl font-bold text-slate-900">
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d]">
                   {formatNgn(posDashboardMetrics.avgTicketNgn)}
                 </p>
                 <p className="text-[11px] text-slate-500">
@@ -2562,14 +2722,14 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
             {/* In-House Guests Table for 1-Click Room Charging */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
+              <div className="bg-[#0a367a] text-white px-5 py-3 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <BedDouble className="w-4 h-4 text-[#0a367a]" />
-                  <h2 className="font-display text-sm font-bold text-slate-900">
+                  <BedDouble className="w-4 h-4 text-blue-200" />
+                  <h2 className="font-display text-sm font-bold">
                     Current In-House Guests (Bill to Room)
                   </h2>
                 </div>
-                <span className="font-mono-tabular text-xs font-semibold text-[#0a367a]">
+                <span className="font-mono-tabular text-xs font-semibold text-blue-100">
                   {inHouseGuests.length} checked-in
                 </span>
               </div>
@@ -2631,6 +2791,124 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       </div>
 
       {/* ========================================================================= */}
+      {/* ALERT MODAL: PURCHASE COMPLETED — PRINT RECEIPT / INVOICE OR CLOSE        */}
+      {/* ========================================================================= */}
+      {completedOrderPrompt && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="no-print fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+        >
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-[#0a367a] text-white px-5 py-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0" />
+                <div>
+                  <h3 className="font-display text-sm font-bold">
+                    Purchase Completed Successfully
+                  </h3>
+                  <p className="text-[11px] text-blue-100 font-mono-tabular">
+                    Order #{completedOrderPrompt.orderNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCompletedOrderPrompt(null)}
+                aria-label="Close purchase confirmation"
+                className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-white/15 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="rounded-xl bg-blue-50/60 border border-blue-200 p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Account / Guest</span>
+                  <span className="font-bold text-[#061f4d] text-right truncate max-w-[200px]">
+                    {completedOrderPrompt.tableOrRoom}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Payment Method</span>
+                  <span className="font-semibold text-slate-900">
+                    {formatPaymentMethodLabel(completedOrderPrompt.paymentMethod)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Items</span>
+                  <span className="font-mono-tabular font-semibold text-slate-900">
+                    {completedOrderPrompt.itemCount} item
+                    {completedOrderPrompt.itemCount === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-blue-200/80">
+                  <span className="font-bold text-[#0a367a]">Total Paid</span>
+                  <span className="font-mono-tabular text-base font-extrabold text-[#061f4d]">
+                    {formatNgn(completedOrderPrompt.totalNgn)}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-center font-semibold text-slate-800">
+                Would you like to print the receipt or invoice now?
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const docToPrint = completedOrderPrompt;
+                    setCompletedOrderPrompt(null);
+                    handlePrintPosDoc(docToPrint, 'receipt');
+                  }}
+                  className="h-10 inline-flex items-center justify-center gap-1.5 px-4 rounded-xl bg-[#0a367a] hover:bg-[#07275a] text-white font-bold cursor-pointer shadow-xs"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Yes, Print Receipt</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const docToPrint = completedOrderPrompt;
+                    setCompletedOrderPrompt(null);
+                    handlePrintPosDoc(docToPrint, 'invoice');
+                  }}
+                  className="h-10 inline-flex items-center justify-center gap-1.5 px-4 rounded-xl border border-[#0a367a] bg-blue-50 hover:bg-blue-100 text-[#0a367a] font-bold cursor-pointer"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Yes, Print Invoice</span>
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const docToView = completedOrderPrompt;
+                    setCompletedOrderPrompt(null);
+                    setPrintFormat('receipt');
+                    setPrintDoc(docToView);
+                  }}
+                  className="text-xs font-semibold text-[#0a367a] hover:underline cursor-pointer"
+                >
+                  Preview / Download PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCompletedOrderPrompt(null)}
+                  className="h-9 px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold cursor-pointer"
+                >
+                  No, Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* MODAL: PRINT RECEIPT (80MM) & PRINT INVOICE (A4) + PDF DOWNLOAD           */}
       {/* ========================================================================= */}
       {printDoc && (
@@ -2638,13 +2916,13 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden my-auto">
             <div className="bg-[#0a367a] text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <Receipt className="w-5 h-5 text-emerald-200" />
+                <Receipt className="w-5 h-5 text-blue-200" />
                 <div>
                   <h3 className="font-display text-sm font-bold">
                     {printDoc.isPreview ? 'Sale Preview' : 'Transaction Completed'} · #
                     {printDoc.orderNumber}
                   </h3>
-                  <p className="text-[11px] text-emerald-100">
+                  <p className="text-[11px] text-blue-100">
                     Print formatted receipt or tax invoice, or download as PDF
                   </p>
                 </div>
@@ -2711,14 +2989,6 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* Dedicated Print Portal rendered directly under <body> for clean window.print() */}
-      {printDoc &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div id="pos-print-portal">{renderPrintableDocument(printDoc, printFormat)}</div>,
-          document.body
-        )}
 
       {/* ========================================================================= */}
       {/* PROPERTY ADMIN MODAL: ADD / EDIT / DELETE POS PRODUCT                     */}

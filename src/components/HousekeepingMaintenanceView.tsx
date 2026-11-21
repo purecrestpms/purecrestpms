@@ -283,9 +283,9 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="font-display text-xl font-bold text-slate-900">
+          <h1 className="font-display text-lg sm:text-xl font-bold text-[#061f4d]">
             {cms.pages[section].title}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -300,7 +300,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
               ? setShowTaskForm((v) => !v)
               : setShowMaintForm((v) => !v)
           }
-          className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap"
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-[#0a367a] hover:bg-[#07275a] text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>{cms.pages[section].ctaLabel}</span>
@@ -445,7 +445,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                 className="bg-white border border-slate-200 rounded-xl px-4 py-3.5"
               >
                 <p className="text-xs font-medium text-slate-500">{stat.label}</p>
-                <p className={`font-mono-tabular text-2xl font-bold mt-1 ${stat.accent}`}>
+                <p className={`font-display font-mono-tabular text-xl sm:text-2xl font-extrabold mt-1 ${stat.accent}`}>
                   {stat.count}
                 </p>
               </div>
@@ -453,33 +453,33 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
           </div>
 
           {/* Interactive Room Housekeeping Board */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="bg-[#0a367a] text-white px-5 py-3 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="font-display text-sm font-bold text-slate-900">
+                <h2 className="font-display text-sm font-bold">
                   Room Housekeeping Status &amp; Quick Controls
                 </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="text-[11px] text-blue-100 mt-0.5">
                   Update cleanliness status across all property rooms directly from Housekeeping Management.
                 </p>
               </div>
-              <span className="font-mono-tabular text-xs font-semibold text-slate-500">
+              <span className="font-mono-tabular text-xs font-semibold text-blue-100">
                 {sortedRooms.length} room{sortedRooms.length === 1 ? '' : 's'}
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
               {sortedRooms.map((r) => (
                 <div
                   key={r.id}
-                  className="border border-slate-200 rounded-xl p-3.5 space-y-2.5 bg-slate-50/40"
+                  className="border border-slate-200 rounded-xl p-4 space-y-3 bg-white hover:border-[#0a367a]/50 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="font-mono-tabular text-sm font-bold text-slate-900">
+                      <p className="font-mono-tabular text-sm font-bold text-[#061f4d]">
                         {r.roomNumber}
                       </p>
-                      <p className="text-[11px] text-slate-500 truncate">{r.roomType || r.name}</p>
+                      <p className="text-xs text-slate-500 truncate">{r.roomType || r.name}</p>
                     </div>
                     <span
                       className={`text-[11px] font-semibold capitalize shrink-0 ${
@@ -540,9 +540,9 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-emerald-700" />
-              <h2 className="font-display text-sm font-bold text-slate-900">
+            <div className="bg-[#0a367a] text-white px-5 py-3 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-blue-200" />
+              <h2 className="font-display text-sm font-bold">
                 Housekeeping Work Queue
               </h2>
             </div>

@@ -1491,7 +1491,7 @@ export const PROPERTY_PRIVILEGE_OPTIONS: Array<{
   { id: 'guests', label: 'Guest Profiles', group: 'Operations' },
   { id: 'housekeeping', label: 'Housekeeping', group: 'Operations' },
   { id: 'messages', label: 'Messages & Alerts', group: 'Operations' },
-  { id: 'pos_kitchen', label: 'Restaurant POS & KDS', group: 'Food & Supply' },
+  { id: 'pos_kitchen', label: 'Restaurant POS', group: 'Food & Supply' },
   { id: 'inventory', label: 'Store Inventory', group: 'Food & Supply' },
   { id: 'procurement', label: 'Procurement & POs', group: 'Food & Supply' },
   { id: 'accounting', label: 'Accounting Ledger', group: 'Finance & HR' },
@@ -2180,11 +2180,11 @@ export const DEFAULT_CMS_CONTENT: CmsContent = {
       ctaLabel: 'Assign Housekeeping Task',
     },
     pos_kitchen: {
-      navLabel: 'Restaurant POS & KDS',
-      title: 'Restaurant POS & Kitchen Display System (KDS)',
+      navLabel: 'Restaurant POS',
+      title: 'Restaurant POS & Order Management',
       subtitle:
-        'Create dine-in, bar, or room-service tickets in Nigerian Naira (7.5% VAT), post directly to occupied Room Folios, and track live kitchen preparation.',
-      ctaLabel: 'Send Order to Kitchen',
+        'Create dine-in, bar, or room-service tickets in Nigerian Naira, post directly to occupied Room Folios, and track orders.',
+      ctaLabel: 'New POS Order',
     },
     accounting: {
       navLabel: 'Payments',

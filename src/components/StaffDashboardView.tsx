@@ -8,7 +8,6 @@ import {
   CalendarPlus,
   CheckCircle2,
   ClipboardCheck,
-  Coffee,
   Download,
   LogIn,
   LogOut,
@@ -17,9 +16,7 @@ import {
   RefreshCw,
   ShoppingCart,
   Square,
-  UserCheck,
   UserCircle2,
-  UserX,
   Users,
   X,
 } from 'lucide-react';
@@ -396,27 +393,6 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
     }
     return items.slice(0, 5);
   }, [openHousekeepingTasks, openMaintenanceTickets]);
-
-  const attendanceSummary = useMemo(() => {
-    const todayRecs = attendance.filter((a) => a.date === todayIso);
-    const presentIds = new Set<string>();
-    const clockedOutIds = new Set<string>();
-    for (const rec of todayRecs) {
-      const key = rec.staffId || rec.staffName.toLowerCase();
-      if (!rec.clockOutTime) {
-        presentIds.add(key);
-      } else {
-        clockedOutIds.add(key);
-      }
-    }
-    const presentCount = presentIds.size;
-    const completedOrBreakCount = Array.from(clockedOutIds).filter(
-      (id) => !presentIds.has(id)
-    ).length;
-    const activeStaffCount = staffMembers.filter((s) => s.employmentStatus === 'active').length;
-    const absentCount = Math.max(0, activeStaffCount - presentCount - completedOrBreakCount);
-    return { presentCount, completedOrBreakCount, absentCount };
-  }, [attendance, staffMembers, todayIso]);
 
   const filteredRooms = useMemo(() => {
     if (roomFilter === 'vacant') return availableRooms;
@@ -1036,68 +1012,8 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
 
       {/* 3. Operational Row */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Today's Arrivals & Departures */}
-        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
-          <div className="bg-[#0a367a] text-white px-4 py-3">
-            <h2 className="font-display text-sm font-bold">
-              Today&apos;s Arrivals &amp; Departures
-            </h2>
-          </div>
-          <div className="p-4 grid grid-cols-2 divide-x divide-slate-200 flex-1">
-            <div className="pr-3">
-              <p className="text-xs font-bold text-[#061f4d] mb-2.5 text-center">
-                Arrivals ({arrivalsToday.length})
-              </p>
-              {arrivalsToday.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-4">No arrivals</p>
-              ) : (
-                <div className="space-y-2">
-                  {arrivalsToday.slice(0, 4).map((res) => (
-                    <button
-                      key={res.id}
-                      type="button"
-                      onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
-                      className="w-full text-left flex items-center justify-between gap-2 text-xs py-1 px-1.5 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
-                    >
-                      <span className="font-semibold text-slate-800 truncate">{res.guestName}</span>
-                      <span className="font-mono-tabular text-[11px] text-[#0a367a] shrink-0">
-                        {getReservationRoomDisplay(res, rooms).roomNumberLabel}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="pl-3">
-              <p className="text-xs font-bold text-[#061f4d] mb-2.5 text-center">
-                Departures ({departuresToday.length})
-              </p>
-              {departuresToday.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-4">No departures</p>
-              ) : (
-                <div className="space-y-2">
-                  {departuresToday.slice(0, 4).map((res) => (
-                    <button
-                      key={res.id}
-                      type="button"
-                      onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
-                      className="w-full text-left flex items-center justify-between gap-2 text-xs py-1 px-1.5 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
-                    >
-                      <span className="font-semibold text-slate-800 truncate">{res.guestName}</span>
-                      <span className="font-mono-tabular text-[11px] text-amber-700 shrink-0">
-                        {getReservationRoomDisplay(res, rooms).roomNumberLabel}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
         {/* Recent Reservations */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
           <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
             <h2 className="font-display text-sm font-bold">Recent Reservations</h2>
             {canAccess('reservations') && (
@@ -1166,7 +1082,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
 
         {/* Quick Actions */}
-        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
           <div className="bg-[#0a367a] text-white px-4 py-3">
             <h2 className="font-display text-sm font-bold">Quick Actions</h2>
           </div>
@@ -1211,7 +1127,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       </section>
 
       {/* 4. Bottom Operational Row */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Recent POS Transactions */}
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
           <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
@@ -1309,51 +1225,6 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
           )}
         </div>
 
-        {/* Staff Attendance Summary */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
-          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
-            <h2 className="font-display text-sm font-bold">Staff Attendance Summary</h2>
-            {canAccess('shifts_attendance') && (
-              <button
-                type="button"
-                onClick={() => onNavigate('shifts_attendance')}
-                className="no-print inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
-              >
-                <span>View All</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-          <div className="p-4 grid grid-cols-3 divide-x divide-slate-200 flex-1 items-center">
-            <div className="text-center px-2">
-              <div className="inline-flex items-center justify-center gap-1 text-emerald-700 text-xs font-semibold">
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>Present</span>
-              </div>
-              <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1.5">
-                {attendanceSummary.presentCount}
-              </p>
-            </div>
-            <div className="text-center px-2">
-              <div className="inline-flex items-center justify-center gap-1 text-[#0a367a] text-xs font-semibold">
-                <Coffee className="w-3.5 h-3.5" />
-                <span>Off / Out</span>
-              </div>
-              <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1.5">
-                {attendanceSummary.completedOrBreakCount}
-              </p>
-            </div>
-            <div className="text-center px-2">
-              <div className="inline-flex items-center justify-center gap-1 text-rose-600 text-xs font-semibold">
-                <UserX className="w-3.5 h-3.5" />
-                <span>Absent</span>
-              </div>
-              <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1.5">
-                {attendanceSummary.absentCount}
-              </p>
-            </div>
-          </div>
-        </div>
       </section>
 
       {/* 5. Preserved Rooms Overview & Room Photos */}

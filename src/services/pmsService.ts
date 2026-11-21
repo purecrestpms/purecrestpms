@@ -2906,24 +2906,43 @@ export async function recordPosPurchaseWorkflow(params: {
   restockQty?: number;
   actorRole: string;
 }) {
-  const { uid } = getActorContext();
+  const { uid, email } = getActorContext();
   const ledId = cleanId('led');
   const refLabel = `POS-PUR-${Math.floor(100 + Math.random() * 899)}`;
-  const cleanAmount = Math.max(0, Math.round(params.amountNgn));
+  const cleanAmount = Math.max(0, Math.round(Number.isFinite(params.amountNgn) ? params.amountNgn : 0));
+  const cleanItemDesc = (params.itemDescription || '').trim().slice(0, 150) || 'POS Purchase';
+  const cleanSupplier = (params.supplierName || '').trim().slice(0, 70) || 'Supplier';
+  const safeAuthEmails = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(params.property.authorizedEmails) ? params.property.authorizedEmails : []),
+        params.property.adminEmail || '',
+        email || '',
+      ]
+        .map((e) => String(e || '').trim().toLowerCase())
+        .filter((e) => e.length >= 3)
+    )
+  ).slice(0, 100);
+  const authorizedEmails =
+    safeAuthEmails.length > 0 ? safeAuthEmails : ['purecresthospitality@gmail.com'];
+  const cleanEntryDate = (params.entryDate || getLocalIsoDate()).slice(0, 24);
+  const cleanPaymentMethod = (params.paymentMethod || 'Cash NGN').trim().slice(0, 48);
+  const cleanDescription = `${cleanItemDesc} — ${cleanSupplier}`.slice(0, 235);
+
   const batch = writeBatch(db);
   const now = serverTimestamp();
 
   batch.set(doc(db, 'properties', params.property.id, 'ledger_entries', ledId), {
     propertyId: params.property.id,
-    entryDate: params.entryDate || new Date().toISOString().slice(0, 10),
+    entryDate: cleanEntryDate,
     entryType: 'expense',
     category: params.category,
     reference: refLabel,
-    description: `${params.itemDescription.trim().slice(0, 150)} — ${params.supplierName.trim().slice(0, 70)}`,
+    description: cleanDescription,
     amountNgn: cleanAmount,
     vatNgn: 0,
-    paymentMethod: params.paymentMethod || 'Cash NGN',
-    authorizedEmails: params.property.authorizedEmails,
+    paymentMethod: cleanPaymentMethod,
+    authorizedEmails,
     ownerUid: uid,
     createdAt: now,
     updatedAt: now,
@@ -2934,7 +2953,7 @@ export async function recordPosPurchaseWorkflow(params: {
     batch.update(
       doc(db, 'properties', params.property.id, 'inventory_items', params.linkedInventoryItem.id),
       {
-        quantityOnHand: params.linkedInventoryItem.quantityOnHand + qtyDelta,
+        quantityOnHand: Math.max(0, (Number(params.linkedInventoryItem.quantityOnHand) || 0) + qtyDelta),
         updatedAt: now,
       }
     );
@@ -2942,28 +2961,34 @@ export async function recordPosPurchaseWorkflow(params: {
 
   try {
     await batch.commit();
-    await writeAuditLog({
-      propertyId: params.property.id,
-      actorRole: params.actorRole,
-      module: 'Restaurant POS & Supply',
-      action: `Recorded POS Purchase ${refLabel}`,
-      details: `${params.itemDescription.trim()} (${params.supplierName.trim()}) · ₦${cleanAmount.toLocaleString('en-NG')}`,
-      authorizedEmails: params.property.authorizedEmails,
-    });
-    return {
-      id: ledId,
-      reference: refLabel,
-      entryDate: params.entryDate || new Date().toISOString().slice(0, 10),
-      itemDescription: params.itemDescription.trim(),
-      supplierName: params.supplierName.trim(),
-      category: params.category,
-      amountNgn: cleanAmount,
-      paymentMethod: params.paymentMethod || 'Cash NGN',
-    };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `properties/${params.property.id}/ledger_entries/${ledId}`);
     return undefined;
   }
+
+  try {
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Restaurant POS',
+      action: `Recorded POS Purchase ${refLabel}`,
+      details: `${cleanItemDesc} (${cleanSupplier}) · ₦${cleanAmount.toLocaleString('en-NG')}`.slice(0, 480),
+      authorizedEmails,
+    });
+  } catch (auditErr) {
+    console.warn('POS purchase audit log skipped:', auditErr);
+  }
+
+  return {
+    id: ledId,
+    reference: refLabel,
+    entryDate: cleanEntryDate,
+    itemDescription: cleanItemDesc,
+    supplierName: cleanSupplier,
+    category: params.category,
+    amountNgn: cleanAmount,
+    paymentMethod: cleanPaymentMethod,
+  };
 }
 
 export async function submitPosOrderWorkflow(params: {
@@ -2982,13 +3007,15 @@ export async function submitPosOrderWorkflow(params: {
   paymentMethod: PosOrderRecord['paymentMethod'];
   actorRole: string;
 }): Promise<PosOrderRecord | undefined> {
-  const { uid } = getActorContext();
+  const { uid, email } = getActorContext();
   const id = cleanId('pos');
   const orderDate = getLocalIsoDate();
   const dateCompact = orderDate.replace(/-/g, '');
   const orderNumber = `POS-${dateCompact}-${String(Math.floor(100 + Math.random() * 899))}`;
-  const cleanSubtotal = Math.max(0, Math.round(params.subtotalNgn));
-  const cleanDiscount = Math.max(0, Math.min(cleanSubtotal, Math.round(params.discountNgn || 0)));
+  const rawSubtotal = Number.isFinite(params.subtotalNgn) ? params.subtotalNgn : 0;
+  const cleanSubtotal = Math.max(0, Math.round(rawSubtotal));
+  const rawDiscount = Number.isFinite(params.discountNgn ?? 0) ? (params.discountNgn ?? 0) : 0;
+  const cleanDiscount = Math.max(0, Math.min(cleanSubtotal, Math.round(rawDiscount)));
   const discountedSubtotal = Math.max(0, cleanSubtotal - cleanDiscount);
   const defaultServicePct =
     typeof params.property.posServiceChargeRate === 'number'
@@ -2997,18 +3024,42 @@ export async function submitPosOrderWorkflow(params: {
   const defaultTaxPct =
     typeof params.property.posTaxRate === 'number' ? params.property.posTaxRate : 0;
   const serviceChargeNgn =
-    params.serviceChargeNgn !== undefined
+    params.serviceChargeNgn !== undefined && Number.isFinite(params.serviceChargeNgn)
       ? Math.max(0, Math.round(params.serviceChargeNgn))
       : Math.round((discountedSubtotal * defaultServicePct) / 100);
   const vatNgn =
-    params.vatNgn !== undefined
+    params.vatNgn !== undefined && Number.isFinite(params.vatNgn)
       ? Math.max(0, Math.round(params.vatNgn))
       : Math.round((discountedSubtotal * defaultTaxPct) / 100);
   const totalNgn = Math.max(0, discountedSubtotal + serviceChargeNgn + vatNgn);
   const isRoomFolio = Boolean(params.paymentMethod === 'Room Folio' && params.linkedReservation);
   const paymentStatus: PosOrderRecord['paymentStatus'] = isRoomFolio ? 'room_folio' : 'paid';
-  const cleanGuestName =
-    params.guestName?.trim() || params.linkedReservation?.guestName || 'Walk-in Guest';
+  const cleanTableOrRoom = (params.tableOrRoom || '').trim().slice(0, 64) || 'Walk-in';
+  const cleanGuestName = (
+    params.guestName?.trim() ||
+    params.linkedReservation?.guestName ||
+    'Walk-in Guest'
+  ).slice(0, 120);
+  const cleanItemsSummary =
+    (params.itemsSummary || '').trim().slice(0, 395).length >= 2
+      ? (params.itemsSummary || '').trim().slice(0, 395)
+      : 'POS Order Item';
+  const cleanItemCount = Math.max(1, Math.round(Number.isFinite(params.itemCount) ? params.itemCount : 1));
+  const cleanNotes = (params.notes || '').trim().slice(0, 300);
+
+  const safeAuthEmails = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(params.property.authorizedEmails) ? params.property.authorizedEmails : []),
+        params.property.adminEmail || '',
+        email || '',
+      ]
+        .map((e) => String(e || '').trim().toLowerCase())
+        .filter((e) => e.length >= 3)
+    )
+  ).slice(0, 100);
+  const authorizedEmails =
+    safeAuthEmails.length > 0 ? safeAuthEmails : ['purecresthospitality@gmail.com'];
 
   const batch = writeBatch(db);
   const now = serverTimestamp();
@@ -3018,11 +3069,11 @@ export async function submitPosOrderWorkflow(params: {
     orderNumber,
     orderDate,
     serviceType: params.serviceType,
-    tableOrRoom: params.tableOrRoom.trim().slice(0, 64) || 'Walk-in',
-    guestName: cleanGuestName.slice(0, 120),
+    tableOrRoom: cleanTableOrRoom,
+    guestName: cleanGuestName,
     reservationId: params.linkedReservation?.id || '',
-    itemsSummary: params.itemsSummary.slice(0, 395),
-    itemCount: params.itemCount,
+    itemsSummary: cleanItemsSummary,
+    itemCount: cleanItemCount,
     subtotalNgn: cleanSubtotal,
     serviceChargeNgn,
     discountNgn: cleanDiscount,
@@ -3031,8 +3082,8 @@ export async function submitPosOrderWorkflow(params: {
     paymentStatus,
     paymentMethod: params.paymentMethod,
     kitchenStatus: 'queued' as const,
-    ...(params.notes?.trim() ? { notes: params.notes.trim().slice(0, 300) } : {}),
-    authorizedEmails: params.property.authorizedEmails,
+    ...(cleanNotes ? { notes: cleanNotes } : {}),
+    authorizedEmails,
     ownerUid: uid,
     createdAt: now,
     updatedAt: now,
@@ -3041,12 +3092,15 @@ export async function submitPosOrderWorkflow(params: {
   batch.set(doc(db, 'properties', params.property.id, 'pos_orders', id), payload);
 
   if (isRoomFolio && params.linkedReservation) {
-    const nextPosCharges = (params.linkedReservation.posChargesNgn || 0) + totalNgn;
+    const nextPosCharges = Math.max(0, (Number(params.linkedReservation.posChargesNgn) || 0) + totalNgn);
     const resUpdate: Record<string, unknown> = {
       posChargesNgn: nextPosCharges,
       updatedAt: now,
     };
-    if (typeof params.linkedReservation.amountDueAtPropertyNgn === 'number') {
+    if (
+      typeof params.linkedReservation.amountDueAtPropertyNgn === 'number' &&
+      Number.isFinite(params.linkedReservation.amountDueAtPropertyNgn)
+    ) {
       resUpdate.amountDueAtPropertyNgn =
         Math.max(0, params.linkedReservation.amountDueAtPropertyNgn) + totalNgn;
     }
@@ -3056,17 +3110,18 @@ export async function submitPosOrderWorkflow(params: {
     );
   } else {
     const ledId = cleanId('led');
+    const ledgerDescription = `${params.serviceType} (${cleanTableOrRoom}) — ${cleanItemsSummary}`.slice(0, 235);
     batch.set(doc(db, 'properties', params.property.id, 'ledger_entries', ledId), {
       propertyId: params.property.id,
       entryDate: orderDate,
       entryType: 'revenue',
       category: 'Restaurant & Bar',
       reference: orderNumber,
-      description: `${params.serviceType} (${params.tableOrRoom}) — ${params.itemsSummary.slice(0, 100)}`,
+      description: ledgerDescription.length >= 2 ? ledgerDescription : `POS Sale ${orderNumber}`,
       amountNgn: totalNgn,
       vatNgn,
       paymentMethod: params.paymentMethod,
-      authorizedEmails: params.property.authorizedEmails,
+      authorizedEmails,
       ownerUid: uid,
       createdAt: now,
       updatedAt: now,
@@ -3075,40 +3130,47 @@ export async function submitPosOrderWorkflow(params: {
 
   try {
     await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `properties/${params.property.id}/pos_orders/${id}`);
+    return undefined;
+  }
+
+  try {
     await writeAuditLog({
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Restaurant POS',
       action: `Completed POS Sale ${orderNumber} (${params.paymentMethod})`,
-      details: `${params.tableOrRoom} · ${cleanGuestName} · Total ₦${totalNgn.toLocaleString('en-NG')}${cleanDiscount > 0 ? ` (Discount ₦${cleanDiscount.toLocaleString('en-NG')})` : ''}`,
-      authorizedEmails: params.property.authorizedEmails,
+      details: `${cleanTableOrRoom} · ${cleanGuestName} · Total ₦${totalNgn.toLocaleString('en-NG')}${cleanDiscount > 0 ? ` (Discount ₦${cleanDiscount.toLocaleString('en-NG')})` : ''}`.slice(0, 480),
+      authorizedEmails,
     });
-    return {
-      id,
-      propertyId: params.property.id,
-      orderNumber,
-      orderDate,
-      serviceType: params.serviceType,
-      tableOrRoom: params.tableOrRoom.trim().slice(0, 64) || 'Walk-in',
-      guestName: cleanGuestName,
-      reservationId: params.linkedReservation?.id || '',
-      itemsSummary: params.itemsSummary.slice(0, 395),
-      itemCount: params.itemCount,
-      subtotalNgn: cleanSubtotal,
-      serviceChargeNgn,
-      discountNgn: cleanDiscount,
-      vatNgn,
-      totalNgn,
-      paymentStatus,
-      paymentMethod: params.paymentMethod,
-      kitchenStatus: 'queued',
-      notes: params.notes?.trim() || undefined,
-      authorizedEmails: params.property.authorizedEmails,
-      ownerUid: uid,
-    };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, `properties/${params.property.id}/pos_orders/${id}`);
+  } catch (auditErr) {
+    console.warn('POS order audit log skipped:', auditErr);
   }
+
+  return {
+    id,
+    propertyId: params.property.id,
+    orderNumber,
+    orderDate,
+    serviceType: params.serviceType,
+    tableOrRoom: cleanTableOrRoom,
+    guestName: cleanGuestName,
+    reservationId: params.linkedReservation?.id || '',
+    itemsSummary: cleanItemsSummary,
+    itemCount: cleanItemCount,
+    subtotalNgn: cleanSubtotal,
+    serviceChargeNgn,
+    discountNgn: cleanDiscount,
+    vatNgn,
+    totalNgn,
+    paymentStatus,
+    paymentMethod: params.paymentMethod,
+    kitchenStatus: 'queued',
+    notes: cleanNotes || undefined,
+    authorizedEmails,
+    ownerUid: uid,
+  };
 }
 
 export async function updatePosOrderWorkflow(params: {

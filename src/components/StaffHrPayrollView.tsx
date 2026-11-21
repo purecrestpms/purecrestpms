@@ -8,6 +8,7 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  Coffee,
   Copy,
   Eye,
   EyeOff,
@@ -27,6 +28,7 @@ import {
   UserCheck,
   UserMinus,
   UserPlus,
+  UserX,
   Users,
   Wallet,
   X,
@@ -301,6 +303,28 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
   const [shiftWindow, setShiftWindow] = useState<ShiftScheduleRecord['shiftWindow']>(
     'Morning (07:00 - 15:00)'
   );
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayAttendanceSummary = useMemo(() => {
+    const todayRecs = attendance.filter((a) => a.date === todayIso);
+    const presentIds = new Set<string>();
+    const clockedOutIds = new Set<string>();
+    for (const rec of todayRecs) {
+      const key = rec.staffId || rec.staffName.toLowerCase();
+      if (!rec.clockOutTime && rec.status !== 'clocked_out') {
+        presentIds.add(key);
+      } else {
+        clockedOutIds.add(key);
+      }
+    }
+    const presentCount = presentIds.size;
+    const completedOrOffCount = Array.from(clockedOutIds).filter(
+      (id) => !presentIds.has(id)
+    ).length;
+    const activeStaffCount = staffMembers.filter((s) => s.employmentStatus === 'active').length;
+    const absentCount = Math.max(0, activeStaffCount - presentCount - completedOrOffCount);
+    return { presentCount, completedOrOffCount, absentCount, activeStaffCount };
+  }, [attendance, staffMembers, todayIso]);
 
   // Payroll state
   const nowDate = new Date();
@@ -2871,7 +2895,59 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
       {/* SECTION: SHIFTS & ATTENDANCE */}
       {section === 'shifts_attendance' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-5">
+          {/* Staff Attendance Summary Card */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+            <div className="bg-[#0a367a] text-white px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-blue-200" />
+                <h2 className="font-display text-sm font-bold">Staff Attendance Summary</h2>
+              </div>
+              <span className="font-mono-tabular text-xs text-blue-100">
+                Today · {todayIso}
+              </span>
+            </div>
+            <div className="p-4 grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
+              <div className="text-center px-3 py-2">
+                <div className="inline-flex items-center justify-center gap-1.5 text-emerald-700 text-xs font-semibold">
+                  <UserCheck className="w-4 h-4" />
+                  <span>Present</span>
+                </div>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1">
+                  {todayAttendanceSummary.presentCount}
+                </p>
+              </div>
+              <div className="text-center px-3 py-2">
+                <div className="inline-flex items-center justify-center gap-1.5 text-[#0a367a] text-xs font-semibold">
+                  <Coffee className="w-4 h-4" />
+                  <span>Off / Out</span>
+                </div>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1">
+                  {todayAttendanceSummary.completedOrOffCount}
+                </p>
+              </div>
+              <div className="text-center px-3 py-2">
+                <div className="inline-flex items-center justify-center gap-1.5 text-rose-600 text-xs font-semibold">
+                  <UserX className="w-4 h-4" />
+                  <span>Absent</span>
+                </div>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1">
+                  {todayAttendanceSummary.absentCount}
+                </p>
+              </div>
+              <div className="text-center px-3 py-2">
+                <div className="inline-flex items-center justify-center gap-1.5 text-slate-600 text-xs font-semibold">
+                  <Users className="w-4 h-4" />
+                  <span>Active Staff</span>
+                </div>
+                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1">
+                  {todayAttendanceSummary.activeStaffCount}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-sm font-bold text-slate-900">
@@ -3106,6 +3182,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 </div>
               ))}
             </div>
+          </div>
           </div>
         </div>
       )}

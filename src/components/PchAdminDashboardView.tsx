@@ -125,13 +125,13 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Multi-Property Executive Welcome Banner */}
-      <div className="relative bg-white border border-slate-200 rounded-2xl overflow-hidden">
-        <div className="relative z-10 px-6 py-6 sm:px-8 sm:py-7 max-w-2xl">
-          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight">
+      <div className="relative bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="relative z-10 px-5 py-5 sm:px-6 sm:py-5 max-w-2xl">
+          <h1 className="font-display text-lg sm:text-xl font-bold tracking-tight">
             <span className="text-[#0a367a]">{getTimeGreeting()},</span>{' '}
             <span className="text-slate-900">{firstName}!</span>
           </h1>
-          <p className="text-sm text-slate-600 mt-1.5">
+          <p className="text-xs sm:text-sm text-slate-600 mt-1">
             Multi-property platform overview across{' '}
             <strong className="text-slate-900 font-mono-tabular">
               {metrics.totalProperties}
@@ -142,7 +142,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
             </span>
             .
           </p>
-          <div className="flex flex-wrap items-center gap-2.5 mt-4">
+          <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
             <button
               type="button"
               onClick={() => onNavigate('properties_admin')}
@@ -175,21 +175,21 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
       </div>
 
       {/* 4 Portfolio KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5">
         <button
           type="button"
           onClick={() => onNavigate('properties_admin')}
-          className="text-left bg-white border border-slate-200 rounded-2xl p-5 flex items-center gap-4 hover:border-[#0a367a] transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 hover:border-[#0a367a] transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#0a367a] text-white flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
             <Building2 className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-700">Total Properties</p>
-            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Total Properties</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.totalProperties).padStart(2, '0')}
             </p>
-            <p className="text-xs font-semibold text-[#0a367a] mt-0.5">
+            <p className="text-[11px] font-semibold text-[#0a367a] mt-0.5">
               {metrics.activeProperties} active · {metrics.onboardingProperties} onboarding
             </p>
           </div>
@@ -198,17 +198,17 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('properties_admin')}
-          className="text-left bg-[#ebf3fe] border border-blue-200/80 rounded-2xl p-5 flex items-center gap-4 hover:border-blue-300 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 hover:border-[#0a367a] transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#1c64f2] text-white flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
             <Layers className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Portfolio Rooms</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Portfolio Rooms</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {metrics.totalRooms}
             </p>
-            <p className="text-[11px] font-semibold text-blue-700 mt-0.5">
+            <p className="text-[11px] font-semibold text-[#1557b0] mt-0.5">
               Across all registered properties
             </p>
           </div>
@@ -217,17 +217,17 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('licensing')}
-          className="text-left bg-[#f4eeff] border border-purple-200/80 rounded-2xl p-5 flex items-center gap-4 hover:border-purple-300 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 hover:border-[#0a367a] transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#7e3af2] text-white flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
             <KeyRound className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Active Licenses</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Active Licenses</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.activeLicensesCount).padStart(2, '0')}
             </p>
-            <p className="text-[11px] font-semibold text-purple-700 mt-0.5 font-mono-tabular">
+            <p className="text-[11px] font-semibold text-[#0a367a] mt-0.5 font-mono-tabular">
               {metrics.licensedCapacity} rooms licensed
             </p>
           </div>
@@ -236,17 +236,17 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('licensing')}
-          className="text-left bg-[#fef7e4] border border-amber-200/80 rounded-2xl p-5 flex items-center gap-4 hover:border-amber-300 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 hover:border-[#0a367a] transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#d98a0b] text-white flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
             <ShieldCheck className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Onboarding Inquiries</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Onboarding Inquiries</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.openInquiries).padStart(2, '0')}
             </p>
-            <p className="text-[11px] font-semibold text-amber-800 mt-0.5 font-mono-tabular">
+            <p className="text-[11px] font-semibold text-slate-500 mt-0.5 font-mono-tabular">
               {metrics.pipelineValueNgn > 0
                 ? `${formatNgn(metrics.pipelineValueNgn)} pipeline`
                 : `${planInquiries.length} total inquiries`}
