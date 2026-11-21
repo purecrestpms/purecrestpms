@@ -292,10 +292,10 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
         onSubmit={handleSubmit}
         className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full overflow-hidden shadow-xl my-8"
       >
-        {/* PureCrest Green Modal Header */}
-        <div className="bg-[#0b6b3a] text-white px-6 py-4 flex items-start justify-between gap-4">
+        {/* Dark Blue Modal Header */}
+        <div className="bg-[#0a367a] text-white px-6 py-4 flex items-start justify-between gap-4">
           <div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-emerald-100">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-blue-100">
               <span className="font-mono-tabular font-bold text-white">
                 {reservation.bookingRef}
               </span>
@@ -318,7 +318,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
             <h3 className="font-display text-lg font-bold text-white mt-0.5">
               Guest Check-In Verification — {reservation.guestName}
             </h3>
-            <p className="text-xs text-emerald-100 font-mono-tabular mt-0.5">
+            <p className="text-xs text-blue-100 font-mono-tabular mt-0.5">
               Arrival {reservation.checkInDate} → Departure {reservation.checkOutDate} ({reservation.nights}{' '}
               {reservation.nights === 1 ? 'night' : 'nights'} · {reservation.adults} guest
               {reservation.adults === 1 ? '' : 's'})
@@ -327,7 +327,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="text-emerald-100 hover:text-white cursor-pointer p-1"
+            className="text-blue-100 hover:text-white cursor-pointer p-1"
             aria-label="Close check-in verification"
           >
             <X className="w-5 h-5" />
@@ -371,7 +371,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 font-bold text-slate-900">
-                <BedDouble className="w-4 h-4 text-[#0b6b3a]" />
+                <BedDouble className="w-4 h-4 text-[#0a367a]" />
                 <span>
                   Step 1 — Room Assignment{' '}
                   {hasPreAssignedRoom ? '(Already Assigned)' : '(Select Available Room)'}
@@ -388,7 +388,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
               <div className="bg-white border border-emerald-200 rounded-lg p-3.5 flex flex-wrap items-center justify-between gap-3">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono-tabular font-bold text-sm text-[#0b6b3a]">
+                    <span className="font-mono-tabular font-bold text-sm text-[#0a367a]">
                       {preAssignedRoom.roomNumber}
                     </span>
                     <span className="font-semibold text-slate-900">{preAssignedRoom.name}</span>
@@ -438,7 +438,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                           onClick={() => handleRoomAssignChange(r.id)}
                           className={`text-left p-2.5 rounded-lg border transition-colors cursor-pointer ${
                             active
-                              ? 'border-[#0b6b3a] bg-[#0b6b3a]/5 ring-1 ring-[#0b6b3a]'
+                              ? 'border-[#0a367a] bg-[#0a367a]/5 ring-1 ring-[#0a367a]'
                               : 'border-slate-200 bg-white hover:border-emerald-300'
                           }`}
                         >
@@ -446,7 +446,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                             <span className="font-mono-tabular font-bold text-slate-900">
                               {r.roomNumber}
                             </span>
-                            <span className="font-mono-tabular font-semibold text-[#0b6b3a]">
+                            <span className="font-mono-tabular font-semibold text-[#0a367a]">
                               {formatNgn(r.nightlyRateNgn)}/nt
                             </span>
                           </div>
@@ -463,7 +463,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowAllAvailableRooms((prev) => !prev)}
-                    className="text-[11px] font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+                    className="text-[11px] font-semibold text-[#0a367a] hover:underline cursor-pointer"
                   >
                     {showAllAvailableRooms
                       ? `Show only ${reservation.requestedRoomType || 'matching'} rooms (${matchingTypeRooms.length})`
@@ -490,7 +490,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
             }`}
           >
             <div className="flex items-center gap-2 font-bold text-slate-900">
-              <UserCheck className="w-4 h-4 text-[#0b6b3a]" />
+              <UserCheck className="w-4 h-4 text-[#0a367a]" />
               <span>Step 2 — Verify Guest &amp; Reservation Information (KYC)</span>
             </div>
 
@@ -578,9 +578,9 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                 type="checkbox"
                 checked={idVerified}
                 onChange={(e) => setIdVerified(e.target.checked)}
-                className="rounded border-slate-300 text-[#0b6b3a]"
+                className="rounded border-slate-300 text-[#0a367a]"
               />
-              <ShieldCheck className="w-4 h-4 text-[#0b6b3a] shrink-0" />
+              <ShieldCheck className="w-4 h-4 text-[#0a367a] shrink-0" />
               <span>Original government-issued ID inspected &amp; guest/reservation details verified</span>
             </label>
           </div>
@@ -595,7 +595,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 font-bold text-slate-900">
-                <CreditCard className="w-4 h-4 text-[#0b6b3a]" />
+                <CreditCard className="w-4 h-4 text-[#0a367a]" />
                 <span>Step 3 — Payment Status &amp; Outstanding Balance</span>
               </div>
               <span
@@ -661,7 +661,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setPaymentReceivedNgn(balanceDue)}
-                      className="text-[11px] font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+                      className="text-[11px] font-semibold text-[#0a367a] hover:underline cursor-pointer"
                     >
                       Fill Full Balance
                     </button>
@@ -699,7 +699,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                 type="checkbox"
                 checked={paymentConfirmed}
                 onChange={(e) => setPaymentConfirmed(e.target.checked)}
-                className="rounded border-slate-300 text-[#0b6b3a]"
+                className="rounded border-slate-300 text-[#0a367a]"
               />
               <span>
                 Payment status reviewed &amp; confirmed (paid, OTA prepaid, or approved balance settlement)
@@ -717,7 +717,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 font-bold text-slate-900">
-                <KeyRound className="w-4 h-4 text-[#0b6b3a]" />
+                <KeyRound className="w-4 h-4 text-[#0a367a]" />
                 <span>Step 4 — Key Issue &amp; Room Readiness</span>
               </div>
               <span className="font-mono-tabular text-[11px] font-semibold text-slate-700">
@@ -738,7 +738,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                   onClick={() => setKeyIssuedChoice('yes')}
                   className={`px-3.5 py-1.5 rounded-lg font-semibold border transition-colors cursor-pointer ${
                     keyIssuedChoice === 'yes'
-                      ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white'
+                      ? 'bg-[#0a367a] border-[#0a367a] text-white'
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -769,7 +769,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
                 type="checkbox"
                 checked={roomReadyConfirmed}
                 onChange={(e) => setRoomReadyConfirmed(e.target.checked)}
-                className="rounded border-slate-300 text-[#0b6b3a]"
+                className="rounded border-slate-300 text-[#0a367a]"
               />
               <span>Room power, AC, and amenities inspected ready for guest arrival</span>
             </label>
@@ -778,7 +778,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
 
         <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 text-xs">
           <span className="inline-flex items-center gap-1.5 text-slate-500">
-            <BadgeCheck className="w-3.5 h-3.5 text-[#0b6b3a]" />
+            <BadgeCheck className="w-3.5 h-3.5 text-[#0a367a]" />
             <span>Updates Reservation → Checked-In &amp; Room → Occupied</span>
           </span>
           <div className="flex items-center gap-2">
@@ -792,7 +792,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
             <button
               type="submit"
               disabled={!canComplete}
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-[#0b6b3a] hover:bg-[#09552e] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-[#0a367a] hover:bg-[#07275a] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>{submitting ? 'Completing Check-In...' : 'Complete Check-In'}</span>

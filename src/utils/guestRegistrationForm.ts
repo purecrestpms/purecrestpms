@@ -95,40 +95,39 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     year: 'numeric',
   });
 
-  // Top Royal Navy Header Banner
-  doc.setFillColor(6, 21, 57); // #061539
-  doc.rect(0, 0, pageWidth, 34, 'F');
-  // Gold accent strip
-  doc.setFillColor(245, 184, 0); // #f5b800
-  doc.rect(0, 34, pageWidth, 1.8, 'F');
-
-  doc.setTextColor(255, 255, 255);
+  // Clean White Header with Dark Typography & Crisp Divider (No Blue Background, No Email/Website)
+  doc.setTextColor(15, 23, 42);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text((property.name || 'Property Management System').toUpperCase(), margin, 14);
+  doc.setFontSize(15);
+  doc.text((property.name || 'Property Management System').toUpperCase(), margin, 15);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
+  doc.setTextColor(71, 85, 105);
   const propAddress = [property.address, property.city, property.state]
     .filter(Boolean)
     .join(', ');
-  const propContactParts = [propAddress, property.phone, property.email].filter(Boolean);
+  const propContactParts = [propAddress, property.phone].filter(Boolean);
   if (propContactParts.length > 0) {
-    doc.text(propContactParts.join('  |  '), margin, 21, { maxWidth: pageWidth - margin * 2 - 50 });
+    doc.text(propContactParts.join('  |  '), margin, 21, { maxWidth: pageWidth - margin * 2 - 55 });
   }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.setTextColor(245, 184, 0);
-  doc.text('GUEST REGISTRATION CARD', pageWidth - margin, 14, { align: 'right' });
+  doc.setTextColor(15, 23, 42);
+  doc.text('GUEST REGISTRATION CARD', pageWidth - margin, 15, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
-  doc.setTextColor(226, 232, 240);
+  doc.setTextColor(71, 85, 105);
   doc.text(`Form No: ${regNo}`, pageWidth - margin, 21, { align: 'right' });
-  doc.text(`Date: ${generatedDate}`, pageWidth - margin, 26.5, { align: 'right' });
+  doc.text(`Date: ${generatedDate}`, pageWidth - margin, 26, { align: 'right' });
 
-  let cursorY = 44;
+  doc.setDrawColor(15, 23, 42);
+  doc.setLineWidth(0.6);
+  doc.line(margin, 30, pageWidth - margin, 30);
+
+  let cursorY = 38;
 
   // Section 1: Personal & Contact Information
   doc.setTextColor(6, 21, 57);
@@ -366,7 +365,8 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
   const propAddress = [property.address, property.city, property.state]
     .filter(Boolean)
     .join(', ');
-  const propContact = [propAddress, property.phone, property.email]
+  // Address and phone only — email and website excluded
+  const propContact = [propAddress, property.phone]
     .filter((v): v is string => Boolean(v))
     .map(escapeHtml)
     .join(' &nbsp;|&nbsp; ');
@@ -379,7 +379,7 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
   <style>
     @page {
       size: A4 portrait;
-      margin: 9mm 11mm;
+      margin: 7mm 10mm;
     }
     * {
       box-sizing: border-box;
@@ -396,7 +396,8 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     }
     .page-sheet {
       width: 100%;
-      max-height: 274mm;
+      height: 277mm;
+      max-height: 277mm;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -407,28 +408,29 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       break-after: avoid;
     }
     .header {
-      background: #061539;
-      color: #ffffff;
-      padding: 13px 16px;
-      border-bottom: 3.5px solid #f5b800;
+      background: #ffffff;
+      color: #0f172a;
+      padding: 4px 0 8px;
+      border-bottom: 2px solid #0f172a;
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-end;
       gap: 14px;
     }
     .header h1 {
       margin: 0;
       font-size: 16px;
       font-weight: 800;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.03em;
       text-transform: uppercase;
       line-height: 1.2;
+      color: #0f172a;
     }
     .header .contact {
-      margin-top: 4px;
-      font-size: 9.5px;
-      color: #cbd5e1;
-      line-height: 1.35;
+      margin-top: 3px;
+      font-size: 9px;
+      color: #475569;
+      line-height: 1.3;
     }
     .header .meta {
       text-align: right;
@@ -438,60 +440,60 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     .header .meta .doc-title {
       font-size: 11px;
       font-weight: 800;
-      color: #f5b800;
-      letter-spacing: 0.09em;
+      color: #0f172a;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
     }
     .header .meta .blank-meta {
-      margin-top: 5px;
-      font-size: 9.5px;
-      color: #e2e8f0;
-      line-height: 1.5;
+      margin-top: 4px;
+      font-size: 9px;
+      color: #334155;
+      line-height: 1.4;
     }
     .instruction {
-      margin: 8px 0 2px;
-      font-size: 9.5px;
+      margin: 5px 0 2px;
+      font-size: 8.8px;
       color: #475569;
       font-style: italic;
     }
     .section {
-      margin-top: 9px;
+      margin-top: 7px;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .section-title {
-      margin: 0 0 4px;
-      font-size: 10px;
+      margin: 0 0 3px;
+      font-size: 9.5px;
       font-weight: 800;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.07em;
       text-transform: uppercase;
-      color: #061539;
-      border-left: 3px solid #f5b800;
-      padding-left: 7px;
-      line-height: 1.25;
+      color: #0f172a;
+      border-left: 3px solid #0f172a;
+      padding-left: 6px;
+      line-height: 1.2;
     }
     table {
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
-      font-size: 10px;
+      font-size: 9.5px;
     }
     th, td {
       border: 1px solid #94a3b8;
-      padding: 5px 8px;
+      padding: 4px 7px;
       text-align: left;
       vertical-align: middle;
     }
     th {
       background: #f8fafc;
       font-weight: 700;
-      color: #334155;
+      color: #1e293b;
       width: 19%;
-      font-size: 9.5px;
+      font-size: 9px;
     }
     td {
       width: 31%;
-      height: 27px;
+      height: 22px;
       background: #ffffff;
       color: #475569;
     }
@@ -499,20 +501,20 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 14px;
-      font-size: 9.5px;
-      color: #334155;
+      gap: 12px;
+      font-size: 9px;
+      color: #1e293b;
     }
     .checkbox-item {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       white-space: nowrap;
     }
     .box {
       display: inline-block;
-      width: 11px;
-      height: 11px;
+      width: 10px;
+      height: 10px;
       border: 1.2px solid #475569;
       border-radius: 1.5px;
       background: #ffffff;
@@ -520,72 +522,72 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     }
     .hint {
       color: #94a3b8;
-      font-size: 9px;
+      font-size: 8.5px;
       letter-spacing: 0.04em;
     }
     .notes-box {
       border: 1px solid #94a3b8;
-      padding: 6px 10px 8px;
+      padding: 4px 8px 6px;
       background: #ffffff;
     }
     .write-line {
-      height: 20px;
+      height: 17px;
       border-bottom: 1px dashed #cbd5e1;
     }
     .write-line:last-child {
       border-bottom: none;
-      height: 16px;
+      height: 14px;
     }
     .declaration {
-      margin-top: 10px;
+      margin-top: 7px;
       background: #f8fafc;
       border: 1px solid #cbd5e1;
-      border-radius: 4px;
-      padding: 7px 10px;
-      font-size: 9px;
-      line-height: 1.45;
+      border-radius: 3px;
+      padding: 6px 9px;
+      font-size: 8.5px;
+      line-height: 1.4;
       color: #334155;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .declaration strong {
       display: block;
-      color: #061539;
+      color: #0f172a;
       margin-bottom: 2px;
-      font-size: 9.5px;
+      font-size: 9px;
       letter-spacing: 0.05em;
       text-transform: uppercase;
     }
     .signatures {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 32px;
-      margin-top: 26px;
+      gap: 28px;
+      margin-top: 18px;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .sig-block {
-      border-top: 1px solid #475569;
-      padding-top: 5px;
-      font-size: 9.5px;
+      border-top: 1px solid #334155;
+      padding-top: 4px;
+      font-size: 9px;
     }
     .sig-block strong {
       display: block;
-      color: #061539;
+      color: #0f172a;
       font-weight: 700;
     }
     .sig-block .sig-sub {
-      margin-top: 4px;
+      margin-top: 3px;
       color: #64748b;
-      font-size: 9px;
+      font-size: 8.5px;
     }
     .footer {
-      margin-top: 12px;
-      padding-top: 6px;
+      margin-top: 8px;
+      padding-top: 5px;
       border-top: 1px solid #cbd5e1;
       display: flex;
       justify-content: space-between;
-      font-size: 8.5px;
+      font-size: 8px;
       color: #64748b;
     }
   </style>

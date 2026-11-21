@@ -101,23 +101,23 @@ const PchHouseLogo: React.FC<{ className?: string }> = ({ className = 'w-9 h-9' 
   <svg viewBox="0 0 44 44" fill="none" className={className} aria-hidden="true">
     <path
       d="M6 21.5L22 8.5L38 21.5"
-      stroke="#0b5d34"
+      stroke="#0a367a"
       strokeWidth="3.6"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
     <path
       d="M11 20V34.5H33V20"
-      stroke="#15803d"
+      stroke="#1557b0"
       strokeWidth="3"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
-    <rect x="17.5" y="19.5" width="3.8" height="3.8" rx="0.6" fill="#0b5d34" />
-    <rect x="22.7" y="19.5" width="3.8" height="3.8" rx="0.6" fill="#0b5d34" />
-    <rect x="17.5" y="24.7" width="3.8" height="3.8" rx="0.6" fill="#15803d" />
-    <rect x="22.7" y="24.7" width="3.8" height="3.8" rx="0.6" fill="#15803d" />
-    <path d="M8 35.5H36" stroke="#0b5d34" strokeWidth="2.8" strokeLinecap="round" />
+    <rect x="17.5" y="19.5" width="3.8" height="3.8" rx="0.6" fill="#0a367a" />
+    <rect x="22.7" y="19.5" width="3.8" height="3.8" rx="0.6" fill="#0a367a" />
+    <rect x="17.5" y="24.7" width="3.8" height="3.8" rx="0.6" fill="#1557b0" />
+    <rect x="22.7" y="24.7" width="3.8" height="3.8" rx="0.6" fill="#1557b0" />
+    <path d="M8 35.5H36" stroke="#0a367a" strokeWidth="2.8" strokeLinecap="round" />
   </svg>
 );
 
@@ -205,15 +205,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navItemClass = (isActive: boolean, isCollapsed: boolean) =>
     `relative w-full flex items-center ${
-      isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2.5 px-3 py-2'
-    } rounded-lg text-[13px] transition-colors whitespace-nowrap cursor-pointer ${
+      isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2.5 px-3 py-2.5'
+    } rounded-lg text-[14px] transition-colors whitespace-nowrap cursor-pointer ${
       isActive
-        ? 'bg-[#0b5d34] text-white font-semibold shadow-xs'
-        : 'text-slate-700 hover:bg-emerald-50/70 hover:text-[#0b5d34] font-medium'
+        ? 'bg-[#0a367a] text-white font-semibold shadow-xs'
+        : 'text-slate-700 hover:bg-blue-50/80 hover:text-[#0a367a] font-medium'
     }`;
 
   const iconClass = (isActive: boolean) =>
-    `w-[17px] h-[17px] shrink-0 ${isActive ? 'text-white' : 'text-[#0b5d34]'}`;
+    `w-[18px] h-[18px] shrink-0 ${isActive ? 'text-white' : 'text-[#0a367a]'}`;
 
   const renderExpandablePrimary = (
     menuKey: 'reservations' | 'rooms' | 'guests',
@@ -253,14 +253,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div
           className={`flex items-center rounded-lg transition-colors ${
             isPrimaryActive
-              ? 'bg-[#0b5d34] text-white shadow-xs'
-              : 'text-slate-700 hover:bg-emerald-50/70 hover:text-[#0b5d34]'
+              ? 'bg-[#0a367a] text-white shadow-xs'
+              : 'text-slate-700 hover:bg-blue-50/80 hover:text-[#0a367a]'
           }`}
         >
           <button
             type="button"
             onClick={() => handleNavClick(canSee(primaryId) ? primaryId : visibleSubs[0].id)}
-            className="flex-1 flex items-center gap-2.5 pl-3 pr-1 py-2 text-[13px] font-medium text-left min-w-0 cursor-pointer"
+            className="flex-1 flex items-center gap-2.5 pl-3 pr-1 py-2.5 text-[14px] font-medium text-left min-w-0 cursor-pointer"
           >
             <Icon className={iconClass(isPrimaryActive)} />
             <span className={`truncate ${isPrimaryActive ? 'font-semibold' : ''}`}>{label}</span>
@@ -275,7 +275,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               aria-label={`Toggle ${label} submenu`}
               aria-expanded={isExpanded}
               className={`p-2 rounded-r-lg cursor-pointer ${
-                isPrimaryActive ? 'text-white/90 hover:text-white' : 'text-slate-400 hover:text-[#0b5d34]'
+                isPrimaryActive ? 'text-white/90 hover:text-white' : 'text-slate-400 hover:text-[#0a367a]'
               }`}
             >
               {isExpanded ? (
@@ -297,15 +297,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   key={sub.id}
                   type="button"
                   onClick={() => handleNavClick(sub.id)}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[13px] transition-colors cursor-pointer ${
                     isSubActive
-                      ? 'bg-emerald-50 text-[#0b5d34] font-bold'
+                      ? 'bg-blue-50 text-[#0a367a] font-bold'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium'
                   }`}
                 >
                   <SubIcon
                     className={`w-3.5 h-3.5 shrink-0 ${
-                      isSubActive ? 'text-[#0b5d34]' : 'text-slate-400'
+                      isSubActive ? 'text-[#0a367a]' : 'text-slate-400'
                     }`}
                   />
                   <span className="truncate">{sub.label}</span>
@@ -812,7 +812,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span
                     className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
                       activeSection === 'messages'
-                        ? 'bg-white text-[#0b5d34]'
+                        ? 'bg-white text-[#0a367a]'
                         : 'bg-rose-600 text-white'
                     }`}
                   >
@@ -875,7 +875,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={handleToggleCollapse}
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="hidden lg:inline-flex p-1.5 rounded-lg text-slate-500 hover:bg-emerald-50 hover:text-[#0b5d34] transition-colors cursor-pointer"
+            className="hidden lg:inline-flex p-1.5 rounded-lg text-slate-500 hover:bg-blue-50 hover:text-[#0a367a] transition-colors cursor-pointer"
           >
             {isCollapsed ? (
               <PanelLeftOpen className="w-4 h-4" />
@@ -952,7 +952,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             isCollapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-3 py-2'
           } rounded-lg text-[13px] font-medium text-slate-700 hover:bg-rose-50 hover:text-rose-700 transition-colors cursor-pointer`}
         >
-          <LogOut className="w-[17px] h-[17px] shrink-0 text-[#0b5d34]" />
+          <LogOut className="w-[17px] h-[17px] shrink-0 text-[#0a367a]" />
           {!isCollapsed && <span>Logout</span>}
         </button>
       </div>

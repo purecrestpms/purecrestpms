@@ -1184,7 +1184,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         {/* Clean Modern Header */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
-            <div className="w-11 h-11 rounded-xl bg-[#0b5d34] text-white flex items-center justify-center shrink-0">
+            <div className="w-11 h-11 rounded-xl bg-[#0a367a] text-white flex items-center justify-center shrink-0">
               <KeyRound className="w-5 h-5" />
             </div>
             <div>
@@ -1196,7 +1196,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
               </p>
             </div>
           </div>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-semibold text-[#0b5d34] shrink-0">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-semibold text-[#0a367a] shrink-0">
             <Building2 className="w-3.5 h-3.5" />
             <span>{properties.length} Properties Registered</span>
           </span>
@@ -1249,7 +1249,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
               </div>
               <div>
                 <p className="text-[10px] font-bold uppercase text-slate-400">Property Portal URL</p>
-                <p className="font-mono-tabular font-semibold text-[#0b5d34] mt-0.5 truncate">
+                <p className="font-mono-tabular font-semibold text-[#0a367a] mt-0.5 truncate">
                   {createdPropLoginSummary.portalUrl}
                 </p>
               </div>
@@ -1264,7 +1264,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                   await navigator.clipboard.writeText(text);
                   onNotify(`Copied login credentials for ${createdPropLoginSummary.propertyName}`);
                 }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#0b5d34] hover:bg-[#094b2a] text-white font-semibold cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold cursor-pointer"
               >
                 <Copy className="w-3.5 h-3.5" />
                 <span>Copy Property Credentials</span>
@@ -1292,7 +1292,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                     onSelectProperty?.(e.target.value);
                   }
                 }}
-                className="w-full h-11 border border-slate-200 rounded-xl px-3.5 bg-white text-sm font-medium text-slate-900 focus:outline-none focus:border-[#0b5d34] focus:ring-2 focus:ring-emerald-600/15"
+                className="w-full h-11 border border-slate-200 rounded-xl px-3.5 bg-white text-sm font-medium text-slate-900 focus:outline-none focus:border-[#0a367a] focus:ring-2 focus:ring-emerald-600/15"
               >
                 <option value="">Choose a property...</option>
                 {properties.map((p) => (
@@ -1303,7 +1303,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
               </select>
               {selectedProp && (
                 <p className="text-[11px] text-slate-500 mt-1.5 flex items-center gap-1.5">
-                  <Link2 className="w-3.5 h-3.5 text-[#0b5d34]" />
+                  <Link2 className="w-3.5 h-3.5 text-[#0a367a]" />
                   <span>
                     Admin Dashboard URL:{' '}
                     <strong className="font-mono-tabular text-slate-700">
@@ -1322,7 +1322,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 placeholder="e.g. Chidi"
                 value={propAdminFirstName}
                 onChange={(e) => setPropAdminFirstName(e.target.value)}
-                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0a367a]"
               />
             </div>
 
@@ -1334,7 +1334,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 placeholder="e.g. Nwosu"
                 value={propAdminLastName}
                 onChange={(e) => setPropAdminLastName(e.target.value)}
-                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0a367a]"
               />
             </div>
 
@@ -1346,7 +1346,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 placeholder="admin@propertydomain.com"
                 value={propAdminEmail}
                 onChange={(e) => setPropAdminEmail(e.target.value)}
-                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm text-slate-900 focus:outline-none focus:border-[#0a367a]"
               />
             </div>
 
@@ -1356,7 +1356,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 type="text"
                 value={propAdminPhone}
                 onChange={(e) => setPropAdminPhone(e.target.value)}
-                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm font-mono-tabular text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+                className="w-full h-10 border border-slate-200 rounded-xl px-3.5 text-sm font-mono-tabular text-slate-900 focus:outline-none focus:border-[#0a367a]"
               />
             </div>
 
@@ -1371,7 +1371,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                     setPropAdminPassword(generateStrongPassword());
                     setShowPropAdminPassword(true);
                   }}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#0a367a] hover:underline cursor-pointer"
                 >
                   <RefreshCw className="w-3 h-3" />
                   <span>Generate Password</span>
@@ -1385,7 +1385,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                   placeholder="Enter a secure password"
                   value={propAdminPassword}
                   onChange={(e) => setPropAdminPassword(e.target.value)}
-                  className="w-full h-10 border border-slate-200 rounded-xl pl-3.5 pr-10 text-sm font-mono-tabular text-slate-900 focus:outline-none focus:border-[#0b5d34]"
+                  className="w-full h-10 border border-slate-200 rounded-xl pl-3.5 pr-10 text-sm font-mono-tabular text-slate-900 focus:outline-none focus:border-[#0a367a]"
                 />
                 <button
                   type="button"
@@ -1401,7 +1401,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-100">
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <ShieldCheck className="w-4 h-4 text-[#0b5d34] shrink-0" />
+              <ShieldCheck className="w-4 h-4 text-[#0a367a] shrink-0" />
               <span>
                 Full property dashboard access is granted automatically; the property admin assigns staff roles inside their workspace.
               </span>
@@ -1409,7 +1409,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
             <button
               type="submit"
               disabled={creatingPropLogin || !targetPropertyId}
-              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-[#0b5d34] hover:bg-[#094b2a] disabled:opacity-50 text-white text-sm font-bold shadow-xs transition-colors cursor-pointer shrink-0"
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-[#0a367a] hover:bg-[#07275a] disabled:opacity-50 text-white text-sm font-bold shadow-xs transition-colors cursor-pointer shrink-0"
             >
               <UserPlus className="w-4 h-4" />
               <span>{creatingPropLogin ? 'Creating Login...' : 'Create Property Login'}</span>
@@ -1452,7 +1452,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                         <td className="py-3 px-4 font-semibold text-slate-900">{acc.fullName}</td>
                         <td className="py-3 px-4 font-mono-tabular text-slate-600">{acc.email}</td>
                         <td className="py-3 px-4">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#0b5d34] font-semibold text-[11px]">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#0a367a] font-semibold text-[11px]">
                             Full Property Dashboard
                           </span>
                         </td>
@@ -1884,7 +1884,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                     </div>
                     <div>
                       <p className="text-[10px] font-bold uppercase text-slate-400">Portal URL</p>
-                      <p className="font-mono-tabular font-semibold text-[#0b5d34] mt-0.5 truncate">
+                      <p className="font-mono-tabular font-semibold text-[#0a367a] mt-0.5 truncate">
                         {createdPropertyUserSummary.portalUrl}
                       </p>
                     </div>
@@ -1901,7 +1901,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                       type="button"
                       disabled={sharingEmailBusy}
                       onClick={handleShareCreatedUserViaEmail}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0b5d34] hover:bg-[#094b2a] disabled:opacity-50 text-white font-semibold cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0a367a] hover:bg-[#07275a] disabled:opacity-50 text-white font-semibold cursor-pointer"
                     >
                       <Mail className="w-3.5 h-3.5" />
                       <span>{sharingEmailBusy ? 'Sharing via Email...' : 'Share Details via Email'}</span>
@@ -2049,7 +2049,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                             setUPassword(generateStrongPassword());
                             setShowUPassword(true);
                           }}
-                          className="text-[10px] font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+                          className="text-[10px] font-semibold text-[#0a367a] hover:underline cursor-pointer"
                         >
                           Generate
                         </button>
@@ -2353,9 +2353,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => openShareEmailModal(acc)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#0b5d34] font-semibold rounded cursor-pointer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#0a367a] font-semibold rounded cursor-pointer"
                                 >
-                                  <Mail className="w-3 h-3 text-[#0b5d34]" />
+                                  <Mail className="w-3 h-3 text-[#0a367a]" />
                                   <span>Share via Email</span>
                                 </button>
                                 <button
@@ -4087,7 +4087,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                   onClick={() => handleNotifyAccPortalSwitch('staff')}
                   className={`p-3 rounded-xl border text-left cursor-pointer ${
                     notifyAccPortal === 'staff'
-                      ? 'border-[#0b5d34] bg-emerald-50 text-[#0b5d34]'
+                      ? 'border-[#0a367a] bg-emerald-50 text-[#0a367a]'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -4099,7 +4099,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                   onClick={() => handleNotifyAccPortalSwitch('richgates-admin')}
                   className={`p-3 rounded-xl border text-left cursor-pointer ${
                     notifyAccPortal === 'richgates-admin'
-                      ? 'border-[#0b5d34] bg-emerald-50 text-[#0b5d34]'
+                      ? 'border-[#0a367a] bg-emerald-50 text-[#0a367a]'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -4180,7 +4180,7 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                 <button
                   type="submit"
                   disabled={notifyAccBusy}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0b5d34] hover:bg-[#094b2a] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0a367a] hover:bg-[#07275a] disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
                 >
                   <Mail className="w-3.5 h-3.5" />
                   <span>{notifyAccBusy ? 'Sharing...' : 'Share Details via Email'}</span>

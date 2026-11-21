@@ -2536,7 +2536,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       busyId === 'book' ||
                       Boolean(describeRoomConflict(targetRoomId, bookCheckIn, bookCheckOut))
                     }
-                    className="px-4 py-2 bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
+                    className="px-4 py-2 bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
                   >
                     {busyId === 'book'
                       ? 'Saving...'

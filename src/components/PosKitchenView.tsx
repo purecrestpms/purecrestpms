@@ -858,7 +858,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
     // A4 Formal Invoice PDF
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    pdf.setFillColor(11, 107, 58);
+    pdf.setFillColor(10, 54, 122);
     pdf.rect(0, 0, 210, 34, 'F');
     pdf.setTextColor(255, 255, 255);
     pdf.setFont('helvetica', 'bold');
@@ -913,7 +913,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         formatPdfNgn(it.unitPriceNgn),
         formatPdfNgn(it.lineTotalNgn),
       ]),
-      headStyles: { fillColor: [11, 107, 58], textColor: 255, fontSize: 9 },
+      headStyles: { fillColor: [10, 54, 122], textColor: 255, fontSize: 9 },
       bodyStyles: { fontSize: 9, textColor: [15, 23, 42] },
       columnStyles: {
         1: { halign: 'right', cellWidth: 20 },
@@ -954,7 +954,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     pdf.rect(130, sy - 4, 68, 10, 'F');
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(11.5);
-    pdf.setTextColor(11, 107, 58);
+    pdf.setTextColor(10, 54, 122);
     pdf.text('TOTAL DUE / PAID:', 133, sy + 2.5);
     pdf.text(formatPdfNgn(docData.totalNgn), 195, sy + 2.5, { align: 'right' });
 
@@ -1248,7 +1248,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       return (
         <div className="mx-auto w-[302px] bg-white text-slate-900 border border-slate-200 rounded-lg p-5 font-mono text-[11px] leading-relaxed print:border-0 print:rounded-none print:p-2 print:w-[76mm]">
           <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-300">
-            <p className="font-display text-sm font-extrabold text-[#0b6b3a] tracking-tight">
+            <p className="font-display text-sm font-extrabold text-[#0a367a] tracking-tight">
               {property.name}
             </p>
             {property.address && <p className="text-[10px] text-slate-600">{property.address}</p>}
@@ -1327,7 +1327,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <span>{formatNgn(docData.vatNgn)}</span>
               </div>
             )}
-            <div className="flex justify-between pt-1.5 border-t border-slate-200 text-xs font-extrabold text-[#0b6b3a]">
+            <div className="flex justify-between pt-1.5 border-t border-slate-200 text-xs font-extrabold text-[#0a367a]">
               <span>TOTAL</span>
               <span>{formatNgn(docData.totalNgn)}</span>
             </div>
@@ -1361,7 +1361,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     // Formal A4 Invoice Layout
     return (
       <div className="bg-white text-slate-900 border border-slate-200 rounded-xl overflow-hidden print:border-0 print:rounded-none">
-        <div className="bg-[#0b6b3a] text-white px-6 py-5 flex flex-wrap items-start justify-between gap-4">
+        <div className="bg-[#0a367a] text-white px-6 py-5 flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
             <h3 className="font-display text-lg font-extrabold tracking-tight">{property.name}</h3>
             {property.address && <p className="text-xs text-emerald-100">{property.address}</p>}
@@ -1402,7 +1402,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               <p className="font-bold text-slate-900 mt-0.5">
                 {formatPaymentMethodLabel(docData.paymentMethod)}
               </p>
-              <p className="text-[#0b6b3a] font-semibold uppercase">
+              <p className="text-[#0a367a] font-semibold uppercase">
                 {docData.paymentStatus === 'room_folio'
                   ? 'Charged to Room Folio'
                   : docData.paymentStatus}
@@ -1472,7 +1472,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   </span>
                 </div>
               )}
-              <div className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 font-display text-sm font-extrabold text-[#0b6b3a]">
+              <div className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 font-display text-sm font-extrabold text-[#0a367a]">
                 <span>Total</span>
                 <span className="font-mono-tabular">{formatNgn(docData.totalNgn)}</span>
               </div>
@@ -1499,7 +1499,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         {/* Top Bar: POS – Point of Sale + Room Selector + Module Tabs + Property Admin Controls */}
         <div className="bg-white border border-slate-200 rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="font-display text-xl font-extrabold text-[#0b6b3a] tracking-tight">
+            <h1 className="font-display text-xl font-extrabold text-[#0a367a] tracking-tight">
               POS – Point of Sale
             </h1>
             <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
@@ -1508,7 +1508,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 onClick={() => setPosModuleTab('terminal')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   posModuleTab === 'terminal'
-                    ? 'bg-[#0b6b3a] text-white shadow-xs'
+                    ? 'bg-[#0a367a] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -1520,7 +1520,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 onClick={() => setPosModuleTab('orders')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   posModuleTab === 'orders'
-                    ? 'bg-[#0b6b3a] text-white shadow-xs'
+                    ? 'bg-[#0a367a] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -1532,7 +1532,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 onClick={() => setPosModuleTab('dashboard')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   posModuleTab === 'dashboard'
-                    ? 'bg-[#0b6b3a] text-white shadow-xs'
+                    ? 'bg-[#0a367a] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -1544,8 +1544,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Live In-House Room Selector (matching PureCrest design top-right Room dropdown) */}
-            <div className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-emerald-200 bg-emerald-50/70 text-xs">
-              <BedDouble className="w-4 h-4 text-[#0b6b3a] shrink-0" />
+            <div className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-blue-200 bg-blue-50/70 text-xs">
+              <BedDouble className="w-4 h-4 text-[#0a367a] shrink-0" />
               <select
                 aria-label="Select Room or Walk-in Guest"
                 value={chargeTarget}
@@ -1566,7 +1566,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               onClick={() => setPurchaseModalOpen(true)}
               className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold whitespace-nowrap cursor-pointer"
             >
-              <ShoppingBag className="w-3.5 h-3.5 text-[#0b6b3a]" />
+              <ShoppingBag className="w-3.5 h-3.5 text-[#0a367a]" />
               <span>Record Purchase</span>
             </button>
 
@@ -1575,7 +1575,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <button
                   type="button"
                   onClick={openAddMenuModal}
-                  className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
+                  className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Add Product</span>
@@ -1617,9 +1617,9 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         {/* VIEW 1: POS TERMINAL (Matches Attached PureCrest POS Reference Design)    */}
         {/* ========================================================================= */}
         {posModuleTab === 'terminal' && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
-            {/* LEFT COLUMN (7/12): Kitchen & F&B Tabs, Search, Sub-category Chips, Text-Only Product Grid, Quick Actions */}
-            <div className="xl:col-span-7 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
+            {/* LEFT COLUMN (7/12 on tablet & desktop): Kitchen & F&B Tabs, Search, Sub-category Chips, Text-Only Product Grid, Quick Actions */}
+            <div className="md:col-span-7 space-y-4">
               {/* Primary Section Tabs: Kitchen | Food & Beverage */}
               <div className="flex flex-wrap items-center gap-2.5">
                 {POS_SECTIONS.map((sec) => {
@@ -1634,8 +1634,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                       }}
                       className={`h-12 px-6 rounded-xl font-display text-sm font-bold inline-flex items-center gap-2 transition-colors cursor-pointer ${
                         isActive
-                          ? 'bg-[#0b6b3a] text-white shadow-xs'
-                          : 'bg-white border border-slate-200 text-slate-800 hover:border-[#0b6b3a]'
+                          ? 'bg-[#0a367a] text-white shadow-xs'
+                          : 'bg-white border border-slate-200 text-slate-800 hover:border-[#0a367a]'
                       }`}
                     >
                       {sec === 'Kitchen' ? (
@@ -1657,7 +1657,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   value={searchMenu}
                   onChange={(e) => setSearchMenu(e.target.value)}
                   placeholder="Search menu items..."
-                  className="w-full h-11 bg-white border border-slate-200 rounded-xl pl-10 pr-9 text-xs text-slate-800 focus:outline-none focus:border-[#0b6b3a]"
+                  className="w-full h-11 bg-white border border-slate-200 rounded-xl pl-10 pr-9 text-xs text-slate-800 focus:outline-none focus:border-[#0a367a]"
                 />
                 {searchMenu && (
                   <button
@@ -1682,8 +1682,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                       onClick={() => setCategoryFilter(chip)}
                       className={`h-9 px-4 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                         active
-                          ? 'bg-[#0b6b3a] text-white shadow-xs'
-                          : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0b6b3a] hover:text-[#0b6b3a]'
+                          ? 'bg-[#0a367a] text-white shadow-xs'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0a367a] hover:text-[#0a367a]'
                       }`}
                     >
                       {chip}
@@ -1709,7 +1709,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                         type="button"
                         disabled={seedingMenu}
                         onClick={handleSeedStandardMenu}
-                        className="h-10 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
+                        className="h-10 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
                         <span>
@@ -1738,7 +1738,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                       setSearchMenu('');
                       setCategoryFilter('All Food');
                     }}
-                    className="text-xs font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+                    className="text-xs font-semibold text-[#0a367a] hover:underline cursor-pointer"
                   >
                     Show all items
                   </button>
@@ -1764,12 +1764,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                           isDisabled
                             ? 'border-slate-200 opacity-50 cursor-not-allowed'
                             : inCartQty > 0
-                              ? 'border-[#0b6b3a] bg-emerald-50/40 ring-1 ring-[#0b6b3a]/30 cursor-pointer'
-                              : 'border-slate-200 hover:border-[#0b6b3a] hover:bg-emerald-50/20 cursor-pointer'
+                              ? 'border-[#0a367a] bg-blue-50/50 ring-1 ring-[#0a367a]/30 cursor-pointer'
+                              : 'border-slate-200 hover:border-[#0a367a] hover:bg-blue-50/25 cursor-pointer'
                         }`}
                       >
                         {inCartQty > 0 && (
-                          <span className="absolute top-1.5 left-1.5 min-w-[20px] h-5 px-1.5 rounded-full bg-[#0b6b3a] text-white font-mono-tabular text-[10px] font-bold inline-flex items-center justify-center">
+                          <span className="absolute top-1.5 left-1.5 min-w-[20px] h-5 px-1.5 rounded-full bg-[#0a367a] text-white font-mono-tabular text-[10px] font-bold inline-flex items-center justify-center">
                             {inCartQty}
                           </span>
                         )}
@@ -1781,15 +1781,15 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                               openEditMenuModal(item);
                             }}
                             title={`Edit ${item.name}`}
-                            className="absolute top-1.5 right-1.5 p-1 rounded-md text-slate-400 hover:text-[#0b6b3a] hover:bg-emerald-50 opacity-75 group-hover:opacity-100 cursor-pointer"
+                            className="absolute top-1.5 right-1.5 p-1 rounded-md text-slate-400 hover:text-[#0a367a] hover:bg-blue-50 opacity-75 group-hover:opacity-100 cursor-pointer"
                           >
                             <Pencil className="w-3 h-3" />
                           </button>
                         )}
-                        <p className="text-xs font-semibold text-slate-900 leading-snug line-clamp-2 px-1">
+                        <p className="text-sm font-semibold text-slate-900 leading-snug line-clamp-2 px-1">
                           {item.name}
                         </p>
-                        <p className="font-mono-tabular text-sm font-extrabold text-[#0b6b3a]">
+                        <p className="font-mono-tabular text-sm font-extrabold text-[#0a367a]">
                           {formatNgn(item.priceNgn)}
                         </p>
                         {isDisabled && (
@@ -1804,15 +1804,15 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               )}
 
               {/* Quick Actions Bar (Mint Panel matching PureCrest POS design) */}
-              <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 p-4 space-y-3">
+              <div className="rounded-xl border border-blue-200/80 bg-blue-50/60 p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="font-display text-xs font-bold text-[#0b6b3a]">Quick Actions</p>
+                  <p className="font-display text-xs font-bold text-[#0a367a]">Quick Actions</p>
                   {canManageMenu && effectiveMenu.length > 0 && effectiveMenu.length < 10 && (
                     <button
                       type="button"
                       disabled={seedingMenu}
                       onClick={handleSeedStandardMenu}
-                      className="text-[11px] font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+                      className="text-[11px] font-semibold text-[#0a367a] hover:underline cursor-pointer"
                     >
                       + Load Standard Menu Items
                     </button>
@@ -1825,7 +1825,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     onClick={clearSale}
                     className="h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl bg-white border border-slate-200 hover:border-rose-300 hover:text-rose-700 text-xs font-semibold text-slate-800 cursor-pointer"
                   >
-                    <Trash2 className="w-4 h-4 text-[#0b6b3a]" />
+                    <Trash2 className="w-4 h-4 text-[#0a367a]" />
                     <span>Clear Sale</span>
                   </button>
                   <button
@@ -1837,8 +1837,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     }}
                     className={`h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold cursor-pointer ${
                       showDiscountEditor || discountNgn > 0
-                        ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white'
-                        : 'bg-white border-slate-200 hover:border-[#0b6b3a] text-slate-800'
+                        ? 'bg-[#0a367a] border-[#0a367a] text-white'
+                        : 'bg-white border-slate-200 hover:border-[#0a367a] text-slate-800'
                     }`}
                   >
                     <Tag className="w-4 h-4" />
@@ -1855,8 +1855,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     }}
                     className={`h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold cursor-pointer ${
                       showNoteEditor || orderNotes.trim()
-                        ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white'
-                        : 'bg-white border-slate-200 hover:border-[#0b6b3a] text-slate-800'
+                        ? 'bg-[#0a367a] border-[#0a367a] text-white'
+                        : 'bg-white border-slate-200 hover:border-[#0a367a] text-slate-800'
                     }`}
                   >
                     <StickyNote className="w-4 h-4" />
@@ -1871,8 +1871,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     }}
                     className={`h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold cursor-pointer ${
                       showCustomLine
-                        ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white'
-                        : 'bg-white border-slate-200 hover:border-[#0b6b3a] text-slate-800'
+                        ? 'bg-[#0a367a] border-[#0a367a] text-white'
+                        : 'bg-white border-slate-200 hover:border-[#0a367a] text-slate-800'
                     }`}
                   >
                     <Plus className="w-4 h-4" />
@@ -1882,7 +1882,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
                 {/* Inline Apply Discount Editor */}
                 {showDiscountEditor && (
-                  <div className="bg-white border border-emerald-200 rounded-xl p-3 flex flex-wrap items-end gap-2.5 text-xs">
+                  <div className="bg-white border border-blue-200 rounded-xl p-3 flex flex-wrap items-end gap-2.5 text-xs">
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                         Type
@@ -1924,7 +1924,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setShowDiscountEditor(false)}
-                      className="h-9 px-4 rounded-lg bg-[#0b6b3a] text-white font-semibold cursor-pointer"
+                      className="h-9 px-4 rounded-lg bg-[#0a367a] text-white font-semibold cursor-pointer"
                     >
                       Apply
                     </button>
@@ -1933,7 +1933,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
                 {/* Inline Order Note Editor */}
                 {showNoteEditor && (
-                  <div className="bg-white border border-emerald-200 rounded-xl p-3 space-y-2 text-xs">
+                  <div className="bg-white border border-blue-200 rounded-xl p-3 space-y-2 text-xs">
                     <label className="block text-[11px] font-semibold text-slate-700">
                       Kitchen / Service Note
                     </label>
@@ -1948,7 +1948,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setShowNoteEditor(false)}
-                        className="h-9 px-4 rounded-lg bg-[#0b6b3a] text-white font-semibold cursor-pointer"
+                        className="h-9 px-4 rounded-lg bg-[#0a367a] text-white font-semibold cursor-pointer"
                       >
                         Done
                       </button>
@@ -1958,7 +1958,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
 
                 {/* Inline Custom / Misc Item Adder */}
                 {showCustomLine && (
-                  <div className="bg-white border border-emerald-200 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-end text-xs">
+                  <div className="bg-white border border-blue-200 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-end text-xs">
                     <div className="sm:col-span-5">
                       <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                         Item Name
@@ -1999,7 +1999,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     <button
                       type="button"
                       onClick={handleAddCustomLine}
-                      className="sm:col-span-2 h-9 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold cursor-pointer"
+                      className="sm:col-span-2 h-9 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold cursor-pointer"
                     >
                       Add
                     </button>
@@ -2008,21 +2008,21 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               </div>
             </div>
 
-            {/* RIGHT COLUMN (5/12): Current Sale Panel (Matches PureCrest POS Reference) */}
-            <div className="xl:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs xl:sticky xl:top-4">
-              {/* Deep Forest Green Header */}
-              <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+            {/* RIGHT COLUMN (5/12 on Tablet & Desktop): Current Sale Panel */}
+            <div className="md:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs md:sticky md:top-4">
+              {/* Dark Blue Header */}
+              <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
                 <h2 className="font-display text-base font-bold tracking-tight">Current Sale</h2>
-                <span className="font-mono-tabular text-xs font-semibold text-emerald-100">
+                <span className="font-mono-tabular text-xs font-semibold text-blue-100">
                   #{previewOrderNumber}
                 </span>
               </div>
 
               {/* Linked Room / Walk-in Context Strip */}
-              <div className="px-4 py-2.5 bg-emerald-50/50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="px-4 py-2.5 bg-blue-50/50 border-b border-blue-100 flex flex-wrap items-center justify-between gap-2 text-xs">
                 {selectedInHouseGuest ? (
                   <div className="flex items-center gap-2 min-w-0">
-                    <BedDouble className="w-4 h-4 text-[#0b6b3a] shrink-0" />
+                    <BedDouble className="w-4 h-4 text-[#0a367a] shrink-0" />
                     <span className="font-bold text-slate-900">
                       Room {selectedInHouseGuest.roomNumber}
                     </span>
@@ -2166,8 +2166,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 )}
               </div>
 
-              <div className="px-4 py-3 bg-emerald-50 border-y border-emerald-200 flex items-center justify-between">
-                <span className="font-display text-base font-extrabold text-[#0b6b3a]">Total</span>
+              <div className="px-4 py-3 bg-blue-50 border-y border-blue-200 flex items-center justify-between">
+                <span className="font-display text-base font-extrabold text-[#0a367a]">Total</span>
                 <span className="font-mono-tabular text-xl font-extrabold text-slate-900">
                   {formatNgn(totalNgn)}
                 </span>
@@ -2194,8 +2194,8 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                         onClick={() => handleSelectPaymentMethod(opt.id)}
                         className={`py-2.5 px-2 rounded-xl border flex flex-col items-center justify-center gap-1 text-[11px] font-semibold transition-colors cursor-pointer ${
                           selected
-                            ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white shadow-xs'
-                            : 'bg-white border-slate-200 text-slate-700 hover:border-[#0b6b3a]'
+                            ? 'bg-[#0a367a] border-[#0a367a] text-white shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:border-[#0a367a]'
                         }`}
                       >
                         <Icon className="w-4 h-4" />
@@ -2215,7 +2215,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                             Room {selectedInHouseGuest.roomNumber} ({selectedInHouseGuest.guestName})
                           </strong>
                         </span>
-                        <span className="font-mono-tabular font-bold text-[#0b6b3a]">
+                        <span className="font-mono-tabular font-bold text-[#0a367a]">
                           Active Folio
                         </span>
                       </>
@@ -2247,7 +2247,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                     type="button"
                     disabled={submitting || cart.length === 0}
                     onClick={handleProcessPayment}
-                    className="col-span-7 h-11 inline-flex items-center justify-center gap-2 rounded-xl bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-bold disabled:opacity-50 cursor-pointer shadow-xs"
+                    className="col-span-7 h-11 inline-flex items-center justify-center gap-2 rounded-xl bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-bold disabled:opacity-50 cursor-pointer shadow-xs"
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     <span>{submitting ? 'Processing...' : 'Process Payment'}</span>
@@ -2270,7 +2270,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   onClick={() => setOrdersSubTab('kds')}
                   className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer ${
                     ordersSubTab === 'kds'
-                      ? 'bg-[#0b6b3a] text-white'
+                      ? 'bg-[#0a367a] text-white'
                       : 'text-slate-600 hover:bg-slate-100'
                   }`}
                 >
@@ -2282,7 +2282,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   onClick={() => setOrdersSubTab('purchases')}
                   className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer ${
                     ordersSubTab === 'purchases'
-                      ? 'bg-[#0b6b3a] text-white'
+                      ? 'bg-[#0a367a] text-white'
                       : 'text-slate-600 hover:bg-slate-100'
                   }`}
                 >
@@ -2293,7 +2293,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
               <button
                 type="button"
                 onClick={() => setPosModuleTab('terminal')}
-                className="text-xs font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+                className="text-xs font-semibold text-[#0a367a] hover:underline cursor-pointer"
               >
                 + New POS Sale
               </button>
@@ -2409,7 +2409,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() => openOrderDocumentModal(ord, 'invoice')}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#0b6b3a] font-semibold cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#0a367a] font-semibold cursor-pointer"
                               >
                                 <FileText className="w-3 h-3" />
                                 <span>Invoice</span>
@@ -2419,7 +2419,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                                   type="button"
                                   onClick={() => openEditOrderModal(ord)}
                                   title="Edit order & transaction details (Property Admin)"
-                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 bg-white hover:border-[#0b6b3a] text-slate-700 hover:text-[#0b6b3a] font-semibold cursor-pointer"
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 bg-white hover:border-[#0a367a] text-slate-700 hover:text-[#0a367a] font-semibold cursor-pointer"
                                 >
                                   <Pencil className="w-3 h-3" />
                                   <span>Edit</span>
@@ -2516,7 +2516,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   Today&apos;s POS Sales
                 </p>
-                <p className="font-mono-tabular text-2xl font-bold text-[#0b6b3a]">
+                <p className="font-mono-tabular text-2xl font-bold text-[#0a367a]">
                   {formatNgn(posDashboardMetrics.todayRevenue)}
                 </p>
                 <p className="text-[11px] text-slate-500">
@@ -2564,12 +2564,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <BedDouble className="w-4 h-4 text-[#0b6b3a]" />
+                  <BedDouble className="w-4 h-4 text-[#0a367a]" />
                   <h2 className="font-display text-sm font-bold text-slate-900">
                     Current In-House Guests (Bill to Room)
                   </h2>
                 </div>
-                <span className="font-mono-tabular text-xs font-semibold text-[#0b6b3a]">
+                <span className="font-mono-tabular text-xs font-semibold text-[#0a367a]">
                   {inHouseGuests.length} checked-in
                 </span>
               </div>
@@ -2613,7 +2613,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                             <button
                               type="button"
                               onClick={() => handleSelectInHouseGuestForBilling(guestRes)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold cursor-pointer whitespace-nowrap"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold cursor-pointer whitespace-nowrap"
                             >
                               <Receipt className="w-3.5 h-3.5" />
                               <span>Charge to Room</span>
@@ -2636,7 +2636,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       {printDoc && (
         <div className="no-print fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden my-auto">
-            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="bg-[#0a367a] text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-emerald-200" />
                 <div>
@@ -2666,7 +2666,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   onClick={() => setPrintFormat('receipt')}
                   className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
                     printFormat === 'receipt'
-                      ? 'bg-[#0b6b3a] text-white'
+                      ? 'bg-[#0a367a] text-white'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -2677,7 +2677,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   onClick={() => setPrintFormat('invoice')}
                   className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
                     printFormat === 'invoice'
-                      ? 'bg-[#0b6b3a] text-white'
+                      ? 'bg-[#0a367a] text-white'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -2689,7 +2689,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <button
                   type="button"
                   onClick={handleTriggerBrowserPrint}
-                  className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-semibold cursor-pointer"
+                  className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>{printFormat === 'receipt' ? 'Print Receipt' : 'Print Invoice'}</span>
@@ -2729,7 +2729,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
             onSubmit={handleSaveMenuItem}
             className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden text-xs"
           >
-            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+            <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between">
               <h3 className="font-display text-sm font-bold">
                 {editingMenuItem ? 'Edit POS Product' : 'Add POS Product'}
               </h3>
@@ -2750,7 +2750,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   value={menuName}
                   onChange={(e) => setMenuName(e.target.value)}
                   placeholder="e.g. Grilled Chicken"
-                  className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                  className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs focus:outline-none focus:border-[#0a367a]"
                 />
               </div>
 
@@ -2825,7 +2825,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   type="checkbox"
                   checked={menuAvailable}
                   onChange={(e) => setMenuAvailable(e.target.checked)}
-                  className="rounded border-slate-300 text-[#0b6b3a]"
+                  className="rounded border-slate-300 text-[#0a367a]"
                 />
                 <span>Available for sale on POS</span>
               </label>
@@ -2854,7 +2854,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   <button
                     type="submit"
                     disabled={savingMenu}
-                    className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                    className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold disabled:opacity-50 cursor-pointer"
                   >
                     <Check className="w-3.5 h-3.5" />
                     <span>{savingMenu ? 'Saving...' : 'Save Product'}</span>
@@ -2875,7 +2875,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
             onSubmit={handleSaveOrderEdit}
             className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-lg overflow-hidden text-xs"
           >
-            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+            <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between">
               <h3 className="font-display text-sm font-bold">
                 Edit Transaction · #{editingOrder.orderNumber}
               </h3>
@@ -3011,7 +3011,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 />
               </div>
 
-              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between font-bold text-[#0b6b3a]">
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between font-bold text-[#0a367a]">
                 <span>Updated Order Total</span>
                 <span className="font-mono-tabular text-sm">
                   {formatNgn(
@@ -3033,7 +3033,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <button
                   type="submit"
                   disabled={savingOrderEdit}
-                  className="h-9 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                  className="h-9 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold disabled:opacity-50 cursor-pointer"
                 >
                   {savingOrderEdit ? 'Saving...' : 'Save Order Changes'}
                 </button>
@@ -3052,7 +3052,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
             onSubmit={handleSavePosSettings}
             className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden text-xs"
           >
-            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+            <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Settings className="w-4 h-4 text-emerald-200" />
                 <h3 className="font-display text-sm font-bold">
@@ -3149,7 +3149,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <button
                   type="submit"
                   disabled={savingSettings}
-                  className="h-9 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                  className="h-9 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold disabled:opacity-50 cursor-pointer"
                 >
                   {savingSettings ? 'Saving...' : 'Save POS Settings'}
                 </button>
@@ -3168,7 +3168,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
             onSubmit={handleRecordPurchase}
             className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden text-xs"
           >
-            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+            <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between">
               <h3 className="font-display text-sm font-bold">Record F&amp;B Purchase</h3>
               <button
                 type="button"
@@ -3297,7 +3297,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 <button
                   type="submit"
                   disabled={savingPurchase}
-                  className="h-9 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                  className="h-9 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold disabled:opacity-50 cursor-pointer"
                 >
                   {savingPurchase ? 'Recording...' : 'Record & Print Invoice'}
                 </button>

@@ -128,7 +128,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
       <div className="relative bg-white border border-slate-200 rounded-2xl overflow-hidden">
         <div className="relative z-10 px-6 py-6 sm:px-8 sm:py-7 max-w-2xl">
           <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight">
-            <span className="text-[#0b5d34]">{getTimeGreeting()},</span>{' '}
+            <span className="text-[#0a367a]">{getTimeGreeting()},</span>{' '}
             <span className="text-slate-900">{firstName}!</span>
           </h1>
           <p className="text-sm text-slate-600 mt-1.5">
@@ -137,7 +137,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
               {metrics.totalProperties}
             </strong>{' '}
             {metrics.totalProperties === 1 ? 'property' : 'properties'} on{' '}
-            <span className="font-mono-tabular font-semibold text-[#0b5d34]">
+            <span className="font-mono-tabular font-semibold text-[#0a367a]">
               admin.{rootDomain}
             </span>
             .
@@ -146,7 +146,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('properties_admin')}
-              className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0b5d34] hover:bg-[#084828] text-white text-xs font-semibold cursor-pointer transition-colors"
+              className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold cursor-pointer transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add New Property</span>
@@ -156,7 +156,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
               onClick={() => onNavigate('user_management')}
               className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold cursor-pointer transition-colors"
             >
-              <UserPlus className="w-3.5 h-3.5 text-[#0b5d34]" />
+              <UserPlus className="w-3.5 h-3.5 text-[#0a367a]" />
               <span>Create Property Login</span>
             </button>
           </div>
@@ -179,17 +179,17 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('properties_admin')}
-          className="text-left bg-[#e9f7ef] border border-emerald-200/80 rounded-2xl p-5 flex items-center gap-4 hover:border-emerald-300 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 rounded-2xl p-5 flex items-center gap-4 hover:border-[#0a367a] transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#169a57] text-white flex items-center justify-center shrink-0">
+          <div className="w-12 h-12 rounded-full bg-[#0a367a] text-white flex items-center justify-center shrink-0">
             <Building2 className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Total Properties</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+            <p className="text-sm font-semibold text-slate-700">Total Properties</p>
+            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.totalProperties).padStart(2, '0')}
             </p>
-            <p className="text-[11px] font-semibold text-emerald-700 mt-0.5">
+            <p className="text-xs font-semibold text-[#0a367a] mt-0.5">
               {metrics.activeProperties} active · {metrics.onboardingProperties} onboarding
             </p>
           </div>
@@ -260,7 +260,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
         <div className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-[#0b5d34]" />
+              <BarChart3 className="w-4 h-4 text-[#0a367a]" />
               <h2 className="font-display text-base font-bold text-slate-900">
                 Room Inventory by Property
               </h2>
@@ -279,7 +279,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigate('properties_admin')}
-                className="mt-4 h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0b5d34] hover:bg-[#084828] text-white text-xs font-semibold cursor-pointer"
+                className="mt-4 h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add First Property</span>
@@ -306,8 +306,8 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
                       <div
                         className={`w-full rounded-t-lg transition-all duration-300 ${
                           isSelected
-                            ? 'bg-[#0b5d34]'
-                            : 'bg-[#169a57] group-hover:bg-[#0b5d34]'
+                            ? 'bg-[#0a367a]'
+                            : 'bg-[#1557b0] group-hover:bg-[#0a367a]'
                         }`}
                         style={{ height: `${heightPct}%` }}
                       />
@@ -322,10 +322,10 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
           )}
         </div>
 
-        {/* Quick Platform Actions (Dark Forest Green Card) */}
-        <div className="lg:col-span-4 bg-[#064e2b] rounded-2xl p-5 text-white flex flex-col justify-between">
+        {/* Quick Platform Actions (Dark Blue Card) */}
+        <div className="lg:col-span-4 bg-[#0a367a] rounded-2xl p-5 text-white flex flex-col justify-between">
           <div className="flex items-center gap-2 mb-4">
-            <Zap className="w-4 h-4 text-emerald-300" />
+            <Zap className="w-4 h-4 text-blue-200" />
             <h2 className="font-display text-base font-bold text-white">Quick Actions</h2>
           </div>
 
@@ -333,36 +333,36 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('properties_admin')}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <Building2 className="w-5 h-5 text-[#0b5d34]" />
+              <Building2 className="w-5 h-5 text-[#0a367a]" />
               <span className="text-xs font-semibold leading-tight">Add Property</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('user_management')}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <UserPlus className="w-5 h-5 text-[#0b5d34]" />
+              <UserPlus className="w-5 h-5 text-[#0a367a]" />
               <span className="text-xs font-semibold leading-tight">Property Login</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('licensing')}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <KeyRound className="w-5 h-5 text-[#0b5d34]" />
+              <KeyRound className="w-5 h-5 text-[#0a367a]" />
               <span className="text-xs font-semibold leading-tight">Licenses</span>
             </button>
 
             <button
               type="button"
               onClick={onOpenPortalLinksModal}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <ExternalLink className="w-5 h-5 text-[#0b5d34]" />
+              <ExternalLink className="w-5 h-5 text-[#0a367a]" />
               <span className="text-xs font-semibold leading-tight">Portal Links</span>
             </button>
           </div>
@@ -406,7 +406,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search property, city, email..."
-                className="w-full h-9 pl-8 pr-3 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#0b5d34]"
+                className="w-full h-9 pl-8 pr-3 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#0a367a]"
               />
             </div>
           </div>
@@ -451,7 +451,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
                           href={adminUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[#0b5d34] hover:underline inline-flex items-center gap-1 font-medium"
+                          className="text-[#0a367a] hover:underline inline-flex items-center gap-1 font-medium"
                         >
                           <span>
                             {slug}.{rootDomain}
@@ -487,7 +487,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
                           <button
                             type="button"
                             onClick={() => onCreateLoginForProperty(prop.id)}
-                            className="h-8 px-3 rounded-lg bg-[#0b5d34] hover:bg-[#084828] text-white text-[11px] font-semibold cursor-pointer"
+                            className="h-8 px-3 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-[11px] font-semibold cursor-pointer"
                           >
                             Create Login
                           </button>
@@ -522,7 +522,7 @@ export const PchAdminDashboardView: React.FC<PchAdminDashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('licensing')}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0a367a] hover:underline cursor-pointer"
             >
               <span>View All</span>
               <ArrowRight className="w-3.5 h-3.5" />

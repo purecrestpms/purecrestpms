@@ -602,17 +602,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [occupancyTrend]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* 1. Greeting Hero Banner with Property Suite Photo */}
-      <div className="relative bg-[#f4f6f9] border border-slate-200/90 rounded-2xl overflow-hidden min-h-[112px] flex items-center">
+      <div className="relative bg-white border border-slate-200 rounded-2xl overflow-hidden min-h-[118px] flex items-center shadow-xs">
         <div className="relative z-10 px-6 py-5 sm:px-8 sm:py-6 max-w-xl">
           <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
-            <span className="text-[#0b5d34]">{getTimeGreeting()},</span>{' '}
+            <span className="text-[#0a367a]">{getTimeGreeting()},</span>{' '}
             <span className="text-slate-900">{greetingName}!</span>
           </h1>
-          <p className="text-xs sm:text-sm text-slate-600 mt-1">
+          <p className="text-sm sm:text-base text-slate-600 mt-1.5">
             Here&apos;s what&apos;s happening at{' '}
-            <span className="font-semibold text-slate-800">{property.name}</span> today.
+            <span className="font-semibold text-slate-900">{property.name}</span> today.
           </p>
         </div>
 
@@ -623,29 +623,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             referrerPolicy="no-referrer"
             className="w-full h-full object-cover object-center"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#f4f6f9] via-[#f4f6f9]/70 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-white via-white/75 to-transparent" />
         </div>
       </div>
 
-      {/* 2. Four Essential Tinted KPI Cards */}
+      {/* 2. Four Essential KPI Cards (Dark Blue & White) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* Occupancy Rate */}
         <button
           type="button"
           onClick={() => onNavigate('rooms')}
-          className="text-left bg-[#e9f7ef] border border-emerald-200/70 hover:border-emerald-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#169a57] text-white flex items-center justify-center shrink-0">
-            <BedDouble className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-6 h-6" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Occupancy Rate</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+            <p className="text-sm font-semibold text-slate-600">Occupancy Rate</p>
+            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {metrics.occupancyRate}%
             </p>
             <p
-              className={`text-[11px] font-semibold mt-0.5 font-mono-tabular ${
-                metrics.occDelta >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              className={`text-xs font-semibold mt-0.5 font-mono-tabular ${
+                metrics.occDelta >= 0 ? 'text-[#0a367a]' : 'text-rose-700'
               }`}
             >
               {metrics.occDelta >= 0 ? '↑ +' : '↓ '}
@@ -658,17 +658,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('arrivals')}
-          className="text-left bg-[#ebf3fe] border border-blue-200/70 hover:border-blue-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#1c64f2] text-white flex items-center justify-center shrink-0">
-            <Calendar className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Calendar className="w-6 h-6" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Arrivals</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+            <p className="text-sm font-semibold text-slate-600">Arrivals</p>
+            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.arrivalsToday).padStart(2, '0')}
             </p>
-            <p className="text-[11px] font-semibold text-blue-700 mt-0.5 font-mono-tabular">
+            <p className="text-xs font-semibold text-[#1557b0] mt-0.5 font-mono-tabular">
               {metrics.arrivalsDelta >= 0 ? '↑ +' : '↓ '}
               {metrics.arrivalsDelta} vs yesterday
             </p>
@@ -679,17 +679,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('in_house')}
-          className="text-left bg-[#f4eeff] border border-purple-200/70 hover:border-purple-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#7e3af2] text-white flex items-center justify-center shrink-0">
-            <LogOut className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <LogOut className="w-6 h-6" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Departures</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight mt-0.5">
+            <p className="text-sm font-semibold text-slate-600">Departures</p>
+            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.departuresToday).padStart(2, '0')}
             </p>
-            <p className="text-[11px] font-semibold text-purple-700 mt-0.5 font-mono-tabular">
+            <p className="text-xs font-semibold text-slate-600 mt-0.5 font-mono-tabular">
               {metrics.departuresDelta >= 0 ? '↑ +' : '↓ '}
               {metrics.departuresDelta} vs yesterday
             </p>
@@ -700,19 +700,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('accounting')}
-          className="text-left bg-[#fef7e4] border border-amber-200/70 hover:border-amber-300 rounded-2xl p-5 flex items-center gap-4 transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-full bg-[#d98a0b] text-white flex items-center justify-center shrink-0">
-            <Wallet className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Wallet className="w-6 h-6" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-700">Today&apos;s Revenue</p>
-            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight mt-0.5 truncate">
+            <p className="text-sm font-semibold text-slate-600">Today&apos;s Revenue</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5 truncate">
               {formatNgn(metrics.revenueToday)}
             </p>
             <p
-              className={`text-[11px] font-semibold mt-0.5 font-mono-tabular ${
-                metrics.revenueDeltaPct >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              className={`text-xs font-semibold mt-0.5 font-mono-tabular ${
+                metrics.revenueDeltaPct >= 0 ? 'text-[#0a367a]' : 'text-rose-700'
               }`}
             >
               {metrics.revenueDeltaPct >= 0 ? '↑ +' : '↓ '}
@@ -726,20 +726,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h2 className="font-display text-sm font-bold text-slate-900">
+            <h2 className="font-display text-lg font-bold text-[#061f4d]">
               Financial Overview
             </h2>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-xs sm:text-sm text-slate-500">
               Live payment position across OTA channels and direct property settlements
             </p>
           </div>
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1 text-sm font-semibold text-[#0a367a] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
           >
             <span>Detailed Payments</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <ArrowRight className="w-4 h-4" />
           </button>
         </div>
 
@@ -747,21 +747,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="text-left bg-white border border-slate-200 hover:border-blue-300 rounded-2xl p-5 transition-colors cursor-pointer"
+            className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 shadow-xs transition-colors cursor-pointer"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-slate-600">OTA Prepayments</span>
-              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
-                <Globe className="w-4 h-4" />
+              <span className="text-sm font-semibold text-slate-600">OTA Prepayments</span>
+              <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+                <Globe className="w-4.5 h-4.5" />
               </div>
             </div>
-            <p className="font-display font-mono-tabular text-2xl font-extrabold text-slate-900 mt-2 truncate">
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-2 truncate">
               {formatNgn(financialOverview.otaPrepaymentsNgn)}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1 font-mono-tabular">
+            <p className="text-xs text-slate-500 mt-1.5 font-mono-tabular">
               {financialOverview.otaPendingPayoutCount} pending ·{' '}
               {financialOverview.otaReceivedPayoutCount} received · Exp.{' '}
-              <span className="font-semibold text-blue-700">
+              <span className="font-semibold text-[#0a367a]">
                 {formatNgn(financialOverview.otaExpectedPayoutNgn)}
               </span>
             </p>
@@ -770,20 +770,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="text-left bg-white border border-slate-200 hover:border-emerald-300 rounded-2xl p-5 transition-colors cursor-pointer"
+            className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 shadow-xs transition-colors cursor-pointer"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-slate-600">Payments Received</span>
-              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-                <CheckCircle2 className="w-4 h-4" />
+              <span className="text-sm font-semibold text-slate-600">Payments Received</span>
+              <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-4.5 h-4.5" />
               </div>
             </div>
-            <p className="font-display font-mono-tabular text-2xl font-extrabold text-emerald-700 mt-2 truncate">
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#0a367a] mt-2 truncate">
               {formatNgn(financialOverview.paymentsReceivedNgn)}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">
+            <p className="text-xs text-slate-500 mt-1.5">
               Direct receipts &amp; settled OTA payouts across{' '}
-              <span className="font-mono-tabular font-semibold text-slate-700">
+              <span className="font-mono-tabular font-semibold text-slate-800">
                 {financialOverview.paymentsReceivedCount}
               </span>{' '}
               stay{financialOverview.paymentsReceivedCount === 1 ? '' : 's'}
@@ -793,22 +793,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="text-left bg-white border border-slate-200 hover:border-rose-300 rounded-2xl p-5 transition-colors cursor-pointer"
+            className="text-left bg-white border border-slate-200 hover:border-rose-300 rounded-2xl p-5 shadow-xs transition-colors cursor-pointer"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-slate-600">Outstanding Balance</span>
-              <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-700 flex items-center justify-center shrink-0">
-                <AlertCircle className="w-4 h-4" />
+              <span className="text-sm font-semibold text-slate-600">Outstanding Balance</span>
+              <div className="w-9 h-9 rounded-lg bg-rose-50 text-rose-700 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-4.5 h-4.5" />
               </div>
             </div>
             <p
-              className={`font-display font-mono-tabular text-2xl font-extrabold mt-2 truncate ${
-                financialOverview.outstandingBalanceNgn > 0 ? 'text-rose-700' : 'text-slate-900'
+              className={`font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold mt-2 truncate ${
+                financialOverview.outstandingBalanceNgn > 0 ? 'text-rose-700' : 'text-[#061f4d]'
               }`}
             >
               {formatNgn(financialOverview.outstandingBalanceNgn)}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">
+            <p className="text-xs text-slate-500 mt-1.5">
               {financialOverview.outstandingCount > 0 ? (
                 <>
                   <span className="font-mono-tabular font-semibold text-rose-700">
@@ -824,278 +824,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 2c. Live Dashboard Reservations & OTA Availability Calendar */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-[#0b5d34]" />
-              <h2 className="font-display text-base font-bold text-slate-900">
-                Reservations &amp; OTA Calendar
-              </h2>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold font-mono-tabular text-[#0b5d34]">
-                {currentAndUpcomingReservations.length} active/upcoming
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Live room schedule across Direct, Airbnb, Booking.com &amp; blocked dates
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
-              <button
-                type="button"
-                onClick={() => setDashCalStartIso((d) => addDaysIso(d, -7))}
-                className="p-1.5 rounded-md hover:bg-white text-slate-600 cursor-pointer"
-                aria-label="Previous week"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setDashCalStartIso(todayIso)}
-                className="px-2.5 py-1 rounded-md hover:bg-white font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                onClick={() => setDashCalStartIso((d) => addDaysIso(d, 7))}
-                className="p-1.5 rounded-md hover:bg-white text-slate-600 cursor-pointer"
-                aria-label="Next week"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
-              <button
-                type="button"
-                onClick={() => setDashCalDaysCount(14)}
-                className={`px-2 py-1 rounded-md font-semibold cursor-pointer ${
-                  dashCalDaysCount === 14 ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                14d
-              </button>
-              <button
-                type="button"
-                onClick={() => setDashCalDaysCount(30)}
-                className={`px-2 py-1 rounded-md font-semibold cursor-pointer ${
-                  dashCalDaysCount === 30 ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                30d
-              </button>
-            </div>
-
-            {connectedOtaWithFeed.length > 0 && (
-              <button
-                type="button"
-                disabled={syncingOta}
-                onClick={handleDashboardSyncOta}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 disabled:opacity-60 text-blue-800 text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${syncingOta ? 'animate-spin' : ''}`} />
-                <span>{syncingOta ? 'Refreshing…' : 'Refresh Channels'}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => onNavigate('calendar')}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <span>Full Calendar</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Channel Breakdown & Jump Chips so EVERY synced reservation (including future Airbnb stays) is 1-click reachable */}
-        {currentAndUpcomingReservations.length > 0 && (
-          <div className="px-5 py-2.5 bg-slate-50/70 border-b border-slate-100 space-y-2">
-            <div className="flex flex-wrap items-center gap-2 text-[11px]">
-              <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
-                Channel Bookings:
-              </span>
-              {channelSummaryCounts.map(([chLabel, count]) => (
-                <span
-                  key={chLabel}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 font-semibold text-slate-700 font-mono-tabular"
-                >
-                  <span>{chLabel}:</span>
-                  <span className="text-[#0b5d34]">{count}</span>
-                </span>
-              ))}
-            </div>
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-              {currentAndUpcomingReservations.slice(0, 12).map((res) => {
-                const isOta = isOtaBookingChannel(res.channel);
-                const rIn = normalizeIsoDate(res.checkInDate);
-                const roomDisp = getReservationRoomDisplay(res, rooms);
-                return (
-                  <button
-                    key={res.id}
-                    type="button"
-                    onClick={() => {
-                      if (rIn) setDashCalStartIso(rIn);
-                    }}
-                    onDoubleClick={() => onOpenReservationFolio(res.id, 'reservations')}
-                    title="Click to jump calendar to stay dates · Double-click to open folio"
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                      isOta
-                        ? 'bg-orange-50/90 border-orange-200 text-orange-900 hover:bg-orange-100'
-                        : 'bg-emerald-50/80 border-emerald-200 text-emerald-900 hover:bg-emerald-100'
-                    }`}
-                  >
-                    <span className="font-bold">
-                      {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'}
-                    </span>
-                    <span>·</span>
-                    <span className="max-w-[120px] truncate">{res.guestName}</span>
-                    <span className="font-mono-tabular opacity-80">
-                      ({res.checkInDate.slice(5)} → {res.checkOutDate.slice(5)})
-                    </span>
-                    <span className="px-1.5 py-0.2 rounded bg-white/80 text-[10px] font-bold">
-                      {formatBookingSourceLabel(res.channel)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Compact Live Tape Matrix */}
-        {sortedRooms.length === 0 ? (
-          <div className="p-6 text-center text-xs text-slate-500">
-            Add rooms to view your live availability calendar.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[11px] min-w-[760px]">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="sticky left-0 z-10 bg-slate-50 py-2.5 px-4 text-left font-bold text-slate-700 w-40 border-r border-slate-200">
-                    Room
-                  </th>
-                  {dashCalDays.map((day) => (
-                    <th
-                      key={day.iso}
-                      className={`py-2 px-1 text-center font-mono-tabular border-r border-slate-100 min-w-[46px] ${
-                        day.isToday ? 'bg-emerald-50 text-[#0b5d34]' : 'text-slate-600'
-                      }`}
-                    >
-                      <div className="text-[9px] uppercase font-semibold opacity-75">
-                        {day.weekday}
-                      </div>
-                      <div className="font-bold text-xs leading-tight">{day.dayNum}</div>
-                      <div className="text-[9px] opacity-60">{day.monthShort}</div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {sortedRooms.map((room) => {
-                  const roomResList = activeCalendarReservations.filter((r) =>
-                    matchesRoomRecord(room, r.roomId, r.roomNumber)
-                  );
-                  const roomBlocks = blockedDates.filter(
-                    (b) =>
-                      b.roomId === room.id ||
-                      b.roomId === 'ALL' ||
-                      (b.roomNumber && b.roomNumber === room.roomNumber)
-                  );
-                  return (
-                    <tr key={room.id} className="hover:bg-slate-50/40">
-                      <td className="sticky left-0 z-10 bg-white py-2 px-4 border-r border-slate-200 whitespace-nowrap">
-                        <div className="font-bold text-slate-900">{room.roomNumber}</div>
-                        <div className="text-[10px] text-slate-500 truncate max-w-[130px]">
-                          {room.roomType}
-                        </div>
-                      </td>
-                      {dashCalDays.map((day) => {
-                        const matchingRes = roomResList.filter((r) => {
-                          const rIn = normalizeIsoDate(r.checkInDate);
-                          const rOutRaw = normalizeIsoDate(r.checkOutDate);
-                          const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
-                          return rIn <= day.iso && day.iso < rOut;
-                        });
-                        const matchingBlock = roomBlocks.find((b) => {
-                          const bStart = normalizeIsoDate(b.startDate);
-                          const bEnd = normalizeIsoDate(b.endDate);
-                          return bStart <= day.iso && day.iso < (bEnd > bStart ? bEnd : addDaysIso(bStart, 1));
-                        });
-
-                        return (
-                          <td
-                            key={day.iso}
-                            className={`p-0.5 align-top border-r border-slate-100 ${
-                              day.isToday
-                                ? 'bg-emerald-50/30'
-                                : day.iso < todayIso
-                                  ? 'bg-slate-100/80'
-                                  : ''
-                            }`}
-                          >
-                            {matchingRes.length > 0 ? (
-                              <div className="space-y-0.5">
-                                {matchingRes.map((res) => {
-                                  const isStart = normalizeIsoDate(res.checkInDate) === day.iso;
-                                  const isOta = isOtaBookingChannel(res.channel);
-                                  const barColor =
-                                    res.status === 'checked_in'
-                                      ? 'bg-emerald-600 text-white'
-                                      : isOta
-                                        ? 'bg-orange-500 text-white'
-                                        : 'bg-sky-600 text-white';
-                                  return (
-                                    <button
-                                      key={res.id}
-                                      type="button"
-                                      onClick={() => onOpenReservationFolio(res.id, 'reservations')}
-                                      title={`${res.guestName} · ${formatBookingSourceLabel(res.channel)} · ${res.checkInDate} → ${res.checkOutDate} (${RESERVATION_STATUS_LABELS[res.status]})`}
-                                      className={`w-full block text-left px-1 py-1 rounded text-[9px] font-bold truncate transition-opacity hover:opacity-90 cursor-pointer ${barColor}`}
-                                    >
-                                      {isStart || day.iso === dashCalStartIso
-                                        ? res.guestName
-                                        : '\u00A0'}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            ) : matchingBlock ? (
-                              <div
-                                title={`Blocked (${matchingBlock.category || 'Hold'}): ${matchingBlock.reason || 'Unavailable'}`}
-                                className="w-full px-1 py-1 rounded bg-slate-200 text-slate-600 text-[9px] font-semibold flex items-center justify-center"
-                              >
-                                <Lock className="w-2.5 h-2.5" />
-                              </div>
-                            ) : (
-                              <div className="h-6" />
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* 3. Middle Row: Booking Performance Bar Chart + Dark Green Quick Actions */}
+      {/* 3. Middle Row: Booking Performance Bar Chart + Dark Blue Quick Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Booking Performance */}
-        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col justify-between">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-[#0b5d34]" />
-              <h2 className="font-display text-base font-bold text-slate-900">
+              <BarChart3 className="w-4.5 h-4.5 text-blue-200" />
+              <h2 className="font-display text-base font-bold text-white">
                 Booking Performance
               </h2>
             </div>
@@ -1104,71 +840,73 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               aria-label="Booking performance period"
               value={perfRange}
               onChange={(e) => setPerfRange(e.target.value as '7d' | '14d' | '30d')}
-              className="h-8 px-3 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:border-[#0b5d34] cursor-pointer"
+              className="h-8 px-3 rounded-lg border border-white/25 bg-white/10 text-xs font-semibold text-white focus:outline-none cursor-pointer"
             >
-              <option value="7d">Last 7 Days</option>
-              <option value="14d">Last 14 Days</option>
-              <option value="30d">Last 30 Days</option>
+              <option value="7d" className="text-slate-900">Last 7 Days</option>
+              <option value="14d" className="text-slate-900">Last 14 Days</option>
+              <option value="30d" className="text-slate-900">Last 30 Days</option>
             </select>
           </div>
 
-          <div className="relative h-56 flex items-end gap-2 sm:gap-4 pt-6 pb-2 pl-7 pr-2">
-            {/* Horizontal Y-Axis Gridlines */}
-            <div className="absolute inset-x-0 top-6 bottom-8 left-7 right-2 flex flex-col justify-between pointer-events-none">
-              {[1, 0.75, 0.5, 0.25, 0].map((ratio) => (
-                <div key={ratio} className="relative flex items-center w-full">
-                  <span className="absolute -left-7 text-[10px] font-mono-tabular text-slate-400 w-5 text-right">
-                    {Math.round(bookingPerformance.yMax * ratio)}
-                  </span>
-                  <div className="w-full border-t border-slate-100" />
-                </div>
-              ))}
-            </div>
-
-            {/* Bars */}
-            {bookingPerformance.series.map((bar) => {
-              const pct =
-                bookingPerformance.yMax > 0
-                  ? Math.round((bar.count / bookingPerformance.yMax) * 100)
-                  : 0;
-              return (
-                <button
-                  key={bar.iso}
-                  type="button"
-                  onClick={() => onNavigate('reservations')}
-                  title={`${bar.iso}: ${bar.count} active/booked reservation${bar.count === 1 ? '' : 's'}`}
-                  className="relative z-10 flex-1 h-full flex flex-col items-center justify-end gap-1.5 group cursor-pointer"
-                >
-                  <span className="font-mono-tabular text-[11px] font-bold text-slate-700">
-                    {perfRange === '30d' && bar.count === 0 ? '' : bar.count}
-                  </span>
-                  <div className="w-full flex-1 flex items-end justify-center">
-                    <div
-                      className={`w-full ${
-                        perfRange === '7d'
-                          ? 'max-w-[44px]'
-                          : perfRange === '14d'
-                            ? 'max-w-[26px]'
-                            : 'max-w-[14px]'
-                      } rounded-t-md bg-[#169a57] group-hover:bg-[#0b5d34] transition-colors`}
-                      style={{
-                        height: `${bar.count > 0 ? Math.max(8, pct) : 2}%`,
-                      }}
-                    />
+          <div className="p-5">
+            <div className="relative h-56 flex items-end gap-2 sm:gap-4 pt-6 pb-2 pl-7 pr-2">
+              {/* Horizontal Y-Axis Gridlines */}
+              <div className="absolute inset-x-0 top-6 bottom-8 left-7 right-2 flex flex-col justify-between pointer-events-none">
+                {[1, 0.75, 0.5, 0.25, 0].map((ratio) => (
+                  <div key={ratio} className="relative flex items-center w-full">
+                    <span className="absolute -left-7 text-xs font-mono-tabular text-slate-400 w-5 text-right">
+                      {Math.round(bookingPerformance.yMax * ratio)}
+                    </span>
+                    <div className="w-full border-t border-slate-100" />
                   </div>
-                  <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap">
-                    {perfRange === '30d' ? bar.label.slice(3) : bar.label}
-                  </span>
-                </button>
-              );
-            })}
+                ))}
+              </div>
+
+              {/* Bars */}
+              {bookingPerformance.series.map((bar) => {
+                const pct =
+                  bookingPerformance.yMax > 0
+                    ? Math.round((bar.count / bookingPerformance.yMax) * 100)
+                    : 0;
+                return (
+                  <button
+                    key={bar.iso}
+                    type="button"
+                    onClick={() => onNavigate('reservations')}
+                    title={`${bar.iso}: ${bar.count} active/booked reservation${bar.count === 1 ? '' : 's'}`}
+                    className="relative z-10 flex-1 h-full flex flex-col items-center justify-end gap-1.5 group cursor-pointer"
+                  >
+                    <span className="font-mono-tabular text-xs font-bold text-[#061f4d]">
+                      {perfRange === '30d' && bar.count === 0 ? '' : bar.count}
+                    </span>
+                    <div className="w-full flex-1 flex items-end justify-center">
+                      <div
+                        className={`w-full ${
+                          perfRange === '7d'
+                            ? 'max-w-[44px]'
+                            : perfRange === '14d'
+                              ? 'max-w-[26px]'
+                              : 'max-w-[14px]'
+                        } rounded-t-md bg-[#1557b0] group-hover:bg-[#0a367a] transition-colors`}
+                        style={{
+                          height: `${bar.count > 0 ? Math.max(8, pct) : 2}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs font-medium text-slate-600 whitespace-nowrap">
+                      {perfRange === '30d' ? bar.label.slice(3) : bar.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
         {/* Quick Actions Panel */}
-        <div className="lg:col-span-4 bg-[#064e2b] rounded-2xl p-5 text-white flex flex-col justify-between">
+        <div className="lg:col-span-4 bg-[#0a367a] rounded-2xl p-5 text-white flex flex-col justify-between shadow-xs">
           <div className="flex items-center gap-2 mb-4">
-            <Zap className="w-4 h-4 text-emerald-300" />
+            <Zap className="w-4.5 h-4.5 text-blue-200" />
             <h2 className="font-display text-base font-bold text-white">Quick Actions</h2>
           </div>
 
@@ -1176,45 +914,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('reservations')}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              <CalendarPlus className="w-6 h-6 text-[#0b5d34]" />
-              <span className="text-xs font-semibold leading-tight">New Reservation</span>
+              <CalendarPlus className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-sm font-bold leading-tight text-[#061f4d]">New Reservation</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('arrivals')}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              <LogIn className="w-6 h-6 text-[#0b5d34]" />
-              <span className="text-xs font-semibold leading-tight">Check In</span>
+              <LogIn className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-sm font-bold leading-tight text-[#061f4d]">Check In</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('in_house')}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              <LogOut className="w-6 h-6 text-[#0b5d34]" />
-              <span className="text-xs font-semibold leading-tight">Check Out</span>
+              <LogOut className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-sm font-bold leading-tight text-[#061f4d]">Check Out</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('pos_kitchen')}
-              className="bg-white hover:bg-emerald-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
             >
-              <ShoppingCart className="w-6 h-6 text-[#0b5d34]" />
-              <span className="text-xs font-semibold leading-tight">Point of Sale</span>
+              <ShoppingCart className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-sm font-bold leading-tight text-[#061f4d]">Point of Sale</span>
             </button>
           </div>
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="mt-3 w-full py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="mt-3 w-full py-2.5 px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
-            <CreditCard className="w-3.5 h-3.5 text-emerald-300" />
+            <CreditCard className="w-4 h-4 text-blue-200" />
             <span>Payments &amp; Ledger</span>
           </button>
         </div>
@@ -1223,21 +961,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* 4. In-House Guests + Check-Outs Due Row */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* In-House Guests */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <BedDouble className="w-4 h-4 text-[#0b5d34]" />
-              <h2 className="font-display text-base font-bold text-slate-900">
+              <BedDouble className="w-4.5 h-4.5 text-blue-200" />
+              <h2 className="font-display text-base font-bold text-white">
                 In-House Guests
               </h2>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold font-mono-tabular text-[#0b5d34]">
+              <span className="px-2 py-0.5 rounded-md bg-white/15 text-xs font-bold font-mono-tabular text-white">
                 {inHouseGuests.length}
               </span>
             </div>
             <button
               type="button"
               onClick={() => onNavigate('in_house')}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
             >
               <span>View All</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -1245,14 +983,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {inHouseGuests.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               No guests are currently checked in. Use <strong>Check In</strong> to check in an arrival or walk-in guest.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-semibold text-slate-500">
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
                     <th className="py-3 px-5">Guest Name</th>
                     <th className="py-3 px-3">Room</th>
                     <th className="py-3 px-3">Stay</th>
@@ -1271,12 +1009,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <tr
                         key={res.id}
                         onClick={() => onOpenReservationFolio(res.id, 'front_desk')}
-                        className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                        className="hover:bg-blue-50/40 transition-colors cursor-pointer"
                       >
                         <td className="py-3 px-5 whitespace-nowrap">
                           <div className="font-semibold text-slate-900">{res.guestName}</div>
                           {isOta && (
-                            <div className="text-[10px] font-medium text-orange-700">
+                            <div className="text-xs font-medium text-orange-700">
                               {formatBookingSourceLabel(res.channel)}
                             </div>
                           )}
@@ -1293,15 +1031,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               {formatNgn(pay.balance)}
                             </span>
                           ) : (
-                            <span className="font-semibold text-emerald-700">Settled</span>
+                            <span className="font-semibold text-[#0a367a]">Settled</span>
                           )}
                         </td>
                         <td className="py-3 px-5 text-right whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold ${
                               isDueOut
                                 ? 'bg-amber-100 text-amber-800'
-                                : 'bg-emerald-100/90 text-emerald-800'
+                                : 'bg-blue-100 text-[#0a367a]'
                             }`}
                           >
                             {isDueOut ? 'Due Out' : 'Checked In'}
@@ -1317,27 +1055,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Check-Outs Due */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <LogOut className="w-4 h-4 text-[#0b5d34]" />
-              <h2 className="font-display text-base font-bold text-slate-900">
+              <LogOut className="w-4.5 h-4.5 text-blue-200" />
+              <h2 className="font-display text-base font-bold text-white">
                 Check-Outs Due
               </h2>
-              <span
-                className={`px-2 py-0.5 rounded-full text-[11px] font-bold font-mono-tabular border ${
-                  checkOutsDue.length > 0
-                    ? 'bg-amber-50 border-amber-200 text-amber-800'
-                    : 'bg-slate-50 border-slate-200 text-slate-600'
-                }`}
-              >
+              <span className="px-2 py-0.5 rounded-md text-xs font-bold font-mono-tabular bg-white/15 text-white">
                 {checkOutsDue.length}
               </span>
             </div>
             <button
               type="button"
               onClick={() => onNavigate('in_house')}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
             >
               <span>View All</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -1345,7 +1077,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {checkOutsDue.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-500 my-auto">
+            <div className="p-8 text-center text-sm text-slate-500 my-auto">
               No check-outs due today. All scheduled departures are clear.
             </div>
           ) : (
@@ -1359,15 +1091,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div
                     key={res.id}
                     onClick={() => onOpenReservationFolio(res.id, 'front_desk')}
-                    className="px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors cursor-pointer"
+                    className="px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-blue-50/40 transition-colors cursor-pointer"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-xs text-slate-900 truncate">
+                        <span className="font-semibold text-sm text-slate-900 truncate">
                           {res.guestName}
                         </span>
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${
+                          className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold shrink-0 ${
                             isOverdue
                               ? 'bg-rose-100 text-rose-800'
                               : 'bg-amber-100 text-amber-800'
@@ -1376,7 +1108,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           {isOverdue ? 'Overdue' : 'Due Today'}
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-500 font-mono-tabular mt-0.5">
+                      <div className="text-xs text-slate-500 font-mono-tabular mt-0.5">
                         {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'} · Out{' '}
                         {formatShortDate(res.checkOutDate)} ·{' '}
                         {pay.balance > 0 ? (
@@ -1384,7 +1116,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             Bal {formatNgn(pay.balance)}
                           </span>
                         ) : (
-                          <span className="font-semibold text-emerald-700">Paid</span>
+                          <span className="font-semibold text-[#0a367a]">Paid</span>
                         )}
                       </div>
                     </div>
@@ -1394,7 +1126,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         e.stopPropagation();
                         onOpenReservationFolio(res.id, 'front_desk');
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] text-white text-[11px] font-semibold shrink-0 transition-colors cursor-pointer"
+                      className="px-3.5 py-2 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold shrink-0 transition-colors cursor-pointer"
                     >
                       Check Out
                     </button>
@@ -1406,21 +1138,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 5. Bottom Row: Recent Reservations Table + Occupancy Trend Line Chart */}
+      {/* 5. Recent Reservations Table + Occupancy Trend Line Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Recent Reservations */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <ListFilter className="w-4 h-4 text-[#0b5d34]" />
-              <h2 className="font-display text-base font-bold text-slate-900">
+              <ListFilter className="w-4.5 h-4.5 text-blue-200" />
+              <h2 className="font-display text-base font-bold text-white">
                 Recent Reservations
               </h2>
             </div>
             <button
               type="button"
               onClick={() => onNavigate('reservations')}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
             >
               <span>View All</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -1428,14 +1160,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {recentReservations.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               No active reservations yet. Click <strong>New Reservation</strong> to create one.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-semibold text-slate-500">
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
                     <th className="py-3 px-5">Guest Name</th>
                     <th className="py-3 px-3">Room</th>
                     <th className="py-3 px-3">Check-in</th>
@@ -1451,11 +1183,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <tr
                         key={res.id}
                         onClick={() => onOpenReservationFolio(res.id, 'reservations')}
-                        className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                        className="hover:bg-blue-50/40 transition-colors cursor-pointer"
                       >
                         <td className="py-3 px-5 whitespace-nowrap">
                           <div className="font-semibold text-slate-900">{res.guestName}</div>
-                          <div className="text-[10px] font-medium text-slate-500">
+                          <div className="text-xs font-medium text-slate-500">
                             {formatBookingSourceLabel(res.channel)}
                           </div>
                         </td>
@@ -1470,7 +1202,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
                         <td className="py-3 px-5 text-right whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${badge.className}`}
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold ${badge.className}`}
                           >
                             {badge.label}
                           </span>
@@ -1485,20 +1217,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Occupancy Trend Area Chart */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col justify-between">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-[#0b5d34]" />
-              <h2 className="font-display text-base font-bold text-slate-900">
+              <TrendingUp className="w-4.5 h-4.5 text-blue-200" />
+              <h2 className="font-display text-base font-bold text-white">
                 Occupancy Trend
               </h2>
             </div>
-            <span className="px-2.5 py-1 rounded-lg bg-[#0b5d34] text-white font-mono-tabular text-xs font-bold">
+            <span className="px-2.5 py-0.5 rounded-md bg-white/15 text-white font-mono-tabular text-xs font-bold">
               {metrics.occupancyRate}%
             </span>
           </div>
 
-          <div className="w-full">
+          <div className="p-5 w-full">
             <svg
               viewBox={`0 0 ${trendSvg.W} ${trendSvg.H}`}
               className="w-full h-auto overflow-visible"
@@ -1507,8 +1239,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             >
               <defs>
                 <linearGradient id="occAreaGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#169a57" stopOpacity="0.28" />
-                  <stop offset="100%" stopColor="#169a57" stopOpacity="0.02" />
+                  <stop offset="0%" stopColor="#1557b0" stopOpacity="0.28" />
+                  <stop offset="100%" stopColor="#1557b0" stopOpacity="0.02" />
                 </linearGradient>
               </defs>
 
@@ -1541,7 +1273,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <path
                   d={trendSvg.linePath}
                   fill="none"
-                  stroke="#169a57"
+                  stroke="#0a367a"
                   strokeWidth="2.5"
                   strokeLinejoin="round"
                   strokeLinecap="round"
@@ -1554,7 +1286,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     cx={pt.x}
                     cy={pt.y}
                     r="4"
-                    fill="#169a57"
+                    fill="#0a367a"
                     stroke="#ffffff"
                     strokeWidth="2"
                   >
@@ -1573,6 +1305,273 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </svg>
           </div>
         </div>
+      </div>
+
+      {/* 6. Live Dashboard Reservations & OTA Availability Calendar (Placed right before footer) */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+        <div className="bg-[#0a367a] text-white px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4.5 h-4.5 text-blue-200" />
+              <h2 className="font-display text-base font-bold text-white">
+                Reservations &amp; OTA Calendar
+              </h2>
+              <span className="px-2 py-0.5 rounded-md bg-white/15 text-xs font-bold font-mono-tabular text-white">
+                {currentAndUpcomingReservations.length} active/upcoming
+              </span>
+            </div>
+            <p className="text-xs text-blue-100 mt-0.5">
+              Live room schedule across Direct, Airbnb, Booking.com &amp; blocked dates
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center rounded-lg border border-white/20 bg-white/10 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setDashCalStartIso((d) => addDaysIso(d, -7))}
+                className="p-1.5 rounded-md hover:bg-white/15 text-white cursor-pointer"
+                aria-label="Previous week"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashCalStartIso(todayIso)}
+                className="px-2.5 py-1 rounded-md hover:bg-white/15 font-semibold text-white cursor-pointer whitespace-nowrap"
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashCalStartIso((d) => addDaysIso(d, 7))}
+                className="p-1.5 rounded-md hover:bg-white/15 text-white cursor-pointer"
+                aria-label="Next week"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="inline-flex items-center rounded-lg border border-white/20 bg-white/10 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setDashCalDaysCount(14)}
+                className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
+                  dashCalDaysCount === 14 ? 'bg-white text-[#0a367a] shadow-xs' : 'text-blue-100'
+                }`}
+              >
+                14d
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashCalDaysCount(30)}
+                className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
+                  dashCalDaysCount === 30 ? 'bg-white text-[#0a367a] shadow-xs' : 'text-blue-100'
+                }`}
+              >
+                30d
+              </button>
+            </div>
+
+            {connectedOtaWithFeed.length > 0 && (
+              <button
+                type="button"
+                disabled={syncingOta}
+                onClick={handleDashboardSyncOta}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/25 bg-white/15 hover:bg-white/25 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncingOta ? 'animate-spin' : ''}`} />
+                <span>{syncingOta ? 'Refreshing…' : 'Refresh Channels'}</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onNavigate('calendar')}
+              className="inline-flex items-center gap-1 px-3.5 py-1.5 rounded-lg bg-white hover:bg-blue-50 text-[#0a367a] text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <span>Full Calendar</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Channel Breakdown & Jump Chips */}
+        {currentAndUpcomingReservations.length > 0 && (
+          <div className="px-5 py-3 bg-slate-50/70 border-b border-slate-100 space-y-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-semibold text-slate-500 uppercase tracking-wider text-[11px]">
+                Channel Bookings:
+              </span>
+              {channelSummaryCounts.map(([chLabel, count]) => (
+                <span
+                  key={chLabel}
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-white border border-slate-200 font-semibold text-slate-700 font-mono-tabular"
+                >
+                  <span>{chLabel}:</span>
+                  <span className="text-[#0a367a]">{count}</span>
+                </span>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+              {currentAndUpcomingReservations.slice(0, 12).map((res) => {
+                const isOta = isOtaBookingChannel(res.channel);
+                const rIn = normalizeIsoDate(res.checkInDate);
+                const roomDisp = getReservationRoomDisplay(res, rooms);
+                return (
+                  <button
+                    key={res.id}
+                    type="button"
+                    onClick={() => {
+                      if (rIn) setDashCalStartIso(rIn);
+                    }}
+                    onDoubleClick={() => onOpenReservationFolio(res.id, 'reservations')}
+                    title="Click to jump calendar to stay dates · Double-click to open folio"
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                      isOta
+                        ? 'bg-orange-50/90 border-orange-200 text-orange-900 hover:bg-orange-100'
+                        : 'bg-blue-50/80 border-blue-200 text-[#0a367a] hover:bg-blue-100'
+                    }`}
+                  >
+                    <span className="font-bold">
+                      {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'}
+                    </span>
+                    <span>·</span>
+                    <span className="max-w-[120px] truncate">{res.guestName}</span>
+                    <span className="font-mono-tabular opacity-80">
+                      ({res.checkInDate.slice(5)} → {res.checkOutDate.slice(5)})
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-white/80 text-[10px] font-bold">
+                      {formatBookingSourceLabel(res.channel)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Compact Live Tape Matrix */}
+        {sortedRooms.length === 0 ? (
+          <div className="p-6 text-center text-sm text-slate-500">
+            Add rooms to view your live availability calendar.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-xs min-w-[760px]">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="sticky left-0 z-10 bg-slate-50 py-2.5 px-4 text-left font-bold text-slate-700 w-40 border-r border-slate-200">
+                    Room
+                  </th>
+                  {dashCalDays.map((day) => (
+                    <th
+                      key={day.iso}
+                      className={`py-2 px-1 text-center font-mono-tabular border-r border-slate-100 min-w-[48px] ${
+                        day.isToday ? 'bg-blue-50 text-[#0a367a]' : 'text-slate-600'
+                      }`}
+                    >
+                      <div className="text-[10px] uppercase font-semibold opacity-75">
+                        {day.weekday}
+                      </div>
+                      <div className="font-bold text-xs leading-tight">{day.dayNum}</div>
+                      <div className="text-[10px] opacity-60">{day.monthShort}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sortedRooms.map((room) => {
+                  const roomResList = activeCalendarReservations.filter((r) =>
+                    matchesRoomRecord(room, r.roomId, r.roomNumber)
+                  );
+                  const roomBlocks = blockedDates.filter(
+                    (b) =>
+                      b.roomId === room.id ||
+                      b.roomId === 'ALL' ||
+                      (b.roomNumber && b.roomNumber === room.roomNumber)
+                  );
+                  return (
+                    <tr key={room.id} className="hover:bg-slate-50/40">
+                      <td className="sticky left-0 z-10 bg-white py-2.5 px-4 border-r border-slate-200 whitespace-nowrap">
+                        <div className="font-bold text-slate-900">{room.roomNumber}</div>
+                        <div className="text-[11px] text-slate-500 truncate max-w-[130px]">
+                          {room.roomType}
+                        </div>
+                      </td>
+                      {dashCalDays.map((day) => {
+                        const matchingRes = roomResList.filter((r) => {
+                          const rIn = normalizeIsoDate(r.checkInDate);
+                          const rOutRaw = normalizeIsoDate(r.checkOutDate);
+                          const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+                          return rIn <= day.iso && day.iso < rOut;
+                        });
+                        const matchingBlock = roomBlocks.find((b) => {
+                          const bStart = normalizeIsoDate(b.startDate);
+                          const bEnd = normalizeIsoDate(b.endDate);
+                          return (
+                            bStart <= day.iso &&
+                            day.iso < (bEnd > bStart ? bEnd : addDaysIso(bStart, 1))
+                          );
+                        });
+
+                        return (
+                          <td
+                            key={day.iso}
+                            className={`p-0.5 align-top border-r border-slate-100 ${
+                              day.isToday
+                                ? 'bg-blue-50/35'
+                                : day.iso < todayIso
+                                  ? 'bg-slate-100/80'
+                                  : ''
+                            }`}
+                          >
+                            {matchingRes.length > 0 ? (
+                              <div className="space-y-0.5">
+                                {matchingRes.map((res) => {
+                                  const isStart = normalizeIsoDate(res.checkInDate) === day.iso;
+                                  const isOta = isOtaBookingChannel(res.channel);
+                                  const barColor =
+                                    res.status === 'checked_in'
+                                      ? 'bg-[#0a367a] text-white'
+                                      : isOta
+                                        ? 'bg-orange-500 text-white'
+                                        : 'bg-[#1557b0] text-white';
+                                  return (
+                                    <button
+                                      key={res.id}
+                                      type="button"
+                                      onClick={() => onOpenReservationFolio(res.id, 'reservations')}
+                                      title={`${res.guestName} · ${formatBookingSourceLabel(res.channel)} · ${res.checkInDate} → ${res.checkOutDate} (${RESERVATION_STATUS_LABELS[res.status]})`}
+                                      className={`w-full block text-left px-1 py-1 rounded text-[10px] font-bold truncate transition-opacity hover:opacity-90 cursor-pointer ${barColor}`}
+                                    >
+                                      {isStart || day.iso === dashCalStartIso
+                                        ? res.guestName
+                                        : '\u00A0'}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : matchingBlock ? (
+                              <div
+                                title={`Blocked (${matchingBlock.category || 'Hold'}): ${matchingBlock.reason || 'Unavailable'}`}
+                                className="w-full px-1 py-1 rounded bg-slate-200 text-slate-600 text-[10px] font-semibold flex items-center justify-center"
+                              >
+                                <Lock className="w-3 h-3" />
+                              </div>
+                            ) : (
+                              <div className="h-6" />
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

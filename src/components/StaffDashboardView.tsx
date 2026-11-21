@@ -1,11 +1,26 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowRight,
+  BarChart3,
+  BedDouble,
+  Calendar,
+  CalendarCheck,
+  CalendarPlus,
   CheckCircle2,
-  Clock,
+  ClipboardCheck,
+  Coffee,
   Download,
   LogIn,
   LogOut,
+  Play,
   Printer,
+  RefreshCw,
+  ShoppingCart,
+  Square,
+  UserCheck,
+  UserCircle2,
+  UserX,
+  Users,
   X,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -29,6 +44,7 @@ import {
   NavSectionId,
   PosOrderRecord,
   PropertyRecord,
+  RESERVATION_STATUS_LABELS,
   ReservationRecord,
   ROLE_TO_DEPARTMENT,
   RoomRecord,
@@ -91,6 +107,40 @@ function formatClock24To12(hhmm?: string): string {
   return `${String(hour12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
+function formatShortMonthDay(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    timeZone: 'UTC',
+  });
+}
+
+function getStatusPillStyle(status: ReservationRecord['status']): {
+  label: string;
+  className: string;
+} {
+  switch (status) {
+    case 'checked_in':
+      return { label: 'Checked In', className: 'bg-blue-100 text-[#0a367a]' };
+    case 'confirmed':
+      return { label: 'Confirmed', className: 'bg-emerald-100 text-emerald-800' };
+    case 'pending':
+      return { label: 'Pending', className: 'bg-amber-100 text-amber-800' };
+    case 'checked_out':
+      return { label: 'Checked Out', className: 'bg-slate-100 text-slate-700' };
+    case 'cancelled':
+      return { label: 'Cancelled', className: 'bg-rose-100 text-rose-700' };
+    default:
+      return {
+        label: RESERVATION_STATUS_LABELS[status] || status,
+        className: 'bg-slate-100 text-slate-700',
+      };
+  }
+}
+
 export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
   property,
   rooms,
@@ -112,7 +162,6 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
   onNavigate,
   onOpenReservationFolio,
   onInspectRoom,
-  onSignOut,
 }) => {
   const { cms } = useCms();
   const [roomFilter, setRoomFilter] = useState<RoomFilterTab>('all');
@@ -124,6 +173,12 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
   const [shiftEndedAt, setShiftEndedAt] = useState<string | null>(null);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [sessionFallbackLoginIso] = useState<string>(() => new Date().toISOString());
+  const [nowTick, setNowTick] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(new Date()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const sortedRooms = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
@@ -211,7 +266,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
     )[0];
   }, [shifts, todayIso, resolvedStaffId, userUid, emailLower, nameLower]);
 
-  // Core daily operational stats (clean, no financial/management report noise)
+  // Core daily operational stats
   const arrivalsToday = useMemo(
     () =>
       reservations.filter(
@@ -245,6 +300,16 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
     [sortedRooms]
   );
 
+  const reservedRooms = useMemo(
+    () => sortedRooms.filter((r) => r.occupancyStatus === 'reserved'),
+    [sortedRooms]
+  );
+
+  const outOfOrderRooms = useMemo(
+    () => sortedRooms.filter((r) => r.occupancyStatus === 'out_of_order'),
+    [sortedRooms]
+  );
+
   const dirtyRooms = useMemo(
     () =>
       sortedRooms.filter(
@@ -253,23 +318,105 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
     [sortedRooms]
   );
 
-  const openHousekeepingCount = useMemo(
+  const occupancyRate = useMemo(() => {
+    const sellable = sortedRooms.length - outOfOrderRooms.length;
+    const denom = sellable > 0 ? sellable : sortedRooms.length;
+    if (denom <= 0) return 0;
+    return Math.min(100, Math.round((occupiedRooms.length / denom) * 100));
+  }, [sortedRooms.length, outOfOrderRooms.length, occupiedRooms.length]);
+
+  const openHousekeepingTasks = useMemo(
     () =>
       housekeepingTasks.filter(
         (t) => t.status !== 'completed' && t.status !== 'inspected'
-      ).length,
+      ),
     [housekeepingTasks]
   );
 
-  const openMaintenanceCount = useMemo(
-    () => maintenanceTickets.filter((t) => t.status !== 'resolved').length,
+  const openMaintenanceTickets = useMemo(
+    () => maintenanceTickets.filter((t) => t.status !== 'resolved'),
     [maintenanceTickets]
   );
+
+  const openHousekeepingCount = openHousekeepingTasks.length;
+  const openMaintenanceCount = openMaintenanceTickets.length;
 
   const openKitchenCount = useMemo(
     () => posOrders.filter((o) => o.kitchenStatus !== 'served').length,
     [posOrders]
   );
+
+  const recentReservations = useMemo(() => {
+    return [...reservations]
+      .filter((r) => r.status !== 'cancelled' && r.status !== 'no_show')
+      .sort((a, b) => (b.checkInDate || '').localeCompare(a.checkInDate || ''))
+      .slice(0, 5);
+  }, [reservations]);
+
+  const resolvePosOrderIso = (ord: PosOrderRecord): string => {
+    if (typeof ord.createdAt === 'string') return ord.createdAt;
+    if (ord.createdAt && typeof ord.createdAt.toDate === 'function') {
+      const d = ord.createdAt.toDate();
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+    return ord.orderDate || '';
+  };
+
+  const recentPosOrders = useMemo(() => {
+    return [...posOrders]
+      .sort((a, b) => resolvePosOrderIso(b).localeCompare(resolvePosOrderIso(a)))
+      .slice(0, 5);
+  }, [posOrders]);
+
+  const upcomingTasks = useMemo(() => {
+    const items: Array<{
+      id: string;
+      title: string;
+      timeLabel: string;
+      section: NavSectionId;
+      dotColor: string;
+    }> = [];
+    for (const hk of openHousekeepingTasks.slice(0, 4)) {
+      items.push({
+        id: `hk-${hk.id}`,
+        title: `Room ${hk.roomNumber} – ${hk.taskType || 'Cleaning'}`,
+        timeLabel: hk.priority ? hk.priority.toUpperCase() : 'Pending',
+        section: 'housekeeping',
+        dotColor: 'bg-[#1557b0]',
+      });
+    }
+    for (const mt of openMaintenanceTickets.slice(0, 3)) {
+      items.push({
+        id: `mt-${mt.id}`,
+        title: `${mt.locationLabel ? `${mt.locationLabel} – ` : ''}${mt.issueTitle}`,
+        timeLabel: mt.priority ? mt.priority.toUpperCase() : 'Open',
+        section: 'maintenance',
+        dotColor: 'bg-amber-500',
+      });
+    }
+    return items.slice(0, 5);
+  }, [openHousekeepingTasks, openMaintenanceTickets]);
+
+  const attendanceSummary = useMemo(() => {
+    const todayRecs = attendance.filter((a) => a.date === todayIso);
+    const presentIds = new Set<string>();
+    const clockedOutIds = new Set<string>();
+    for (const rec of todayRecs) {
+      const key = rec.staffId || rec.staffName.toLowerCase();
+      if (!rec.clockOutTime) {
+        presentIds.add(key);
+      } else {
+        clockedOutIds.add(key);
+      }
+    }
+    const presentCount = presentIds.size;
+    const completedOrBreakCount = Array.from(clockedOutIds).filter(
+      (id) => !presentIds.has(id)
+    ).length;
+    const activeStaffCount = staffMembers.filter((s) => s.employmentStatus === 'active').length;
+    const absentCount = Math.max(0, activeStaffCount - presentCount - completedOrBreakCount);
+    return { presentCount, completedOrBreakCount, absentCount };
+  }, [attendance, staffMembers, todayIso]);
 
   const filteredRooms = useMemo(() => {
     if (roomFilter === 'vacant') return availableRooms;
@@ -288,6 +435,25 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       title: cms.dashboard.hotelSectionTitle || 'Hotel Rooms',
     },
   ];
+
+  // SVG Donut ring geometry
+  const donutRadius = 46;
+  const donutCirc = 2 * Math.PI * donutRadius;
+  const totalRoomsSafe = Math.max(1, sortedRooms.length);
+  const occDash = (occupiedRooms.length / totalRoomsSafe) * donutCirc;
+  const availDash = (availableRooms.length / totalRoomsSafe) * donutCirc;
+  const oooDash = (outOfOrderRooms.length / totalRoomsSafe) * donutCirc;
+  const occRateDash = (occupancyRate / 100) * donutCirc;
+
+  const liveClockStr = nowTick.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const liveDateStr = nowTick.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  });
 
   const handleClockIn = async () => {
     setActionError(null);
@@ -335,13 +501,13 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       minute: '2-digit',
     });
 
-    doc.setFillColor(6, 21, 57);
+    doc.setFillColor(10, 54, 122);
     doc.rect(0, 0, 595, 76, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
     doc.text(`${property.name} — Staff Shift Handover Report`, 40, 34);
     doc.setFontSize(9);
-    doc.setTextColor(203, 213, 225);
+    doc.setTextColor(219, 234, 254);
     doc.text(
       `Property ID: ${getPropertySystemId(property)}  |  Date: ${todayIso}  |  Generated: ${generatedAt}`,
       40,
@@ -370,7 +536,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         ['Clocked In', clockInDisplay],
         ['Clocked Out', clockOutDisplay],
       ],
-      headStyles: { fillColor: [11, 36, 91], fontSize: 9 },
+      headStyles: { fillColor: [10, 54, 122], fontSize: 9 },
       styles: { fontSize: 9, cellPadding: 6 },
       margin: { left: 40, right: 40 },
     });
@@ -392,7 +558,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         ['Open Maintenance Tickets', String(openMaintenanceCount)],
         ['Active Kitchen Orders', String(openKitchenCount)],
       ],
-      headStyles: { fillColor: [28, 70, 190], fontSize: 9 },
+      headStyles: { fillColor: [21, 87, 176], fontSize: 9 },
       styles: { fontSize: 9, cellPadding: 5 },
       margin: { left: 40, right: 40 },
     });
@@ -417,7 +583,8 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
 
     const afterRoomsY =
       (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 620;
-    const notesText = handoverNotes.trim() || latestCompletedShiftToday?.handoverNotes || 'None recorded.';
+    const notesText =
+      handoverNotes.trim() || latestCompletedShiftToday?.handoverNotes || 'None recorded.';
 
     doc.setFontSize(9.5);
     doc.setTextColor(15, 23, 42);
@@ -457,57 +624,16 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
     }
   };
 
-  const kpiCards: Array<{
-    id: string;
-    label: string;
-    value: number;
-    sub: string;
-    accent: string;
-    target: NavSectionId;
-  }> = [
-    {
-      id: 'arrivals',
-      label: 'Arrivals Today',
-      value: arrivalsToday.length,
-      sub: 'Expected check-ins',
-      accent: 'border-t-[#1c46be]',
-      target: 'arrivals',
-    },
-    {
-      id: 'departures',
-      label: 'Departures Today',
-      value: departuresToday.length,
-      sub: 'Due check-outs',
-      accent: 'border-t-amber-500',
-      target: 'in_house',
-    },
-    {
-      id: 'in_house',
-      label: 'In-House Guests',
-      value: inHouseList.length,
-      sub: `${occupiedRooms.length} of ${sortedRooms.length} rooms occupied`,
-      accent: 'border-t-emerald-600',
-      target: 'in_house',
-    },
-    {
-      id: 'available',
-      label: 'Available Rooms',
-      value: availableRooms.length,
-      sub:
-        dirtyRooms.length > 0
-          ? `${dirtyRooms.length} awaiting cleaning`
-          : 'All rooms serviced',
-      accent: 'border-t-slate-700',
-      target: 'rooms',
-    },
-  ];
+  const shiftLabel = activeScheduledShift
+    ? `Shift: ${activeScheduledShift.shiftWindow}`
+    : `Login: ${loginTimeLabel}`;
 
   return (
     <div className="space-y-6">
       {actionError && (
         <div
           role="alert"
-          className="no-print bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-900 flex items-center justify-between gap-3"
+          className="no-print bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-sm text-rose-900 flex items-center justify-between gap-3"
         >
           <span>{actionError}</span>
           <button
@@ -520,141 +646,729 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
       )}
 
-      {/* Staff Shift & Attendance Control Header */}
-      <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-        <div className="bg-[#061539] px-5 sm:px-6 py-5 text-white flex flex-wrap items-center justify-between gap-4">
+      {/* 1. Eight Operational KPI Cards (2 rows of 4, Dark Blue & White) */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <button
+          type="button"
+          onClick={() => canAccess('rooms') && onNavigate('rooms')}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-6 h-6" />
+          </div>
           <div className="min-w-0">
-            <h1 className="font-display text-lg sm:text-xl font-bold tracking-tight truncate">
-              {property.name}
-            </h1>
-            <p className="text-xs text-blue-200 mt-0.5">
-              {userName} · {actorRole}
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">Total Rooms</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {sortedRooms.length}
             </p>
           </div>
+        </button>
 
-          <div className="no-print flex flex-wrap items-center gap-2">
-            {!activeAttendance ? (
-              <button
-                type="button"
-                disabled={clockBusy}
-                onClick={handleClockIn}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors disabled:opacity-60 cursor-pointer"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>{clockBusy ? 'Clocking In...' : 'Clock In'}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={clockBusy}
-                onClick={handleClockOut}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-[#061539] text-xs font-bold transition-colors disabled:opacity-60 cursor-pointer"
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>{clockBusy ? 'Clocking Out...' : 'Clock Out'}</span>
-              </button>
-            )}
+        <button
+          type="button"
+          onClick={() => {
+            setRoomFilter('vacant');
+          }}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">Available Rooms</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {availableRooms.length}
+            </p>
+          </div>
+        </button>
 
+        <button
+          type="button"
+          onClick={() => {
+            setRoomFilter('occupied');
+          }}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">Occupied Rooms</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {occupiedRooms.length}
+            </p>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => canAccess('reservations') && onNavigate('reservations')}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Calendar className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">Reserved Rooms</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {reservedRooms.length}
+            </p>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => canAccess('in_house') && onNavigate('in_house')}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Users className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">In-House Guests</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {inHouseList.length}
+            </p>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => canAccess('rooms') && onNavigate('rooms')}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <RefreshCw className="w-6 h-6" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">Occupancy Rate</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {occupancyRate}%
+            </p>
+            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1.5">
+              <div
+                className="h-full bg-[#0a367a] rounded-full transition-all"
+                style={{ width: `${occupancyRate}%` }}
+              />
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => canAccess('arrivals') && onNavigate('arrivals')}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <CalendarCheck className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">Today&apos;s Arrivals</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {arrivalsToday.length}
+            </p>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => canAccess('in_house') && onNavigate('in_house')}
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+        >
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <LogOut className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs sm:text-sm font-semibold text-slate-600">Today&apos;s Departures</p>
+            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+              {departuresToday.length}
+            </p>
+          </div>
+        </button>
+      </section>
+
+      {/* 2. Middle Analytics & Clock-In Row: Room Occupancy Overview | Room Status | Staff Clock In */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Card 1: Room Occupancy Overview */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center gap-2">
+            <BarChart3 className="w-4.5 h-4.5 text-blue-200" />
+            <h2 className="font-display text-base font-bold">Room Occupancy Overview</h2>
+          </div>
+          <div className="p-5 flex items-center justify-around gap-4 flex-1">
+            <div className="relative w-32 h-32 shrink-0">
+              <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                <circle
+                  cx="60"
+                  cy="60"
+                  r={donutRadius}
+                  fill="none"
+                  stroke="#e2e8f0"
+                  strokeWidth="16"
+                />
+                <circle
+                  cx="60"
+                  cy="60"
+                  r={donutRadius}
+                  fill="none"
+                  stroke="#1557b0"
+                  strokeWidth="16"
+                  strokeDasharray={`${occRateDash} ${donutCirc}`}
+                  strokeLinecap="butt"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <span className="font-display font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-none">
+                  {occupancyRate}%
+                </span>
+                <span className="text-xs font-medium text-slate-500 mt-0.5">Occupancy</span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 text-sm min-w-[130px]">
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
+                  <span className="w-3 h-3 rounded-full bg-[#1557b0]" />
+                  Occupied
+                </span>
+                <span className="font-mono-tabular font-bold text-slate-900">
+                  {occupiedRooms.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
+                  <span className="w-3 h-3 rounded-full bg-slate-300" />
+                  Available
+                </span>
+                <span className="font-mono-tabular font-bold text-slate-900">
+                  {availableRooms.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
+                  <span className="w-3 h-3 rounded-full bg-slate-700" />
+                  Out of Order
+                </span>
+                <span className="font-mono-tabular font-bold text-slate-900">
+                  {outOfOrderRooms.length}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 2: Room Status */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center gap-2">
+            <BedDouble className="w-4.5 h-4.5 text-blue-200" />
+            <h2 className="font-display text-base font-bold">Room Status</h2>
+          </div>
+          <div className="p-5 flex items-center justify-around gap-4 flex-1">
+            <div className="relative w-32 h-32 shrink-0">
+              <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                <circle
+                  cx="60"
+                  cy="60"
+                  r={donutRadius}
+                  fill="none"
+                  stroke="#e2e8f0"
+                  strokeWidth="16"
+                />
+                {occupiedRooms.length > 0 && (
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r={donutRadius}
+                    fill="none"
+                    stroke="#1557b0"
+                    strokeWidth="16"
+                    strokeDasharray={`${occDash} ${donutCirc}`}
+                    strokeDashoffset={0}
+                  />
+                )}
+                {availableRooms.length > 0 && (
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r={donutRadius}
+                    fill="none"
+                    stroke="#16a34a"
+                    strokeWidth="16"
+                    strokeDasharray={`${availDash} ${donutCirc}`}
+                    strokeDashoffset={-occDash}
+                  />
+                )}
+                {outOfOrderRooms.length > 0 && (
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r={donutRadius}
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="16"
+                    strokeDasharray={`${oooDash} ${donutCirc}`}
+                    strokeDashoffset={-(occDash + availDash)}
+                  />
+                )}
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <span className="font-display font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-none">
+                  {sortedRooms.length}
+                </span>
+                <span className="text-xs font-medium text-slate-500 mt-0.5">Total Rooms</span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 text-sm min-w-[130px]">
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
+                  <span className="w-3 h-3 rounded-full bg-[#1557b0]" />
+                  Occupied
+                </span>
+                <span className="font-mono-tabular font-bold text-slate-900">
+                  {occupiedRooms.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
+                  <span className="w-3 h-3 rounded-full bg-emerald-600" />
+                  Available
+                </span>
+                <span className="font-mono-tabular font-bold text-slate-900">
+                  {availableRooms.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
+                  <span className="w-3 h-3 rounded-full bg-amber-500" />
+                  Out of Order
+                </span>
+                <span className="font-mono-tabular font-bold text-slate-900">
+                  {outOfOrderRooms.length}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 3: Staff Clock In */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+            <h2 className="font-display text-base font-bold">Staff Clock In</h2>
             <button
               type="button"
               onClick={() => setShowEndShiftModal(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white text-[#061539] hover:bg-blue-50 text-xs font-bold transition-colors cursor-pointer"
+              className="no-print inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
             >
-              <Printer className="w-3.5 h-3.5 text-[#1c46be]" />
-              <span>End Shift / Print Report</span>
+              <Printer className="w-3.5 h-3.5" />
+              <span>Shift Report</span>
             </button>
+          </div>
+          <div className="p-5 flex flex-col justify-between gap-3.5 flex-1">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-full bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+                <UserCircle2 className="w-8 h-8" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-display text-base font-bold text-slate-900 truncate">
+                  {userName}
+                </p>
+                <p className="text-xs font-semibold text-slate-600 truncate">
+                  {resolvedDepartment} · {actorRole}
+                </p>
+                <p className="text-xs text-slate-500 font-mono-tabular truncate">{shiftLabel}</p>
+              </div>
+            </div>
 
-            {onSignOut && (
+            <div className="text-center py-1">
+              <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#0a367a] leading-tight">
+                {liveClockStr}
+              </p>
+              <p className="text-xs font-semibold text-slate-500">{liveDateStr}</p>
+            </div>
+
+            <div className="no-print grid grid-cols-2 gap-2.5">
               <button
                 type="button"
-                onClick={onSignOut}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/15 transition-colors cursor-pointer"
+                disabled={clockBusy || Boolean(activeAttendance)}
+                onClick={handleClockIn}
+                className="h-10 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-sm font-bold disabled:opacity-45 cursor-pointer transition-colors"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Sign Out</span>
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>{clockBusy && !activeAttendance ? 'Saving...' : 'Clock In'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={clockBusy || !activeAttendance}
+                onClick={handleClockOut}
+                className="h-10 inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#0a367a] bg-white hover:bg-blue-50 text-[#0a367a] text-sm font-bold disabled:opacity-45 cursor-pointer transition-colors"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+                <span>{clockBusy && activeAttendance ? 'Saving...' : 'Clock Out'}</span>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-700">
+              <CheckCircle2
+                className={`w-4 h-4 ${
+                  activeAttendance ? 'text-emerald-600' : 'text-slate-400'
+                }`}
+              />
+              <span>
+                Status:{' '}
+                {activeAttendance ? (
+                  <span className="text-emerald-700 font-mono-tabular">
+                    Clocked In · {formatClock24To12(activeAttendance.clockInTime)}
+                  </span>
+                ) : latestAttendance?.clockOutTime || shiftEndedAt ? (
+                  <span className="text-slate-700 font-mono-tabular">
+                    Clocked Out ·{' '}
+                    {formatClock24To12(latestAttendance?.clockOutTime || shiftEndedAt || undefined)}
+                  </span>
+                ) : (
+                  <span className="text-slate-600">Not Clocked In</span>
+                )}
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 3. Operational Row: Today's Arrivals & Departures | Recent Reservations | Quick Actions */}
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Today's Arrivals & Departures */}
+        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5">
+            <h2 className="font-display text-base font-bold">
+              Today&apos;s Arrivals &amp; Departures
+            </h2>
+          </div>
+          <div className="p-4 grid grid-cols-2 divide-x divide-slate-200 flex-1">
+            <div className="pr-3">
+              <p className="text-xs font-bold text-[#061f4d] mb-2.5 text-center">
+                Arrivals ({arrivalsToday.length})
+              </p>
+              {arrivalsToday.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-4">No arrivals</p>
+              ) : (
+                <div className="space-y-2">
+                  {arrivalsToday.slice(0, 4).map((res) => (
+                    <button
+                      key={res.id}
+                      type="button"
+                      onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
+                      className="w-full text-left flex items-center justify-between gap-2 text-xs py-1 px-1.5 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
+                    >
+                      <span className="font-semibold text-slate-800 truncate">{res.guestName}</span>
+                      <span className="font-mono-tabular text-[11px] text-[#0a367a] shrink-0">
+                        {getReservationRoomDisplay(res, rooms).roomNumberLabel}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="pl-3">
+              <p className="text-xs font-bold text-[#061f4d] mb-2.5 text-center">
+                Departures ({departuresToday.length})
+              </p>
+              {departuresToday.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-4">No departures</p>
+              ) : (
+                <div className="space-y-2">
+                  {departuresToday.slice(0, 4).map((res) => (
+                    <button
+                      key={res.id}
+                      type="button"
+                      onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
+                      className="w-full text-left flex items-center justify-between gap-2 text-xs py-1 px-1.5 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
+                    >
+                      <span className="font-semibold text-slate-800 truncate">{res.guestName}</span>
+                      <span className="font-mono-tabular text-[11px] text-amber-700 shrink-0">
+                        {getReservationRoomDisplay(res, rooms).roomNumberLabel}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Recent Reservations */}
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+            <h2 className="font-display text-base font-bold">Recent Reservations</h2>
+            {canAccess('reservations') && (
+              <button
+                type="button"
+                onClick={() => onNavigate('reservations')}
+                className="no-print inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
+              >
+                <span>View All</span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
+          {recentReservations.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-500 my-auto">
+              No recent reservations yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
+                    <th className="py-2.5 px-3">Ref No.</th>
+                    <th className="py-2.5 px-2">Guest Name</th>
+                    <th className="py-2.5 px-2">Check-In</th>
+                    <th className="py-2.5 px-2">Room</th>
+                    <th className="py-2.5 px-3 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {recentReservations.map((res) => {
+                    const pill = getStatusPillStyle(res.status);
+                    const roomDisp = getReservationRoomDisplay(res, rooms);
+                    return (
+                      <tr
+                        key={res.id}
+                        onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
+                        className="hover:bg-blue-50/40 transition-colors cursor-pointer"
+                      >
+                        <td className="py-2.5 px-3 font-mono-tabular font-semibold text-[#0a367a] whitespace-nowrap">
+                          {res.bookingRef || res.id.slice(0, 8)}
+                        </td>
+                        <td className="py-2.5 px-2 font-semibold text-slate-900 max-w-[130px] truncate">
+                          {res.guestName}
+                        </td>
+                        <td className="py-2.5 px-2 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {formatShortMonthDay(res.checkInDate)}
+                        </td>
+                        <td className="py-2.5 px-2 font-mono-tabular text-slate-700 whitespace-nowrap">
+                          {roomDisp.isAssigned ? roomDisp.roomNumberLabel : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${pill.className}`}
+                          >
+                            {pill.label}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
-        {/* Clean Attendance & Shift Timing Strip */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 bg-slate-50/70">
-          <div className="px-5 py-3.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-              Login Time
-            </p>
-            <p className="font-mono-tabular text-sm font-bold text-[#061539] mt-0.5">
-              {loginTimeLabel}
-            </p>
+        {/* Quick Actions */}
+        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5">
+            <h2 className="font-display text-base font-bold">Quick Actions</h2>
           </div>
-          <div className="px-5 py-3.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-              Clocked In
-            </p>
-            <p className="font-mono-tabular text-sm font-bold text-slate-900 mt-0.5">
-              {latestAttendance?.clockInTime ? (
-                <span className="text-emerald-700">
-                  {formatClock24To12(latestAttendance.clockInTime)}
-                  {!latestAttendance.clockOutTime ? ' · On Duty' : ''}
-                </span>
-              ) : (
-                <span className="text-slate-400">Not clocked in yet</span>
-              )}
-            </p>
-          </div>
-          <div className="px-5 py-3.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-              Clocked Out / Shift Status
-            </p>
-            <p className="font-mono-tabular text-sm font-bold text-slate-900 mt-0.5">
-              {latestAttendance?.clockOutTime || shiftEndedAt ? (
-                <span className="text-slate-700">
-                  {formatClock24To12(latestAttendance?.clockOutTime || shiftEndedAt || undefined)}
-                  {latestCompletedShiftToday ? ' · Shift Ended' : ''}
-                </span>
-              ) : activeAttendance ? (
-                <span className="text-[#1c46be]">Active Shift</span>
-              ) : (
-                <span className="text-slate-400">Ready to start</span>
-              )}
-            </p>
+          <div className="p-4 grid grid-cols-2 gap-3 flex-1">
+            <button
+              type="button"
+              onClick={() => canAccess('reservations') && onNavigate('reservations')}
+              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+            >
+              <CalendarPlus className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">Reservation</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => canAccess('arrivals') && onNavigate('arrivals')}
+              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+            >
+              <LogIn className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">Check-In</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => canAccess('in_house') && onNavigate('in_house')}
+              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+            >
+              <LogOut className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">Check-Out</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => canAccess('pos_kitchen') && onNavigate('pos_kitchen')}
+              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+            >
+              <ShoppingCart className="w-6 h-6 text-[#0a367a]" />
+              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">POS</span>
+            </button>
           </div>
         </div>
       </section>
 
-      {/* 4 Clean Operational KPI Cards (no card icons for neatness) */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpiCards.map((card) => (
-          <button
-            key={card.id}
-            type="button"
-            onClick={() => {
-              if (canAccess(card.target)) onNavigate(card.target);
-            }}
-            className={`bg-white border border-slate-200 border-t-4 ${card.accent} rounded-xl p-4 text-left hover:border-slate-300 transition-colors cursor-pointer`}
-          >
-            <p className="text-xs font-semibold text-slate-600">{card.label}</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-bold text-[#061539] mt-1.5">
-              {card.value}
-            </p>
-            <p className="text-[11px] text-slate-500 mt-1">{card.sub}</p>
-          </button>
-        ))}
+      {/* 4. Bottom Operational Row: Recent POS Transactions | Upcoming Tasks | Staff Attendance Summary */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Recent POS Transactions */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+            <h2 className="font-display text-base font-bold">Recent POS Transactions</h2>
+            {canAccess('pos_kitchen') && (
+              <button
+                type="button"
+                onClick={() => onNavigate('pos_kitchen')}
+                className="no-print inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
+              >
+                <span>View All</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          {recentPosOrders.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-500 my-auto">
+              No POS transactions recorded yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
+                    <th className="py-2.5 px-3">Time</th>
+                    <th className="py-2.5 px-2">Item(s)</th>
+                    <th className="py-2.5 px-2">Amount</th>
+                    <th className="py-2.5 px-3 text-right">Payment</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {recentPosOrders.map((ord) => {
+                    const ordIso = resolvePosOrderIso(ord);
+                    const timeStr = ordIso.includes('T')
+                      ? formatIsoToTime(ordIso)
+                      : formatShortMonthDay(ord.orderDate || ordIso);
+                    return (
+                      <tr
+                        key={ord.id}
+                        onClick={() => canAccess('pos_kitchen') && onNavigate('pos_kitchen')}
+                        className="hover:bg-blue-50/40 transition-colors cursor-pointer"
+                      >
+                        <td className="py-2.5 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                          {timeStr}
+                        </td>
+                        <td className="py-2.5 px-2 font-semibold text-slate-900 max-w-[140px] truncate">
+                          {ord.itemsSummary || `Order #${ord.orderNumber}`}
+                        </td>
+                        <td className="py-2.5 px-2 font-mono-tabular font-bold text-[#0a367a] whitespace-nowrap">
+                          {formatNgn(ord.totalNgn)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                          {ord.paymentMethod || 'Cash NGN'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Upcoming Tasks */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center gap-2">
+            <ClipboardCheck className="w-4.5 h-4.5 text-blue-200" />
+            <h2 className="font-display text-base font-bold">Upcoming Tasks</h2>
+          </div>
+          {upcomingTasks.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-500 my-auto">
+              All housekeeping &amp; maintenance tasks are clear.
+            </div>
+          ) : (
+            <div className="p-4 divide-y divide-slate-100">
+              {upcomingTasks.map((task) => (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => canAccess(task.section) && onNavigate(task.section)}
+                  className="w-full py-2.5 flex items-center justify-between gap-3 text-left hover:bg-blue-50/40 px-2 -mx-2 rounded-lg transition-colors cursor-pointer"
+                >
+                  <span className="inline-flex items-center gap-2.5 min-w-0">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${task.dotColor}`} />
+                    <span className="text-sm font-semibold text-slate-800 truncate">
+                      {task.title}
+                    </span>
+                  </span>
+                  <span className="font-mono-tabular text-xs font-semibold text-slate-500 shrink-0">
+                    {task.timeLabel}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Staff Attendance Summary */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
+          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+            <h2 className="font-display text-base font-bold">Staff Attendance Summary</h2>
+            {canAccess('shifts_attendance') && (
+              <button
+                type="button"
+                onClick={() => onNavigate('shifts_attendance')}
+                className="no-print inline-flex items-center gap-1 text-xs font-semibold text-blue-100 hover:text-white cursor-pointer"
+              >
+                <span>View All</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="p-5 grid grid-cols-3 divide-x divide-slate-200 flex-1 items-center">
+            <div className="text-center px-2">
+              <div className="inline-flex items-center justify-center gap-1.5 text-emerald-700 text-xs sm:text-sm font-semibold">
+                <UserCheck className="w-4 h-4" />
+                <span>Present</span>
+              </div>
+              <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] mt-2">
+                {attendanceSummary.presentCount}
+              </p>
+            </div>
+            <div className="text-center px-2">
+              <div className="inline-flex items-center justify-center gap-1.5 text-[#0a367a] text-xs sm:text-sm font-semibold">
+                <Coffee className="w-4 h-4" />
+                <span>Off / Out</span>
+              </div>
+              <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] mt-2">
+                {attendanceSummary.completedOrBreakCount}
+              </p>
+            </div>
+            <div className="text-center px-2">
+              <div className="inline-flex items-center justify-center gap-1.5 text-rose-600 text-xs sm:text-sm font-semibold">
+                <UserX className="w-4 h-4" />
+                <span>Absent</span>
+              </div>
+              <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] mt-2">
+                {attendanceSummary.absentCount}
+              </p>
+            </div>
+          </div>
+        </div>
       </section>
 
-      {/* Primary Focus: Rooms & Live Status with Photos */}
-      <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* 5. Preserved Rooms Overview & Room Photos */}
+      <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+        <div className="bg-[#0a367a] text-white px-5 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-base font-bold text-[#061539]">
+            <h2 className="font-display text-base sm:text-lg font-bold">
               Rooms Overview ({sortedRooms.length})
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-blue-100 mt-0.5">
               Live occupancy and housekeeping status across all rooms
             </p>
           </div>
 
-          <div className="no-print flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+          <div className="no-print flex flex-wrap items-center gap-1.5 bg-white/10 p-1 rounded-xl border border-white/15">
             {(
               [
                 { id: 'all', label: `All (${sortedRooms.length})` },
@@ -669,8 +1383,8 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                 onClick={() => setRoomFilter(tab.id)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                   roomFilter === tab.id
-                    ? 'bg-white text-[#061539] shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-white text-[#0a367a] shadow-xs'
+                    : 'text-blue-100 hover:text-white'
                 }`}
               >
                 {tab.label}
@@ -679,213 +1393,132 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
           </div>
         </div>
 
-        {filteredRooms.length === 0 ? (
-          <div className="py-10 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-xl">
-            No rooms match this filter right now.
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {sections.map((sec) => {
-              const secRooms = filteredRooms.filter((r) => getRoomSection(r) === sec.key);
-              if (secRooms.length === 0) return null;
-              return (
-                <div key={sec.key} className="space-y-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    {sec.title} · {secRooms.length}
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {secRooms.map((room) => {
-                      const slides = getRoomGalleryImages(room);
-                      const coverUrl = slides[0]?.url || '';
-                      const imgFailed = brokenImages[room.id];
+        <div className="p-5 sm:p-6">
+          {filteredRooms.length === 0 ? (
+            <div className="py-10 text-center text-sm text-slate-500 border border-dashed border-slate-200 rounded-xl">
+              No rooms match this filter right now.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {sections.map((sec) => {
+                const secRooms = filteredRooms.filter((r) => getRoomSection(r) === sec.key);
+                if (secRooms.length === 0) return null;
+                return (
+                  <div key={sec.key} className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#0a367a]">
+                      {sec.title} · {secRooms.length}
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {secRooms.map((room) => {
+                        const slides = getRoomGalleryImages(room);
+                        const coverUrl = slides[0]?.url || '';
+                        const imgFailed = brokenImages[room.id];
 
-                      const statusLabel =
-                        room.occupancyStatus === 'occupied'
-                          ? 'Occupied'
-                          : room.occupancyStatus === 'reserved'
-                            ? 'Reserved'
-                            : room.occupancyStatus === 'out_of_order'
-                              ? 'Out of Order'
-                              : 'Available';
+                        const statusLabel =
+                          room.occupancyStatus === 'occupied'
+                            ? 'Occupied'
+                            : room.occupancyStatus === 'reserved'
+                              ? 'Reserved'
+                              : room.occupancyStatus === 'out_of_order'
+                                ? 'Out of Order'
+                                : 'Available';
 
-                      const statusColor =
-                        room.occupancyStatus === 'occupied'
-                          ? 'text-blue-700'
-                          : room.occupancyStatus === 'reserved'
-                            ? 'text-amber-700'
-                            : room.occupancyStatus === 'out_of_order'
-                              ? 'text-rose-700'
-                              : 'text-emerald-700';
+                        const statusColor =
+                          room.occupancyStatus === 'occupied'
+                            ? 'text-[#0a367a]'
+                            : room.occupancyStatus === 'reserved'
+                              ? 'text-amber-700'
+                              : room.occupancyStatus === 'out_of_order'
+                                ? 'text-rose-700'
+                                : 'text-emerald-700';
 
-                      const hkColor =
-                        room.housekeepingStatus === 'dirty'
-                          ? 'text-rose-600'
-                          : room.housekeepingStatus === 'cleaning'
-                            ? 'text-amber-600'
-                            : 'text-slate-500';
+                        const hkColor =
+                          room.housekeepingStatus === 'dirty'
+                            ? 'text-rose-600'
+                            : room.housekeepingStatus === 'cleaning'
+                              ? 'text-amber-600'
+                              : 'text-slate-500';
 
-                      const activeRes =
-                        room.currentReservationId
-                          ? reservations.find((r) => r.id === room.currentReservationId)
-                          : reservations.find(
-                              (r) => r.roomId === room.id && r.status === 'checked_in'
-                            );
+                        const activeRes =
+                          room.currentReservationId
+                            ? reservations.find((r) => r.id === room.currentReservationId)
+                            : reservations.find(
+                                (r) => r.roomId === room.id && r.status === 'checked_in'
+                              );
 
-                      return (
-                        <div
-                          key={room.id}
-                          onClick={() => {
-                            if (activeRes) {
-                              onOpenReservationFolio(activeRes.id, 'reservations', 'view');
-                            } else if (onInspectRoom && canAccess('rooms')) {
-                              onInspectRoom(room.id);
-                            } else if (canAccess('rooms')) {
-                              onNavigate('rooms');
-                            }
-                          }}
-                          className="group bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-[#1c46be] hover:shadow-sm transition-all cursor-pointer flex flex-col"
-                        >
-                          <div className="relative aspect-[16/10] w-full bg-slate-100 overflow-hidden">
-                            {coverUrl && !imgFailed ? (
-                              <img
-                                src={coverUrl}
-                                alt={`${room.roomNumber} - ${room.roomType}`}
-                                referrerPolicy="no-referrer"
-                                onError={() =>
-                                  setBrokenImages((prev) => ({ ...prev, [room.id]: true }))
-                                }
-                                className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-slate-200 text-slate-500 text-xs font-semibold">
-                                {room.roomNumber}
-                              </div>
-                            )}
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/75 via-slate-950/25 to-transparent px-3 py-2.5 flex items-end justify-between gap-2">
-                              <span className="font-mono-tabular text-xs font-bold text-white">
-                                {room.roomNumber}
-                              </span>
-                              <span className="font-mono-tabular text-[11px] font-semibold text-white/95">
-                                {formatNgn(room.nightlyRateNgn)}/nt
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="p-3.5 flex-1 flex flex-col justify-between gap-2">
-                            <div>
-                              <p className="text-xs font-bold text-slate-900 truncate">
-                                {room.roomType}
-                              </p>
-                              <div className="flex items-center justify-between gap-2 mt-1.5 text-[11px]">
-                                <span className={`font-bold ${statusColor}`}>{statusLabel}</span>
-                                <span className={`capitalize font-medium ${hkColor}`}>
-                                  {room.housekeepingStatus}
+                        return (
+                          <div
+                            key={room.id}
+                            onClick={() => {
+                              if (activeRes) {
+                                onOpenReservationFolio(activeRes.id, 'reservations', 'view');
+                              } else if (onInspectRoom && canAccess('rooms')) {
+                                onInspectRoom(room.id);
+                              } else if (canAccess('rooms')) {
+                                onNavigate('rooms');
+                              }
+                            }}
+                            className="group bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-[#0a367a] hover:shadow-sm transition-all cursor-pointer flex flex-col"
+                          >
+                            <div className="relative aspect-[16/10] w-full bg-slate-100 overflow-hidden">
+                              {coverUrl && !imgFailed ? (
+                                <img
+                                  src={coverUrl}
+                                  alt={`${room.roomNumber} - ${room.roomType}`}
+                                  referrerPolicy="no-referrer"
+                                  onError={() =>
+                                    setBrokenImages((prev) => ({ ...prev, [room.id]: true }))
+                                  }
+                                  className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center bg-slate-200 text-slate-500 text-sm font-semibold">
+                                  {room.roomNumber}
+                                </div>
+                              )}
+                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/75 via-slate-950/25 to-transparent px-3 py-2.5 flex items-end justify-between gap-2">
+                                <span className="font-mono-tabular text-sm font-bold text-white">
+                                  {room.roomNumber}
+                                </span>
+                                <span className="font-mono-tabular text-xs font-semibold text-white/95">
+                                  {formatNgn(room.nightlyRateNgn)}/nt
                                 </span>
                               </div>
                             </div>
 
-                            {room.currentGuestName ? (
-                              <p className="text-[11px] text-slate-600 pt-2 border-t border-slate-100 truncate">
-                                Guest: <span className="font-semibold text-slate-900">{room.currentGuestName}</span>
-                              </p>
-                            ) : (
-                              <p className="text-[11px] text-slate-400 pt-2 border-t border-slate-100">
-                                Max {room.maxGuests} guest{room.maxGuests === 1 ? '' : 's'}
-                              </p>
-                            )}
+                            <div className="p-3.5 flex-1 flex flex-col justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-bold text-slate-900 truncate">
+                                  {room.roomType}
+                                </p>
+                                <div className="flex items-center justify-between gap-2 mt-1.5 text-xs">
+                                  <span className={`font-bold ${statusColor}`}>{statusLabel}</span>
+                                  <span className={`capitalize font-medium ${hkColor}`}>
+                                    {room.housekeepingStatus}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {room.currentGuestName ? (
+                                <p className="text-xs text-slate-600 pt-2 border-t border-slate-100 truncate">
+                                  Guest:{' '}
+                                  <span className="font-semibold text-slate-900">
+                                    {room.currentGuestName}
+                                  </span>
+                                </p>
+                              ) : (
+                                <p className="text-xs text-slate-400 pt-2 border-t border-slate-100">
+                                  Max {room.maxGuests} guest{room.maxGuests === 1 ? '' : 's'}
+                                </p>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Compact Today's Arrivals & Departures */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <h2 className="font-display text-sm font-bold text-[#061539]">
-              Today&apos;s Arrivals ({arrivalsToday.length})
-            </h2>
-            {canAccess('arrivals') && (
-              <button
-                type="button"
-                onClick={() => onNavigate('arrivals')}
-                className="no-print text-xs font-semibold text-[#1c46be] hover:underline cursor-pointer"
-              >
-                View all
-              </button>
-            )}
-          </div>
-          {arrivalsToday.length === 0 ? (
-            <p className="text-xs text-slate-500 py-4">No expected arrivals remaining today.</p>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {arrivalsToday.slice(0, 5).map((res) => (
-                <button
-                  key={res.id}
-                  type="button"
-                  onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
-                  className="w-full py-2.5 flex items-center justify-between gap-3 text-left hover:bg-slate-50 px-2 -mx-2 rounded-lg transition-colors cursor-pointer"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-slate-900 truncate">{res.guestName}</p>
-                    <p className="text-[11px] text-slate-500">
-                      {getReservationRoomDisplay(res, rooms).roomNumberLabel} ·{' '}
-                      {formatBookingSourceLabel(res.channel)}
-                    </p>
-                  </div>
-                  <span className="font-mono-tabular text-[11px] font-semibold text-[#1c46be] shrink-0">
-                    Check In →
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <h2 className="font-display text-sm font-bold text-[#061539]">
-              Today&apos;s Departures ({departuresToday.length})
-            </h2>
-            {canAccess('in_house') && (
-              <button
-                type="button"
-                onClick={() => onNavigate('in_house')}
-                className="no-print text-xs font-semibold text-[#1c46be] hover:underline cursor-pointer"
-              >
-                View all
-              </button>
-            )}
-          </div>
-          {departuresToday.length === 0 ? (
-            <p className="text-xs text-slate-500 py-4">No check-outs scheduled for today.</p>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {departuresToday.slice(0, 5).map((res) => (
-                <button
-                  key={res.id}
-                  type="button"
-                  onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
-                  className="w-full py-2.5 flex items-center justify-between gap-3 text-left hover:bg-slate-50 px-2 -mx-2 rounded-lg transition-colors cursor-pointer"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-slate-900 truncate">{res.guestName}</p>
-                    <p className="text-[11px] text-slate-500">
-                      {getReservationRoomDisplay(res, rooms).roomNumberLabel} · Out {res.checkOutDate}
-                    </p>
-                  </div>
-                  <span className="font-mono-tabular text-[11px] font-semibold text-amber-700 shrink-0">
-                    Open Folio →
-                  </span>
-                </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -895,10 +1528,10 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       {showEndShiftModal && (
         <div className="no-print fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full overflow-hidden shadow-xl">
-            <div className="px-5 py-4 bg-[#061539] text-white flex items-center justify-between">
+            <div className="px-5 py-4 bg-[#0a367a] text-white flex items-center justify-between">
               <div>
                 <h2 className="font-display text-base font-bold">End Shift &amp; Shift Report</h2>
-                <p className="text-[11px] text-blue-200 mt-0.5">
+                <p className="text-xs text-blue-100 mt-0.5">
                   {userName} · {actorRole} · {todayIso}
                 </p>
               </div>
@@ -935,7 +1568,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                   <span className="block text-[10px] uppercase font-semibold text-slate-500">
                     Occupied / Free
                   </span>
-                  <span className="font-mono-tabular font-bold text-[#061539]">
+                  <span className="font-mono-tabular font-bold text-[#0a367a]">
                     {occupiedRooms.length} / {availableRooms.length}
                   </span>
                 </div>
@@ -946,25 +1579,25 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                   <p className="font-mono-tabular text-base font-bold text-slate-900">
                     {arrivalsToday.length}
                   </p>
-                  <p className="text-[10px] text-slate-500">Arrivals</p>
+                  <p className="text-xs text-slate-500">Arrivals</p>
                 </div>
                 <div className="border border-slate-200 rounded-lg py-2 px-2">
                   <p className="font-mono-tabular text-base font-bold text-slate-900">
                     {departuresToday.length}
                   </p>
-                  <p className="text-[10px] text-slate-500">Departures</p>
+                  <p className="text-xs text-slate-500">Departures</p>
                 </div>
                 <div className="border border-slate-200 rounded-lg py-2 px-2">
                   <p className="font-mono-tabular text-base font-bold text-slate-900">
                     {openHousekeepingCount}
                   </p>
-                  <p className="text-[10px] text-slate-500">Housekeeping</p>
+                  <p className="text-xs text-slate-500">Housekeeping</p>
                 </div>
                 <div className="border border-slate-200 rounded-lg py-2 px-2">
                   <p className="font-mono-tabular text-base font-bold text-slate-900">
                     {openMaintenanceCount}
                   </p>
-                  <p className="text-[10px] text-slate-500">Maintenance</p>
+                  <p className="text-xs text-slate-500">Maintenance</p>
                 </div>
               </div>
 
@@ -977,7 +1610,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                   value={handoverNotes}
                   onChange={(e) => setHandoverNotes(e.target.value)}
                   placeholder="Key handovers, pending guest requests, room inspections, or cash drawer notes..."
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1c46be]/20 focus:border-[#1c46be]"
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0a367a]/20 focus:border-[#0a367a]"
                 />
               </div>
 
@@ -1008,9 +1641,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                   type="button"
                   disabled={endingShift}
                   onClick={() => handleEndShift(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#061539] hover:bg-[#0c2b70] text-white text-xs font-semibold disabled:opacity-60 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold disabled:opacity-60 cursor-pointer"
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
                   <span>{endingShift ? 'Closing Shift...' : 'End Shift & Download Report'}</span>
                 </button>
               </div>

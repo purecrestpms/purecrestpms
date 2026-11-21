@@ -236,7 +236,7 @@ export const PurchaseInvoiceModal: React.FC<PurchaseInvoiceModalProps> = ({
               </div>
 
               <div className="sm:text-right space-y-0.5 shrink-0">
-                <p className="font-mono-tabular text-sm font-bold text-[#0b5d34]">
+                <p className="font-mono-tabular text-sm font-bold text-[#0a367a]">
                   {invoice.invoiceNumber}
                 </p>
                 <p className="font-mono-tabular text-[11px] text-slate-600">Date: {invoice.date}</p>
@@ -314,7 +314,7 @@ export const PurchaseInvoiceModal: React.FC<PurchaseInvoiceModalProps> = ({
               )}
               <div className="w-full sm:w-64 flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-bold text-slate-900">
                 <span>Total Amount</span>
-                <span className="font-mono-tabular text-[#0b5d34]">
+                <span className="font-mono-tabular text-[#0a367a]">
                   {formatNgn(invoice.totalNgn)}
                 </span>
               </div>
@@ -348,7 +348,7 @@ export const PurchaseInvoiceModal: React.FC<PurchaseInvoiceModalProps> = ({
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] text-white font-semibold cursor-pointer whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold cursor-pointer whitespace-nowrap"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Print Invoice</span>

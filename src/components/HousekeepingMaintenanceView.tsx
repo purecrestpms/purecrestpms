@@ -525,7 +525,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                           }}
                           className={`px-2 py-1.5 rounded-lg border text-[11px] font-semibold capitalize transition-colors cursor-pointer disabled:opacity-50 ${
                             isActive
-                              ? 'bg-[#0b5d34] border-[#0b5d34] text-white'
+                              ? 'bg-[#0a367a] border-[#0a367a] text-white'
                               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                           }`}
                         >

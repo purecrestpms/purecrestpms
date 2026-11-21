@@ -532,7 +532,7 @@ export const PaymentReceiptModal: React.FC<PaymentReceiptModalProps> = ({
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-[#0b5d34] hover:bg-[#094a29] text-white font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-[#0a367a] hover:bg-[#07275a] text-white font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Print Receipt</span>

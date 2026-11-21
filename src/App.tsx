@@ -1904,7 +1904,7 @@ export default function App() {
 
           <div className="flex items-center gap-2.5 shrink-0">
             <div className="hidden md:inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
-              <Calendar className="w-3.5 h-3.5 text-[#0b5d34]" />
+              <Calendar className="w-3.5 h-3.5 text-[#0a367a]" />
               <span className="whitespace-nowrap">{headerFormattedDate}</span>
             </div>
 
@@ -2098,7 +2098,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => handleSelectSection('properties_admin')}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0b5d34] hover:bg-[#094b2a] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
                   >
                     <span>Add First Property</span>
                   </button>

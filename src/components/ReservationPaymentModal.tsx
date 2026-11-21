@@ -681,7 +681,7 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
             <button
               type="submit"
               disabled={saving}
-              className="h-9 px-4 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] disabled:opacity-60 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+              className="h-9 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] disabled:opacity-60 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
             >
               <Save className="w-3.5 h-3.5" />
               {saving ? 'Saving Payment…' : 'Save & Print Receipt'}
