@@ -186,6 +186,61 @@ async function startServer() {
     res.redirect(301, target);
   });
 
+  // Dynamic property-branded Web App Manifest for Desktop PWA installation
+  app.get('/api/manifest', (req, res) => {
+    const rawPropertyId = typeof req.query.propertyId === 'string' ? req.query.propertyId.trim() : '';
+    const safePropertyId = rawPropertyId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+    const rawName = typeof req.query.name === 'string' ? req.query.name.trim().slice(0, 80) : '';
+    const rawCity = typeof req.query.city === 'string' ? req.query.city.trim().slice(0, 48) : '';
+    const rawTheme = typeof req.query.themeColor === 'string' ? req.query.themeColor.trim() : '';
+    const safeTheme = /^#[0-9a-fA-F]{6}$/.test(rawTheme) ? rawTheme : '#0a367a';
+
+    const appName = rawName ? `${rawName} — PCHPMS` : 'PCHPMS — Property Management Software';
+    const shortNameBase = rawName
+      ? rawName.replace(/\s+/g, ' ').slice(0, 12).trim()
+      : 'PCHPMS';
+    const startUrl = safePropertyId ? `/?property=${encodeURIComponent(safePropertyId)}` : '/';
+
+    const manifest = {
+      id: safePropertyId ? `/property/${safePropertyId}` : '/',
+      name: appName,
+      short_name: shortNameBase || 'PCHPMS',
+      description: rawName
+        ? `${rawName}${rawCity ? ` (${rawCity})` : ''} desktop hospitality management app powered by PCHPMS with offline support.`
+        : 'Hospitality Property Management Software with offline support.',
+      start_url: startUrl,
+      scope: '/',
+      display: 'standalone',
+      orientation: 'any',
+      theme_color: safeTheme,
+      background_color: '#ffffff',
+      icons: [
+        {
+          src: '/pwa-192x192.png',
+          sizes: '192x192',
+          type: 'image/png',
+          purpose: 'any',
+        },
+        {
+          src: '/pwa-512x512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'any',
+        },
+        {
+          src: '/pwa-maskable-512x512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'maskable',
+        },
+      ],
+    };
+
+    res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.status(200).json(manifest);
+  });
+
   // Application-owned media upload endpoint (falls back to shared app database when R2 object storage is not mounted)
   app.post('/api/media/upload', express.json({ limit: '2mb' }), (req, res) => {
     const body = (req.body || {}) as { dataUrl?: string };

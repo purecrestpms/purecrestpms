@@ -2918,7 +2918,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <input
                     required
                     type="text"
-                    placeholder="e.g. Chinedu"
                     value={walkInFirstName}
                     onChange={(e) => setWalkInFirstName(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
@@ -2930,7 +2929,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <input
                     required
                     type="text"
-                    placeholder="e.g. Okafor"
                     value={walkInLastName}
                     onChange={(e) => setWalkInLastName(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
@@ -2952,7 +2950,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <label className="block font-semibold text-slate-700 mb-1.5">Email Address</label>
                   <input
                     type="email"
-                    placeholder="guest@example.com"
                     value={walkInEmail}
                     onChange={(e) => setWalkInEmail(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
@@ -2978,7 +2975,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                   <input
                     required
                     type="text"
-                    placeholder="Enter ID / Passport No."
                     value={walkInIdNumber}
                     onChange={(e) => setWalkInIdNumber(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 font-mono-tabular focus:outline-none focus:border-emerald-600"
@@ -2990,7 +2986,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     <label className="block font-semibold text-slate-700 mb-1.5">Street Address</label>
                     <input
                       type="text"
-                      placeholder="House / Street address"
                       value={walkInAddress}
                       onChange={(e) => setWalkInAddress(e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3.5 py-2.5 focus:outline-none focus:border-emerald-600"
@@ -3022,7 +3017,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     <CountrySelect
                       value={walkInCountry}
                       onChange={setWalkInCountry}
-                      placeholder="Select country..."
+                      placeholder=""
                     />
                   </div>
                 </div>
@@ -6443,7 +6438,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={editGuestPhoneRes}
                                   onChange={(e) => setEditGuestPhoneRes(e.target.value)}
-                                  placeholder="+234 800 000 0000"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
                                 />
                               </div>
@@ -6455,7 +6449,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="email"
                                   value={editGuestEmailRes}
                                   onChange={(e) => setEditGuestEmailRes(e.target.value)}
-                                  placeholder="guest@example.com"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
                                 />
                               </div>
@@ -6467,7 +6460,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={editGuestAddressRes}
                                   onChange={(e) => setEditGuestAddressRes(e.target.value)}
-                                  placeholder="House / Street / Estate"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
                                 />
                               </div>
@@ -6479,7 +6471,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={editGuestCityRes}
                                   onChange={(e) => setEditGuestCityRes(e.target.value)}
-                                  placeholder="e.g. Enugu"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
                                 />
                               </div>
@@ -6491,7 +6482,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={editGuestStateRes}
                                   onChange={(e) => setEditGuestStateRes(e.target.value)}
-                                  placeholder="State"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
                                 />
                               </div>
@@ -6502,7 +6492,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 <CountrySelect
                                   value={editGuestCountryRes}
                                   onChange={setEditGuestCountryRes}
-                                  placeholder="Search country..."
+                                  placeholder=""
                                 />
                               </div>
                               <div>
@@ -6530,7 +6520,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={editIdNumberRes}
                                   onChange={(e) => setEditIdNumberRes(e.target.value)}
-                                  placeholder="NIN / Passport / License No."
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
                                 />
                               </div>
@@ -6569,7 +6558,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   rows={2}
                                   value={editSpecialRequestsRes}
                                   onChange={(e) => setEditSpecialRequestsRes(e.target.value)}
-                                  placeholder="Any special request..."
                                   className="w-full border border-slate-200 bg-white rounded-lg px-3 py-2 text-xs"
                                 />
                               </div>
@@ -6603,7 +6591,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                       setEditSourceNightlyRateInput
                                     )
                                   }
-                                  placeholder={activeEditCur === 'NGN' ? '55,000' : '120.00'}
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                                 />
                               </div>
@@ -6728,7 +6715,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                       setEditAmountDueInput
                                     )
                                   }
-                                  placeholder="0"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                                 />
                               </div>
@@ -6769,7 +6755,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                         onChange={(e) =>
                                           handleCommaPriceChange(e, editFxRateInput, setEditFxRateInput)
                                         }
-                                        placeholder="FX"
                                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2 text-xs font-mono-tabular disabled:bg-slate-100"
                                       />
                                     </div>
@@ -6790,7 +6775,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                           setEditOtaPaidSourceInput
                                         )
                                       }
-                                      placeholder="0.00"
                                       className="w-full h-10 border border-blue-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-blue-900"
                                     />
                                   </div>
@@ -6810,7 +6794,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                           setEditExpectedPayoutInput
                                         )
                                       }
-                                      placeholder="e.g. 165,000"
                                       className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                                     />
                                   </div>
@@ -6861,7 +6844,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                           setEditActualPayoutInput
                                         )
                                       }
-                                      placeholder="0"
                                       className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900 disabled:bg-slate-100 disabled:text-slate-400"
                                     />
                                   </div>
@@ -6883,7 +6865,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                       setEditHotelPaidInput
                                     )
                                   }
-                                  placeholder="0"
                                   className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900"
                                 />
                               </div>
@@ -6918,7 +6899,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                         setEditCautionAmountInput
                                       )
                                     }
-                                    placeholder="20,000"
                                     className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                                   />
                                 </div>
@@ -6937,7 +6917,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                         setEditCautionCollectedInput
                                       )
                                     }
-                                    placeholder="0"
                                     className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                                   />
                                 </div>
@@ -8448,7 +8427,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 type="text"
                                 value={guestFirstName}
                                 onChange={(e) => setGuestFirstName(e.target.value)}
-                                placeholder="e.g. John"
                                 className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0a367a]"
                               />
                             </div>
@@ -8462,7 +8440,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 type="text"
                                 value={guestLastName}
                                 onChange={(e) => setGuestLastName(e.target.value)}
-                                placeholder="e.g. Doe"
                                 className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0a367a]"
                               />
                             </div>
@@ -8478,7 +8455,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={guestPhone}
                                   onChange={(e) => setGuestPhone(e.target.value)}
-                                  placeholder="+234 801 234 5678"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg pl-8 pr-3 text-xs font-mono-tabular focus:outline-none focus:border-[#0a367a]"
                                 />
                               </div>
@@ -8494,7 +8470,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="email"
                                   value={guestEmail}
                                   onChange={(e) => setGuestEmail(e.target.value)}
-                                  placeholder="john.doe@example.com"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg pl-8 pr-3 text-xs focus:outline-none focus:border-[#0a367a]"
                                 />
                               </div>
@@ -8510,7 +8485,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={guestAddress}
                                   onChange={(e) => setGuestAddress(e.target.value)}
-                                  placeholder="House / Street / Estate / Residential Address"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg pl-8 pr-3 text-xs focus:outline-none focus:border-[#0a367a]"
                                 />
                               </div>
@@ -8523,7 +8497,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               <CountrySelect
                                 value={guestCountry}
                                 onChange={setGuestCountry}
-                                placeholder="Search nationality / country..."
+                                placeholder=""
                               />
                             </div>
 
@@ -8536,7 +8510,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={guestCity}
                                   onChange={(e) => setGuestCity(e.target.value)}
-                                  placeholder="e.g. Enugu"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0a367a]"
                                 />
                               </div>
@@ -8548,7 +8521,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   type="text"
                                   value={guestState}
                                   onChange={(e) => setGuestState(e.target.value)}
-                                  placeholder="State"
                                   className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0a367a]"
                                 />
                               </div>
@@ -8582,7 +8554,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 type="text"
                                 value={inlineIdNumber}
                                 onChange={(e) => setInlineIdNumber(e.target.value)}
-                                placeholder="Document / Passport No."
                                 className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#0a367a]"
                               />
                             </div>
@@ -8754,7 +8725,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                     }
                                   });
                                 }}
-                                placeholder={activeCur === 'NGN' ? '120,000' : '120.00'}
                                 className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                               />
                             </div>
@@ -8834,7 +8804,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                     setBookingHotelPaidInput
                                   );
                                 }}
-                                placeholder="0"
                                 className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900"
                               />
                             </div>
@@ -8914,7 +8883,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                           setBookingFxRateInput
                                         )
                                       }
-                                      placeholder="FX Rate"
                                       className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular disabled:bg-slate-100"
                                     />
                                   </div>
@@ -8927,7 +8895,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   <input
                                     type="text"
                                     inputMode="decimal"
-                                    placeholder="0.00"
                                     value={bookingOtaPaidSourceInput}
                                     onChange={(e) => {
                                       setBookingPaymentStatusManual(false);
@@ -8960,7 +8927,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   <input
                                     type="text"
                                     inputMode="decimal"
-                                    placeholder="e.g. 165,000"
                                     value={bookingExpectedPayoutInput}
                                     onChange={(e) => {
                                       setBookingExpectedPayoutManual(true);
@@ -9005,7 +8971,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                         setCautionDepositAmountInput
                                       )
                                     }
-                                    placeholder="20,000"
                                     className="w-full h-9 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                                   />
                                 </div>
@@ -9024,7 +8989,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                         setCautionDepositCollectedInput
                                       )
                                     }
-                                    placeholder="0"
                                     className="w-full h-9 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
                                   />
                                 </div>
@@ -9051,7 +9015,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                             rows={3}
                             value={bookingSpecialRequests}
                             onChange={(e) => setBookingSpecialRequests(e.target.value)}
-                            placeholder="Any special request (e.g. airport pickup, early check-in request, baby cot, dietary preference)..."
                             className="w-full border border-slate-200 bg-white rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#0a367a]"
                           />
                         </div>

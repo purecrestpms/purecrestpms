@@ -2590,10 +2590,28 @@ export async function createGuestRecord(params: {
     state: (params.guest.state || '').trim().slice(0, 80),
     country: (params.guest.country || params.guest.nationality || 'Nigeria').trim().slice(0, 80),
     nationality: (params.guest.nationality || params.guest.country || 'Nigeria').trim().slice(0, 64),
+    ...(params.guest.dateOfBirth?.trim()
+      ? { dateOfBirth: params.guest.dateOfBirth.trim().slice(0, 24) }
+      : {}),
+    ...(params.guest.gender?.trim()
+      ? { gender: params.guest.gender.trim().slice(0, 24) }
+      : {}),
+    ...(params.guest.emergencyContactName?.trim()
+      ? { emergencyContactName: params.guest.emergencyContactName.trim().slice(0, 120) }
+      : {}),
+    ...(params.guest.emergencyContactPhone?.trim()
+      ? { emergencyContactPhone: params.guest.emergencyContactPhone.trim().slice(0, 32) }
+      : {}),
     idType: params.guest.idType || 'NIN',
     idNumber: (params.guest.idNumber || '').trim().slice(0, 64),
     ...(params.guest.idExpiryDate?.trim()
       ? { idExpiryDate: params.guest.idExpiryDate.trim().slice(0, 24) }
+      : {}),
+    ...(params.guest.idIssuingCountry?.trim()
+      ? { idIssuingCountry: params.guest.idIssuingCountry.trim().slice(0, 80) }
+      : {}),
+    ...(params.guest.vehiclePlateNumber?.trim()
+      ? { vehiclePlateNumber: params.guest.vehiclePlateNumber.trim().slice(0, 32) }
       : {}),
     vipTier: params.guest.vipTier || 'Standard',
     totalStays: Math.max(0, Math.round(Number(params.guest.totalStays) || 0)),
@@ -2634,9 +2652,15 @@ export async function updateGuestRecord(params: {
       | 'state'
       | 'country'
       | 'nationality'
+      | 'dateOfBirth'
+      | 'gender'
+      | 'emergencyContactName'
+      | 'emergencyContactPhone'
       | 'idType'
       | 'idNumber'
       | 'idExpiryDate'
+      | 'idIssuingCountry'
+      | 'vehiclePlateNumber'
       | 'vipTier'
       | 'notes'
     >
@@ -2657,9 +2681,15 @@ export async function updateGuestRecord(params: {
   if (params.updates.state !== undefined) sanitized.state = params.updates.state.trim().slice(0, 80);
   if (params.updates.country !== undefined) sanitized.country = params.updates.country.trim().slice(0, 80);
   if (params.updates.nationality !== undefined) sanitized.nationality = params.updates.nationality.trim().slice(0, 64);
+  if (params.updates.dateOfBirth !== undefined) sanitized.dateOfBirth = params.updates.dateOfBirth.trim().slice(0, 24);
+  if (params.updates.gender !== undefined) sanitized.gender = params.updates.gender.trim().slice(0, 24);
+  if (params.updates.emergencyContactName !== undefined) sanitized.emergencyContactName = params.updates.emergencyContactName.trim().slice(0, 120);
+  if (params.updates.emergencyContactPhone !== undefined) sanitized.emergencyContactPhone = params.updates.emergencyContactPhone.trim().slice(0, 32);
   if (params.updates.idType !== undefined) sanitized.idType = params.updates.idType;
   if (params.updates.idNumber !== undefined) sanitized.idNumber = params.updates.idNumber.trim().slice(0, 64);
   if (params.updates.idExpiryDate !== undefined) sanitized.idExpiryDate = params.updates.idExpiryDate.trim().slice(0, 24);
+  if (params.updates.idIssuingCountry !== undefined) sanitized.idIssuingCountry = params.updates.idIssuingCountry.trim().slice(0, 80);
+  if (params.updates.vehiclePlateNumber !== undefined) sanitized.vehiclePlateNumber = params.updates.vehiclePlateNumber.trim().slice(0, 32);
   if (params.updates.vipTier !== undefined) sanitized.vipTier = params.updates.vipTier;
   if (params.updates.notes !== undefined) sanitized.notes = params.updates.notes.trim().slice(0, 400);
 

@@ -164,9 +164,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
   const [newCity, setNewCity] = useState('Enugu');
   const [newState, setNewState] = useState('Enugu');
   const [newCountry, setNewCountry] = useState('Nigeria');
+  const [newDateOfBirth, setNewDateOfBirth] = useState('');
+  const [newGender, setNewGender] = useState<'Male' | 'Female' | ''>('');
+  const [newEmergencyContactName, setNewEmergencyContactName] = useState('');
+  const [newEmergencyContactPhone, setNewEmergencyContactPhone] = useState('');
   const [newIdType, setNewIdType] = useState<GuestRecord['idType']>('NIN');
   const [newIdNumber, setNewIdNumber] = useState('');
   const [newIdExpiryDate, setNewIdExpiryDate] = useState('');
+  const [newIdIssuingCountry, setNewIdIssuingCountry] = useState('Nigeria');
+  const [newVehiclePlateNumber, setNewVehiclePlateNumber] = useState('');
   const [newVipTier, setNewVipTier] = useState<GuestRecord['vipTier']>('Standard');
   const [newNotes, setNewNotes] = useState('');
 
@@ -179,9 +185,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
   const [editCity, setEditCity] = useState('');
   const [editState, setEditState] = useState('');
   const [editCountry, setEditCountry] = useState('Nigeria');
+  const [editDateOfBirth, setEditDateOfBirth] = useState('');
+  const [editGender, setEditGender] = useState<'Male' | 'Female' | ''>('');
+  const [editEmergencyContactName, setEditEmergencyContactName] = useState('');
+  const [editEmergencyContactPhone, setEditEmergencyContactPhone] = useState('');
   const [editIdType, setEditIdType] = useState<GuestRecord['idType']>('NIN');
   const [editIdNumber, setEditIdNumber] = useState('');
   const [editIdExpiryDate, setEditIdExpiryDate] = useState('');
+  const [editIdIssuingCountry, setEditIdIssuingCountry] = useState('Nigeria');
+  const [editVehiclePlateNumber, setEditVehiclePlateNumber] = useState('');
   const [editVipTier, setEditVipTier] = useState<GuestRecord['vipTier']>('Standard');
   const [editNotes, setEditNotes] = useState('');
 
@@ -346,9 +358,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
     setEditCity(g.city || '');
     setEditState(g.state || '');
     setEditCountry(g.country || g.nationality || 'Nigeria');
+    setEditDateOfBirth(g.dateOfBirth || '');
+    setEditGender(g.gender || '');
+    setEditEmergencyContactName(g.emergencyContactName || '');
+    setEditEmergencyContactPhone(g.emergencyContactPhone || '');
     setEditIdType(g.idType || 'NIN');
     setEditIdNumber(g.idNumber || '');
     setEditIdExpiryDate(g.idExpiryDate || '');
+    setEditIdIssuingCountry(g.idIssuingCountry || g.country || 'Nigeria');
+    setEditVehiclePlateNumber(g.vehiclePlateNumber || '');
     setEditVipTier(g.vipTier || 'Standard');
     setEditNotes(g.notes || '');
     setEditingProfile(startInEdit);
@@ -366,9 +384,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
     setNewCity('Enugu');
     setNewState('Enugu');
     setNewCountry('Nigeria');
+    setNewDateOfBirth('');
+    setNewGender('');
+    setNewEmergencyContactName('');
+    setNewEmergencyContactPhone('');
     setNewIdType('NIN');
     setNewIdNumber('');
     setNewIdExpiryDate('');
+    setNewIdIssuingCountry('Nigeria');
+    setNewVehiclePlateNumber('');
     setNewVipTier('Standard');
     setNewNotes('');
     setFormError(null);
@@ -396,9 +420,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
           state: newState.trim(),
           country: newCountry.trim() || 'Nigeria',
           nationality: newCountry.trim() || 'Nigeria',
+          dateOfBirth: newDateOfBirth.trim(),
+          gender: newGender,
+          emergencyContactName: newEmergencyContactName.trim(),
+          emergencyContactPhone: newEmergencyContactPhone.trim(),
           idType: newIdType,
           idNumber: newIdNumber.trim(),
           idExpiryDate: newIdExpiryDate.trim(),
+          idIssuingCountry: newIdIssuingCountry.trim(),
+          vehiclePlateNumber: newVehiclePlateNumber.trim(),
           vipTier: newVipTier,
           totalStays: 0,
           lifetimeSpendNgn: 0,
@@ -441,9 +471,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
           state: editState.trim(),
           country: editCountry.trim() || 'Nigeria',
           nationality: editCountry.trim() || 'Nigeria',
+          dateOfBirth: editDateOfBirth.trim(),
+          gender: editGender,
+          emergencyContactName: editEmergencyContactName.trim(),
+          emergencyContactPhone: editEmergencyContactPhone.trim(),
           idType: editIdType,
           idNumber: editIdNumber.trim(),
           idExpiryDate: editIdExpiryDate.trim(),
+          idIssuingCountry: editIdIssuingCountry.trim(),
+          vehiclePlateNumber: editVehiclePlateNumber.trim(),
           vipTier: editVipTier,
           notes: editNotes.trim(),
         },
@@ -528,8 +564,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                       state: newState.trim(),
                       country: newCountry.trim() || 'Nigeria',
                       nationality: newCountry.trim() || 'Nigeria',
+                      dateOfBirth: newDateOfBirth.trim(),
+                      gender: newGender,
+                      emergencyContactName: newEmergencyContactName.trim(),
+                      emergencyContactPhone: newEmergencyContactPhone.trim(),
                       idType: newIdType,
                       idNumber: newIdNumber.trim(),
+                      idExpiryDate: newIdExpiryDate.trim(),
+                      idIssuingCountry: newIdIssuingCountry.trim(),
+                      vehiclePlateNumber: newVehiclePlateNumber.trim(),
                       vipTier: newVipTier,
                       notes: newNotes.trim(),
                     },
@@ -610,18 +653,67 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                     className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#1c46be]"
                   />
                 </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Date of Birth
+                  </label>
+                  <input
+                    type="date"
+                    value={newDateOfBirth}
+                    onChange={(e) => setNewDateOfBirth(e.target.value)}
+                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Gender
+                  </label>
+                  <select
+                    value={newGender}
+                    onChange={(e) => setNewGender(e.target.value as 'Male' | 'Female' | '')}
+                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#1c46be]"
+                  >
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Emergency Contact Name
+                  </label>
+                  <input
+                    type="text"
+                    value={newEmergencyContactName}
+                    onChange={(e) => setNewEmergencyContactName(e.target.value)}
+                    placeholder="Full name of next of kin"
+                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#1c46be]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Emergency Contact Phone
+                  </label>
+                  <input
+                    type="tel"
+                    value={newEmergencyContactPhone}
+                    onChange={(e) => setNewEmergencyContactPhone(e.target.value)}
+                    placeholder="+234 800 000 0000"
+                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                  />
+                </div>
               </div>
             </div>
 
             {/* Section 2: Residential Address */}
             <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3.5">
               <h3 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
-                2. Address & Nationality
+                2. Address &amp; Nationality
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div className="sm:col-span-2 lg:col-span-4">
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Street Address
+                    Residential Address
                   </label>
                   <input
                     type="text"
@@ -664,8 +756,11 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
               </div>
             </div>
 
-            {/* Identification & Notes */}
+            {/* Section 3: Identification, Vehicle & Notes */}
             <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3.5">
+              <h3 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
+                3. Identification, Vehicle &amp; Preferences
+              </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -678,13 +773,14 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                   >
                     <option value="NIN">NIN</option>
                     <option value="International Passport">International Passport</option>
-                    <option value="Driver License">Driver License</option>
-                    <option value="Voter Card">Voter Card</option>
+                    <option value="Driver License">Driver's License</option>
+                    <option value="Voter Card">Voter's Card</option>
+                    <option value="Other">Other</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    ID Number
+                    ID / Passport Number
                   </label>
                   <input
                     type="text"
@@ -696,6 +792,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Issuing Country
+                  </label>
+                  <CountrySelect
+                    value={newIdIssuingCountry}
+                    onChange={setNewIdIssuingCountry}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     ID Expiry Date
                   </label>
                   <input
@@ -703,6 +808,18 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                     value={newIdExpiryDate}
                     onChange={(e) => setNewIdExpiryDate(e.target.value)}
                     className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Vehicle Plate No.
+                  </label>
+                  <input
+                    type="text"
+                    value={newVehiclePlateNumber}
+                    onChange={(e) => setNewVehiclePlateNumber(e.target.value)}
+                    placeholder="e.g. ENU-412-KJ"
+                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular uppercase focus:outline-none focus:border-[#1c46be]"
                   />
                 </div>
                 <div>
@@ -722,7 +839,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                 </div>
                 <div className="sm:col-span-2 lg:col-span-4">
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Guest Notes & Preferences
+                    Special Requests / Additional Notes
                   </label>
                   <textarea
                     rows={2}
@@ -1074,6 +1191,53 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Date of Birth
+                    </label>
+                    <input
+                      type="date"
+                      value={editDateOfBirth}
+                      onChange={(e) => setEditDateOfBirth(e.target.value)}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Gender
+                    </label>
+                    <select
+                      value={editGender}
+                      onChange={(e) => setEditGender(e.target.value as 'Male' | 'Female' | '')}
+                      className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#1c46be]"
+                    >
+                      <option value="">Select gender</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Emergency Contact
+                    </label>
+                    <input
+                      type="text"
+                      value={editEmergencyContactName}
+                      onChange={(e) => setEditEmergencyContactName(e.target.value)}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs focus:outline-none focus:border-[#1c46be]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Emergency Phone
+                    </label>
+                    <input
+                      type="tel"
+                      value={editEmergencyContactPhone}
+                      onChange={(e) => setEditEmergencyContactPhone(e.target.value)}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                       ID Type
                     </label>
                     <select
@@ -1083,8 +1247,9 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                     >
                       <option value="NIN">NIN</option>
                       <option value="International Passport">International Passport</option>
-                      <option value="Driver License">Driver License</option>
-                      <option value="Voter Card">Voter Card</option>
+                      <option value="Driver License">Driver's License</option>
+                      <option value="Voter Card">Voter's Card</option>
+                      <option value="Other">Other</option>
                     </select>
                   </div>
                   <div>
@@ -1100,6 +1265,15 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Issuing Country
+                    </label>
+                    <CountrySelect
+                      value={editIdIssuingCountry}
+                      onChange={setEditIdIssuingCountry}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                       ID Expiry Date
                     </label>
                     <input
@@ -1107,6 +1281,17 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                       value={editIdExpiryDate}
                       onChange={(e) => setEditIdExpiryDate(e.target.value)}
                       className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Vehicle Plate No.
+                    </label>
+                    <input
+                      type="text"
+                      value={editVehiclePlateNumber}
+                      onChange={(e) => setEditVehiclePlateNumber(e.target.value)}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs font-mono-tabular uppercase focus:outline-none focus:border-[#1c46be]"
                     />
                   </div>
                   <div>
@@ -1126,7 +1311,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                   </div>
                   <div className="sm:col-span-2">
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Notes & Preferences
+                      Notes &amp; Preferences
                     </label>
                     <textarea
                       rows={3}
@@ -1160,7 +1345,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
               <div className="space-y-5 text-xs">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <h3 className="font-display text-sm font-bold text-[#061539]">
-                    Contact & Identity
+                    Contact &amp; Identity
                   </h3>
                   <button
                     type="button"
@@ -1206,6 +1391,18 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                     </dd>
                   </div>
                   <div className="py-2.5 flex items-start justify-between gap-4">
+                    <dt className="text-slate-500 shrink-0">Date of Birth / Gender</dt>
+                    <dd className="font-mono-tabular font-medium text-slate-900 text-right">
+                      {[g.dateOfBirth, g.gender].filter(Boolean).join(' · ') || '—'}
+                    </dd>
+                  </div>
+                  <div className="py-2.5 flex items-start justify-between gap-4">
+                    <dt className="text-slate-500 shrink-0">Emergency Contact</dt>
+                    <dd className="font-medium text-slate-900 text-right">
+                      {[g.emergencyContactName, g.emergencyContactPhone].filter(Boolean).join(' · ') || '—'}
+                    </dd>
+                  </div>
+                  <div className="py-2.5 flex items-start justify-between gap-4">
                     <dt className="text-slate-500 flex items-center gap-1.5 shrink-0">
                       <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
                       <span>KYC Document</span>
@@ -1215,9 +1412,21 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                     </dd>
                   </div>
                   <div className="py-2.5 flex items-start justify-between gap-4">
+                    <dt className="text-slate-500 shrink-0">Issuing Country</dt>
+                    <dd className="font-medium text-slate-900 text-right">
+                      {g.idIssuingCountry || '—'}
+                    </dd>
+                  </div>
+                  <div className="py-2.5 flex items-start justify-between gap-4">
                     <dt className="text-slate-500 shrink-0">ID Expiry Date</dt>
                     <dd className="font-mono-tabular font-medium text-slate-900 text-right">
                       {g.idExpiryDate || '—'}
+                    </dd>
+                  </div>
+                  <div className="py-2.5 flex items-start justify-between gap-4">
+                    <dt className="text-slate-500 shrink-0">Vehicle Plate No.</dt>
+                    <dd className="font-mono-tabular font-medium text-slate-900 text-right">
+                      {g.vehiclePlateNumber || '—'}
                     </dd>
                   </div>
                   <div className="py-2.5 flex items-start justify-between gap-4">

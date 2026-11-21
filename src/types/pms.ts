@@ -451,9 +451,15 @@ export interface GuestRecord {
   state?: string;
   country?: string;
   nationality?: string;
-  idType: 'NIN' | 'International Passport' | 'Driver License' | 'Voter Card';
+  dateOfBirth?: string;
+  gender?: 'Male' | 'Female' | '';
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  idType: 'NIN' | 'International Passport' | 'Driver License' | 'Voter Card' | 'Other';
   idNumber?: string;
   idExpiryDate?: string;
+  idIssuingCountry?: string;
+  vehiclePlateNumber?: string;
   vipTier: 'Standard' | 'Silver' | 'Gold' | 'Diplomatic';
   totalStays: number;
   lifetimeSpendNgn: number;

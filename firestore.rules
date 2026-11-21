@@ -280,7 +280,9 @@ service cloud.firestore {
         'totalStays', 'lifetimeSpendNgn', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'propertyId', 'fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber', 'idExpiryDate',
+        'propertyId', 'fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality',
+        'dateOfBirth', 'gender', 'emergencyContactName', 'emergencyContactPhone',
+        'idType', 'idNumber', 'idExpiryDate', 'idIssuingCountry', 'vehiclePlateNumber',
         'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
@@ -292,9 +294,15 @@ service cloud.firestore {
       (!('state' in data) || (data.state is string && data.state.size() <= 80)) &&
       (!('country' in data) || (data.country is string && data.country.size() <= 80)) &&
       (!('nationality' in data) || (data.nationality is string && data.nationality.size() <= 64)) &&
+      (!('dateOfBirth' in data) || (data.dateOfBirth is string && data.dateOfBirth.size() <= 24)) &&
+      (!('gender' in data) || (data.gender is string && data.gender.size() <= 24)) &&
+      (!('emergencyContactName' in data) || (data.emergencyContactName is string && data.emergencyContactName.size() <= 120)) &&
+      (!('emergencyContactPhone' in data) || (data.emergencyContactPhone is string && data.emergencyContactPhone.size() <= 32)) &&
       data.idType is string && data.idType.size() <= 48 &&
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
       (!('idExpiryDate' in data) || (data.idExpiryDate is string && data.idExpiryDate.size() <= 24)) &&
+      (!('idIssuingCountry' in data) || (data.idIssuingCountry is string && data.idIssuingCountry.size() <= 80)) &&
+      (!('vehiclePlateNumber' in data) || (data.vehiclePlateNumber is string && data.vehiclePlateNumber.size() <= 32)) &&
       data.vipTier in ['Standard', 'Silver', 'Gold', 'Diplomatic'] &&
       data.totalStays is number && data.totalStays >= 0 &&
       data.lifetimeSpendNgn is number && data.lifetimeSpendNgn >= 0 &&

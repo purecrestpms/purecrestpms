@@ -4,15 +4,14 @@ import {
   Ban,
   BedDouble,
   Calendar as CalendarIcon,
-  CalendarCheck2,
-  CalendarPlus,
-  CheckCircle2,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Layers,
+  LogOut,
   Plus,
+  Printer,
   RefreshCw,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
@@ -30,17 +29,14 @@ import {
   formatNgn,
   getCheckInDateRestriction,
   getOtaCancellationRestriction,
-  getRoomSection,
   GuestRecord,
   isOtaBookingChannel,
-  isOtaReservation,
   OtaIntegrationRecord,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
   ReservationRecord,
   RoomRecord,
-  RoomSection,
   sortRoomsByNumber,
 } from '../types/pms';
 import {
@@ -55,7 +51,6 @@ import { AvailabilityDateRangePicker } from './AvailabilityDateRangePicker';
 import { CheckInProcessModal, CheckedInConfirmationInfo } from './CheckInProcessModal';
 import { CountrySelect } from './CountrySelect';
 import { PaymentReceiptModal } from './PaymentReceiptModal';
-import { useCms } from '../context/CmsContext';
 
 interface ReservationsCalendarViewProps {
   property: PropertyRecord;
@@ -90,10 +85,66 @@ function formatDayHeader(isoDate: string): { weekday: string; label: string } {
   const [y, m, d] = isoDate.split('-').map(Number);
   const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
   return {
-    weekday: dt.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' }),
-    label: dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }),
+    weekday: dt.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
+    label: dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
   };
 }
+
+function formatShortMonthDay(isoDate: string): string {
+  const norm = normalizeIsoDate(isoDate);
+  if (!norm) return isoDate;
+  const [y, m, d] = norm.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function formatRangeHeading(startIso: string, endIso: string): string {
+  const [sy, sm, sd] = startIso.split('-').map(Number);
+  const [ey, em, ed] = endIso.split('-').map(Number);
+  const sDate = new Date(Date.UTC(sy, (sm || 1) - 1, sd || 1));
+  const eDate = new Date(Date.UTC(ey, (em || 1) - 1, ed || 1));
+  const sPart = sDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const ePart = eDate.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  return `${sPart} – ${ePart}`;
+}
+
+type TimelineSegment =
+  | {
+      kind: 'reservation';
+      key: string;
+      span: number;
+      reservation: ReservationRecord;
+      hasConflict: boolean;
+      extraConflictCount: number;
+    }
+  | {
+      kind: 'block';
+      key: string;
+      span: number;
+      block: BlockedDateRecord;
+    }
+  | {
+      kind: 'ooo';
+      key: string;
+      span: number;
+    }
+  | {
+      kind: 'past';
+      key: string;
+      day: string;
+      span: 1;
+    }
+  | {
+      kind: 'open';
+      key: string;
+      day: string;
+      span: 1;
+    };
 
 export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> = ({
   property,
@@ -108,26 +159,19 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   onGuestCheckedIn,
   onOpenReservationFolio,
 }) => {
-  const { cms } = useCms();
   const todayIso = getLocalIsoDate();
   const tomorrowIso = addDaysIso(todayIso, 1);
 
+  const [viewMode, setViewMode] = useState<'week' | 'month'>('week');
   const [calendarStart, setCalendarStart] = useState<string>(todayIso);
-  const [gridDaysCount, setGridDaysCount] = useState<14 | 30 | 60>(30);
+  const [roomTypeFilter, setRoomTypeFilter] = useState<string>('ALL');
+  const [onlyShowAvailable, setOnlyShowAvailable] = useState(false);
   const [syncingOta, setSyncingOta] = useState(false);
+
   const [receiptTarget, setReceiptTarget] = useState<{
     reservation: ReservationRecord;
     amountPaid: number;
   } | null>(null);
-  const [cellClickMode, setCellClickMode] = useState<'book' | 'block'>('book');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sectionFilter, setSectionFilter] = useState<'ALL' | RoomSection>('ALL');
-  const [roomTypeFilter, setRoomTypeFilter] = useState<string>('ALL');
-
-  // Date-range availability search (auto-pick today and next day)
-  const [availCheckIn, setAvailCheckIn] = useState(todayIso);
-  const [availCheckOut, setAvailCheckOut] = useState(tomorrowIso);
-  const [onlyShowAvailable, setOnlyShowAvailable] = useState(false);
 
   // Action modals
   const [modalMode, setModalMode] = useState<'none' | 'block' | 'book'>('none');
@@ -136,7 +180,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
 
-  // Block Dates form (supports single room OR multi-room / property-wide hold)
+  // Block Dates form
   const [blockScope, setBlockScope] = useState<'single' | 'multi'>('single');
   const [selectedBulkRoomIds, setSelectedBulkRoomIds] = useState<string[]>([]);
   const [blockStartDate, setBlockStartDate] = useState(todayIso);
@@ -148,7 +192,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   // Quick Reservation form
   const [guestFirstName, setGuestFirstName] = useState('');
   const [guestLastName, setGuestLastName] = useState('');
-  const [guestPhone, setGuestPhone] = useState('+234 803 ');
+  const [guestPhone, setGuestPhone] = useState('+234 ');
   const [guestEmail, setGuestEmail] = useState('');
   const [guestAddress, setGuestAddress] = useState('');
   const [guestCity, setGuestCity] = useState('');
@@ -167,16 +211,12 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   const [cautionFeeNgn, setCautionFeeNgn] = useState(20000);
   const [cautionCollectedNgn, setCautionCollectedNgn] = useState(0);
   const [cautionRefunded, setCautionRefunded] = useState(false);
-  const [immediateCheckIn, setImmediateCheckIn] = useState(false);
   const [quickIdType, setQuickIdType] = useState<GuestRecord['idType']>('NIN');
   const [quickIdNumber, setQuickIdNumber] = useState('');
-  const [quickPayConfirmed, setQuickPayConfirmed] = useState(false);
-  const [quickIdVerified, setQuickIdVerified] = useState(false);
-  const [quickRoomReady, setQuickRoomReady] = useState(false);
-  const [quickKeyIssued, setQuickKeyIssued] = useState<'yes' | 'no' | null>(null);
   const [checkInTarget, setCheckInTarget] = useState<ReservationRecord | null>(null);
 
   const sortedRooms = useMemo(() => sortRoomsByNumber(rooms), [rooms]);
+  const gridDaysCount = viewMode === 'week' ? 7 : 30;
 
   const uniqueRoomTypes = useMemo(() => {
     return Array.from(new Set(sortedRooms.map((r) => r.roomType).filter(Boolean))).sort((a, b) =>
@@ -218,121 +258,59 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     return check.available ? null : check.message;
   };
 
-  // Live availability summary across the selected [availCheckIn, availCheckOut) window
-  const availabilitySummary = useMemo(() => {
-    let openCount = 0;
-    let checkedInCount = 0;
-    let bookedCount = 0;
-    let otaCount = 0;
-    let blockedCount = 0;
-    let oooCount = 0;
+  // KPI metrics matching the 5-card clean summary bar
+  const kpiStats = useMemo(() => {
+    const totalRooms = sortedRooms.length;
+    let occupiedRooms = 0;
+    let availableRooms = 0;
 
     sortedRooms.forEach((room) => {
-      if (room.occupancyStatus === 'out_of_order') {
-        oooCount += 1;
-        return;
-      }
-      const check = checkRoomDateRangeAvailability({
+      if (room.occupancyStatus === 'out_of_order') return;
+      const checkToday = checkRoomDateRangeAvailability({
         room,
-        checkInDate: availCheckIn,
-        checkOutDate: availCheckOut,
+        checkInDate: todayIso,
+        checkOutDate: tomorrowIso,
         reservations,
         blockedDates,
       });
-      if (check.available) {
-        openCount += 1;
-      } else if (check.status === 'blocked') {
-        blockedCount += 1;
-      } else if (check.conflictReservation) {
-        if (check.conflictReservation.status === 'checked_in') {
-          checkedInCount += 1;
-        } else {
-          bookedCount += 1;
-        }
-        if (isOtaReservation(check.conflictReservation)) {
-          otaCount += 1;
-        }
+      if (checkToday.available) {
+        availableRooms += 1;
+      } else if (checkToday.conflictReservation) {
+        occupiedRooms += 1;
       }
     });
 
-    // Live totals across ALL active & upcoming reservations on the calendar (not limited to 1-night search window)
-    let activeConfirmedTotal = 0;
-    let activeOtaTotal = 0;
-    reservations.forEach((res) => {
-      if (!isActiveBlockingReservation(res)) return;
-      const normIn = normalizeIsoDate(res.checkInDate);
-      const normOut = normalizeIsoDate(res.checkOutDate);
-      const effOut = normOut || normIn;
-      const isCurrentOrFuture = res.status === 'checked_in' || !effOut || effOut >= todayIso;
-      if (!isCurrentOrFuture) return;
-      if (res.status === 'confirmed' || res.status === 'pending') {
-        activeConfirmedTotal += 1;
-      }
-      if (isOtaReservation(res)) {
-        activeOtaTotal += 1;
-      }
-    });
+    const checkInsToday = activeReservations.filter(
+      (r) => normalizeIsoDate(r.checkInDate) === todayIso
+    ).length;
 
-    const total = sortedRooms.length;
-    const availNights = diffNights(availCheckIn, availCheckOut);
+    const checkOutsToday = activeReservations.filter(
+      (r) => normalizeIsoDate(r.checkOutDate) === todayIso
+    ).length;
+
+    const occupiedPct = totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0;
+    const availablePct = totalRooms > 0 ? Math.round((availableRooms / totalRooms) * 100) : 0;
+
     return {
-      total,
-      openCount,
-      checkedInCount,
-      bookedCount,
-      otaCount,
-      activeConfirmedTotal,
-      activeOtaTotal,
-      blockedCount,
-      oooCount,
-      availNights,
-      availabilityPct: total > 0 ? Math.round((openCount / total) * 100) : 0,
+      totalRooms,
+      occupiedRooms,
+      occupiedPct,
+      availableRooms,
+      availablePct,
+      checkInsToday,
+      checkOutsToday,
     };
-  }, [sortedRooms, availCheckIn, availCheckOut, reservations, blockedDates, todayIso]);
-
-  const q = searchQuery.trim().toLowerCase();
+  }, [sortedRooms, todayIso, tomorrowIso, reservations, blockedDates, activeReservations]);
 
   const filteredRooms = useMemo(() => {
     return sortedRooms.filter((room) => {
-      const sec = getRoomSection(room);
-      if (sectionFilter !== 'ALL' && sec !== sectionFilter) return false;
       if (roomTypeFilter !== 'ALL' && room.roomType !== roomTypeFilter) return false;
-      if (onlyShowAvailable && !isRoomAvailableInRange(room.id, availCheckIn, availCheckOut)) {
+      if (onlyShowAvailable && !isRoomAvailableInRange(room.id, todayIso, tomorrowIso)) {
         return false;
       }
-      if (!q) return true;
-      const roomResMatch = activeReservations.some(
-        (r) =>
-          matchesRoomRecord(room, r.roomId, r.roomNumber) &&
-          (r.guestName.toLowerCase().includes(q) ||
-            r.bookingRef.toLowerCase().includes(q) ||
-            r.channel.toLowerCase().includes(q))
-      );
-      const roomBlockMatch = blockedDates.some(
-        (b) =>
-          matchesRoomRecord(room, b.roomId, b.roomNumber) &&
-          (b.reason.toLowerCase().includes(q) || b.category.toLowerCase().includes(q))
-      );
-      return (
-        room.roomNumber.toLowerCase().includes(q) ||
-        room.name.toLowerCase().includes(q) ||
-        room.roomType.toLowerCase().includes(q) ||
-        sec.toLowerCase().includes(q) ||
-        roomResMatch ||
-        roomBlockMatch
-      );
+      return true;
     });
-  }, [
-    sortedRooms,
-    sectionFilter,
-    roomTypeFilter,
-    onlyShowAvailable,
-    availCheckIn,
-    availCheckOut,
-    q,
-    activeReservations,
-    blockedDates,
-  ]);
+  }, [sortedRooms, roomTypeFilter, onlyShowAvailable, todayIso, tomorrowIso, reservations, blockedDates]);
 
   const unassignedActiveReservations = useMemo(() => {
     return activeReservations
@@ -371,15 +349,20 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
           normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
         );
 
-      // Pairwise double-booking check
       for (let i = 0; i < roomRes.length; i += 1) {
         const a = roomRes[i];
         for (let j = i + 1; j < roomRes.length; j += 1) {
           const b = roomRes[j];
           const aIn = normalizeIsoDate(a.checkInDate);
-          const aOut = normalizeIsoDate(a.checkOutDate) > aIn ? normalizeIsoDate(a.checkOutDate) : addDaysIso(aIn, 1);
+          const aOut =
+            normalizeIsoDate(a.checkOutDate) > aIn
+              ? normalizeIsoDate(a.checkOutDate)
+              : addDaysIso(aIn, 1);
           const bIn = normalizeIsoDate(b.checkInDate);
-          const bOut = normalizeIsoDate(b.checkOutDate) > bIn ? normalizeIsoDate(b.checkOutDate) : addDaysIso(bIn, 1);
+          const bOut =
+            normalizeIsoDate(b.checkOutDate) > bIn
+              ? normalizeIsoDate(b.checkOutDate)
+              : addDaysIso(bIn, 1);
           if (aIn < bOut && bIn < aOut) {
             conflicts.push({
               id: `dup-${a.id}-${b.id}`,
@@ -390,55 +373,15 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             });
           }
         }
-
-        // Reservation vs blocked date overlap check
-        const aIn = normalizeIsoDate(a.checkInDate);
-        const aOut = normalizeIsoDate(a.checkOutDate) > aIn ? normalizeIsoDate(a.checkOutDate) : addDaysIso(aIn, 1);
-        blockedDates.forEach((blk) => {
-          if (!matchesRoomRecord(room, blk.roomId, blk.roomNumber)) return;
-          const bStart = normalizeIsoDate(blk.startDate);
-          const bEnd = normalizeIsoDate(blk.endDate) > bStart ? normalizeIsoDate(blk.endDate) : addDaysIso(bStart, 1);
-          if (aIn < bEnd && bStart < aOut) {
-            conflicts.push({
-              id: `blk-${a.id}-${blk.id}`,
-              roomNumber: room.roomNumber,
-              startDate: aIn > bStart ? aIn : bStart,
-              summary: `Reservation/Block conflict on ${room.roomNumber}: ${a.bookingRef} (${a.guestName}, ${aIn} → ${aOut}) overlaps ${blk.category} block (${bStart} → ${bEnd})`,
-              reservationId: a.id,
-            });
-          }
-        });
       }
     });
 
     return conflicts;
-  }, [sortedRooms, activeReservations, blockedDates, todayIso]);
+  }, [sortedRooms, activeReservations, todayIso]);
 
-  const filteredReservations = useMemo(() => {
+  const upcomingReservations = useMemo(() => {
     return activeReservations
       .filter((r) => {
-        const inIso = normalizeIsoDate(r.checkInDate);
-        const outIso = normalizeIsoDate(r.checkOutDate);
-        const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
-        // Keep all currently checked-in stays and all current/future reservations (including same-day departures)
-        if (r.status !== 'checked_in' && effOut < todayIso) return false;
-        if (!q) return true;
-        return (
-          r.guestName.toLowerCase().includes(q) ||
-          r.bookingRef.toLowerCase().includes(q) ||
-          r.roomNumber.toLowerCase().includes(q) ||
-          r.channel.toLowerCase().includes(q)
-        );
-      })
-      .sort((a, b) =>
-        normalizeIsoDate(a.checkInDate).localeCompare(normalizeIsoDate(b.checkInDate))
-      );
-  }, [activeReservations, q, todayIso]);
-
-  const syncedOtaReservations = useMemo(() => {
-    return activeReservations
-      .filter((r) => {
-        if (!isOtaBookingChannel(r.channel)) return false;
         const inIso = normalizeIsoDate(r.checkInDate);
         const outIso = normalizeIsoDate(r.checkOutDate);
         const effOut = outIso > inIso ? outIso : addDaysIso(inIso, 1);
@@ -449,25 +392,144 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       );
   }, [activeReservations, todayIso]);
 
-  const filteredBlocks = useMemo(() => {
+  const activeBlocks = useMemo(() => {
     return blockedDates
       .filter((b) => {
         const bStart = normalizeIsoDate(b.startDate);
         const bEnd = normalizeIsoDate(b.endDate);
         const effEnd = bEnd > bStart ? bEnd : addDaysIso(bStart, 1);
-        // Keep all active & upcoming blocked dates (including those ending today)
-        if (effEnd < todayIso) return false;
-        if (!q) return true;
-        return (
-          b.roomNumber.toLowerCase().includes(q) ||
-          b.reason.toLowerCase().includes(q) ||
-          b.category.toLowerCase().includes(q)
-        );
+        return effEnd >= todayIso;
       })
       .sort((a, b) =>
         normalizeIsoDate(a.startDate).localeCompare(normalizeIsoDate(b.startDate))
       );
-  }, [blockedDates, q, todayIso]);
+  }, [blockedDates, todayIso]);
+
+  const buildRowSegments = (room: RoomRecord): TimelineSegment[] => {
+    const segments: TimelineSegment[] = [];
+    const totalCols = calendarDays.length;
+
+    const getDayState = (day: string) => {
+      const matchingRes = activeReservations.filter((r) => {
+        if (!matchesRoomRecord(room, r.roomId, r.roomNumber)) return false;
+        const rIn = normalizeIsoDate(r.checkInDate);
+        const rOutRaw = normalizeIsoDate(r.checkOutDate);
+        if (!rIn) return false;
+        const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
+        return rIn <= day && day < rOut;
+      });
+      const blk = blockedDates.find((b) => {
+        if (!matchesRoomRecord(room, b.roomId, b.roomNumber)) return false;
+        const bStart = normalizeIsoDate(b.startDate);
+        const bEndRaw = normalizeIsoDate(b.endDate);
+        if (!bStart) return false;
+        const bEnd = bEndRaw > bStart ? bEndRaw : addDaysIso(bStart, 1);
+        return bStart <= day && day < bEnd;
+      });
+      return { matchingRes, blk };
+    };
+
+    let idx = 0;
+    while (idx < totalCols) {
+      const day = calendarDays[idx];
+      const { matchingRes, blk } = getDayState(day);
+
+      if (matchingRes.length > 0) {
+        const lead = matchingRes[0];
+        let span = 1;
+        let hasConflict = matchingRes.length > 1 || Boolean(blk);
+        let extraConflictCount = Math.max(0, matchingRes.length - 1);
+
+        while (idx + span < totalCols) {
+          const nextState = getDayState(calendarDays[idx + span]);
+          if (nextState.matchingRes.length > 0 && nextState.matchingRes[0].id === lead.id) {
+            if (nextState.matchingRes.length > 1 || Boolean(nextState.blk)) {
+              hasConflict = true;
+              extraConflictCount = Math.max(extraConflictCount, nextState.matchingRes.length - 1);
+            }
+            span += 1;
+          } else {
+            break;
+          }
+        }
+
+        segments.push({
+          kind: 'reservation',
+          key: `res-${lead.id}-${day}`,
+          span,
+          reservation: lead,
+          hasConflict,
+          extraConflictCount,
+        });
+        idx += span;
+        continue;
+      }
+
+      if (blk) {
+        let span = 1;
+        while (idx + span < totalCols) {
+          const nextState = getDayState(calendarDays[idx + span]);
+          if (nextState.matchingRes.length === 0 && nextState.blk?.id === blk.id) {
+            span += 1;
+          } else {
+            break;
+          }
+        }
+        segments.push({
+          kind: 'block',
+          key: `blk-${blk.id}-${day}`,
+          span,
+          block: blk,
+        });
+        idx += span;
+        continue;
+      }
+
+      if (room.occupancyStatus === 'out_of_order') {
+        let span = 1;
+        while (idx + span < totalCols) {
+          const nextState = getDayState(calendarDays[idx + span]);
+          if (nextState.matchingRes.length === 0 && !nextState.blk) {
+            span += 1;
+          } else {
+            break;
+          }
+        }
+        segments.push({
+          kind: 'ooo',
+          key: `ooo-${room.id}-${day}`,
+          span,
+        });
+        idx += span;
+        continue;
+      }
+
+      if (day < todayIso) {
+        segments.push({ kind: 'past', key: `past-${room.id}-${day}`, day, span: 1 });
+      } else {
+        segments.push({ kind: 'open', key: `open-${room.id}-${day}`, day, span: 1 });
+      }
+      idx += 1;
+    }
+
+    return segments;
+  };
+
+  const getReservationBarStyle = (res: ReservationRecord, hasConflict: boolean): string => {
+    if (hasConflict) {
+      return 'bg-rose-600 hover:bg-rose-700 text-white ring-1 ring-rose-900/40';
+    }
+    if (res.status === 'checked_in') {
+      return 'bg-[#1677f2] hover:bg-[#1164d1] text-white';
+    }
+    if (isOtaBookingChannel(res.channel)) {
+      return 'bg-[#f8b36b] hover:bg-[#f5a452] text-slate-900';
+    }
+    if (res.status === 'pending' || res.channel === 'Walk-in' || res.channel === 'Direct Walk-In') {
+      return 'bg-[#c4a7f5] hover:bg-[#b490f2] text-slate-900';
+    }
+    return 'bg-[#25b462] hover:bg-[#1f9e55] text-white';
+  };
 
   const openQuickAction = (mode: 'block' | 'book', room?: RoomRecord, dayIso?: string) => {
     const chosenRoom =
@@ -478,13 +540,10 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     setConflictError(null);
     setCalendarNotice(null);
     setTargetRoomId(chosenRoom.id);
+    const sDate = dayIso && dayIso >= todayIso ? dayIso : todayIso;
+    const eDate = addDaysIso(sDate, 1);
+
     if (mode === 'block') {
-      const sDate = dayIso || availCheckIn;
-      const eDate = dayIso
-        ? addDaysIso(dayIso, 1)
-        : availCheckOut > sDate
-          ? availCheckOut
-          : addDaysIso(sDate, 1);
       setBlockScope('single');
       setSelectedBulkRoomIds([chosenRoom.id]);
       setBlockStartDate(sDate);
@@ -492,12 +551,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setBlockReason('');
       setModalMode('block');
     } else {
-      const sDate = dayIso || availCheckIn;
-      const eDate = dayIso
-        ? addDaysIso(dayIso, 1)
-        : availCheckOut > sDate
-          ? availCheckOut
-          : addDaysIso(sDate, 1);
       setBookCheckIn(sDate);
       setBookCheckOut(eDate);
       setAdults(1);
@@ -508,12 +561,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setCautionFeeNgn(20000);
       setCautionCollectedNgn(0);
       setCautionRefunded(false);
-      setImmediateCheckIn(sDate <= todayIso);
       setQuickIdNumber('');
-      setQuickPayConfirmed(false);
-      setQuickIdVerified(false);
-      setQuickRoomReady(false);
-      setQuickKeyIssued(null);
       setModalMode('book');
     }
   };
@@ -675,7 +723,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setCautionCollectedNgn(0);
       setCautionRefunded(false);
       setQuickIdNumber('');
-      setQuickKeyIssued(null);
     } catch (err) {
       setConflictError(
         getUserFriendlyErrorMessage(
@@ -712,10 +759,10 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     [otaChannels]
   );
 
-  const handleSyncAllOtaNow = async () => {
+  const handleRefreshCalendar = async () => {
     if (syncingOta) return;
     if (connectedIcalChannels.length === 0) {
-      onNotify('No connected OTA iCal links found. Connect Airbnb or Booking.com in Channel Manager.');
+      onNotify('Reservation calendar is up to date.');
       return;
     }
     setSyncingOta(true);
@@ -742,11 +789,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       }
       if (failedNames.length > 0) {
         onNotify(
-          `Refreshed ${connectedIcalChannels.length - failedNames.length}/${connectedIcalChannels.length} channel feeds (${totalEvents} events; ${totalCreated} new, ${totalUpdated} updated). Failed: ${failedNames.join(', ')}.`
+          `Refreshed ${connectedIcalChannels.length - failedNames.length}/${connectedIcalChannels.length} channels (${totalCreated} new, ${totalUpdated} updated).`
         );
       } else {
         onNotify(
-          `Refreshed ${connectedIcalChannels.length} OTA channel${connectedIcalChannels.length === 1 ? '' : 's'} (${totalEvents} events checked · ${totalCreated} new, ${totalUpdated} updated)`
+          `Calendar refreshed (${totalEvents} channel events checked · ${totalCreated} new, ${totalUpdated} updated).`
         );
       }
     } finally {
@@ -754,287 +801,194 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
     }
   };
 
-  const sectionsToRender: RoomSection[] = ['Serviced Apartment', 'Hotel Rooms'];
+  const rangeStepDays = viewMode === 'week' ? 7 : 30;
+  const rangeEndIso = calendarDays[calendarDays.length - 1] || calendarStart;
+  const propertySubtitle = [property.name, property.city].filter(Boolean).join(', ');
 
   return (
-    <div className="space-y-6">
-      {/* Header & Action Controls */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div>
-          <h1 className="font-display text-xl font-bold text-slate-900">
-            {cms.pages.calendar.title}
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {cms.pages.calendar.subtitle}
-          </p>
+    <div className="space-y-5">
+      {/* Page Title */}
+      <div>
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#061f4d]">
+          Reservation Calendar
+        </h1>
+        <p className="text-sm text-slate-500 mt-0.5">{propertySubtitle}</p>
+      </div>
+
+      {/* Clean Single-Row Calendar Controls Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Left: Week / Month / Today */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setViewMode('week')}
+            className={`h-10 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+              viewMode === 'week'
+                ? 'bg-[#0a367a] text-white shadow-xs'
+                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <CalendarDays className="w-3.5 h-3.5" />
+            <span>Week</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('month')}
+            className={`h-10 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+              viewMode === 'month'
+                ? 'bg-[#0a367a] text-white shadow-xs'
+                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <CalendarIcon className="w-3.5 h-3.5" />
+            <span>Month</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCalendarStart(todayIso)}
+            className="h-10 inline-flex items-center gap-2 px-4 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer whitespace-nowrap"
+          >
+            <CalendarIcon className="w-3.5 h-3.5 text-[#0a367a]" />
+            <span>Today</span>
+          </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {connectedIcalChannels.length > 0 && (
-            <button
-              type="button"
-              disabled={syncingOta}
-              onClick={() => void handleSyncAllOtaNow()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-900 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncingOta ? 'animate-spin' : ''}`} />
-              <span>{syncingOta ? 'Refreshing Channels...' : `Refresh Channels (${connectedIcalChannels.length})`}</span>
-            </button>
-          )}
+        {/* Center: Date Range Switcher */}
+        <div className="inline-flex items-center h-10 bg-white border border-slate-200 rounded-full px-2 gap-2 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setCalendarStart(addDaysIso(calendarStart, -rangeStepDays))}
+            aria-label="Previous date range"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-100 hover:text-[#0a367a] transition-colors cursor-pointer"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="font-display text-sm font-bold text-[#061f4d] px-2 whitespace-nowrap">
+            {formatRangeHeading(calendarStart, rangeEndIso)}
+          </span>
+          <button
+            type="button"
+            onClick={() => setCalendarStart(addDaysIso(calendarStart, rangeStepDays))}
+            aria-label="Next date range"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-100 hover:text-[#0a367a] transition-colors cursor-pointer"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Right: Room Type Filter + Block Dates + New Reservation */}
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={roomTypeFilter}
+            onChange={(e) => setRoomTypeFilter(e.target.value)}
+            aria-label="Filter by room type"
+            className="h-10 bg-white border border-slate-200 rounded-lg px-3.5 text-xs font-semibold text-slate-700 focus:outline-none focus:border-[#0a367a]"
+          >
+            <option value="ALL">All Room Types</option>
+            {uniqueRoomTypes.map((rt) => (
+              <option key={rt} value={rt}>
+                {rt}
+              </option>
+            ))}
+          </select>
+
           <button
             type="button"
             onClick={() => openQuickAction('block')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            className="h-10 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors cursor-pointer whitespace-nowrap"
           >
-            <Ban className="w-3.5 h-3.5" />
-            <span>{cms.pages.calendar.ctaLabel || 'Block Room Dates'}</span>
+            <Ban className="w-3.5 h-3.5 text-slate-600" />
+            <span>Block Dates</span>
           </button>
+
           <button
             type="button"
             onClick={() => openQuickAction('book')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            className="h-10 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
           >
-            <CalendarPlus className="w-3.5 h-3.5" />
-            <span>{cms.pages.reservations.ctaLabel || 'New Reservation'}</span>
+            <Plus className="w-4 h-4" />
+            <span>New Reservation</span>
           </button>
         </div>
       </div>
 
-      {/* Live Window Availability KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 5-Column KPI Summary Strip */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#1677f2] flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Total Rooms</p>
+            <p className="font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
+              {kpiStats.totalRooms}
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Occupied</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-tight">
+                {kpiStats.occupiedRooms}
+              </span>
+              <span className="font-mono-tabular text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
+                {kpiStats.occupiedPct}%
+              </span>
+            </div>
+          </div>
+        </div>
+
         <button
           type="button"
           onClick={() => setOnlyShowAvailable((v) => !v)}
-          className={`text-left bg-white border rounded-xl p-4 transition-colors cursor-pointer ${
+          className={`text-left bg-white border rounded-xl p-4 flex items-center gap-3.5 transition-colors cursor-pointer ${
             onlyShowAvailable
-              ? 'border-emerald-600 bg-emerald-50/40'
-              : 'border-slate-200 hover:border-emerald-400'
+              ? 'border-[#0a367a] bg-blue-50/40'
+              : 'border-slate-200 hover:border-blue-300'
           }`}
         >
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span className="font-medium">Available Rooms</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          <div className="w-11 h-11 rounded-xl bg-sky-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="font-mono-tabular text-2xl font-bold text-slate-900">
-              {availabilitySummary.openCount}
-            </span>
-            <span className="font-mono-tabular text-xs text-slate-500">
-              / {availabilitySummary.total} ({availabilitySummary.availabilityPct}%)
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-500">
-            {onlyShowAvailable ? 'Filtering to available only · Click to show all' : `Open for ${availabilitySummary.availNights} night${availabilitySummary.availNights === 1 ? '' : 's'} · Click to filter`}
-          </p>
-        </button>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span className="font-medium">In-House / Checked In</span>
-            <BedDouble className="w-4 h-4 text-emerald-700" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="font-mono-tabular text-2xl font-bold text-slate-900">
-              {availabilitySummary.checkedInCount}
-            </span>
-            <span className="text-xs text-slate-500">occupied rooms</span>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-500">
-            Active stays during {availCheckIn} → {availCheckOut}
-          </p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span className="font-medium">Confirmed &amp; OTA Booked</span>
-            <CalendarCheck2 className="w-4 h-4 text-amber-600" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="font-mono-tabular text-2xl font-bold text-slate-900">
-              {availabilitySummary.activeConfirmedTotal}
-            </span>
-            <span className="font-mono-tabular text-xs text-orange-700 font-medium">
-              {availabilitySummary.activeOtaTotal} Airbnb / OTA
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-500">
-            {availabilitySummary.bookedCount > 0
-              ? `${availabilitySummary.bookedCount} in selected range · Live PMS & channel stays`
-              : 'Live PMS & channel reservations'}
-          </p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span className="font-medium">Blocked Holds &amp; OOO</span>
-            <Ban className="w-4 h-4 text-rose-700" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="font-mono-tabular text-2xl font-bold text-slate-900">
-              {availabilitySummary.blockedCount + availabilitySummary.oooCount}
-            </span>
-            <span className="font-mono-tabular text-xs text-slate-500">
-              {availabilitySummary.blockedCount} holds · {availabilitySummary.oooCount} OOO
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-500">
-            {blockedDates.length} total active block{blockedDates.length === 1 ? '' : 's'} on calendar
-          </p>
-        </div>
-      </div>
-
-      {/* Search & Date-Range Availability Filter Bar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-3 text-xs items-end">
-          <div className="lg:col-span-3">
-            <label className="block font-medium text-slate-600 mb-1">
-              Search Calendar
-            </label>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Guest, Ref, Room, Airbnb, Hold..."
-                className="w-full h-9 pl-8 pr-3 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
-              />
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Available</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-tight">
+                {kpiStats.availableRooms}
+              </span>
+              <span className="font-mono-tabular text-[11px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-[#0a367a]">
+                {kpiStats.availablePct}%
+              </span>
             </div>
           </div>
+        </button>
 
-          <div className="lg:col-span-2">
-            <label className="block font-medium text-slate-600 mb-1">Property Section</label>
-            <select
-              value={sectionFilter}
-              onChange={(e) => setSectionFilter(e.target.value as 'ALL' | RoomSection)}
-              className="w-full h-9 border border-slate-200 rounded-lg px-2.5 bg-white"
-            >
-              <option value="ALL">All Sections</option>
-              <option value="Serviced Apartment">Serviced Apartments</option>
-              <option value="Hotel Rooms">Hotel Rooms</option>
-            </select>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
+            <CalendarDays className="w-5 h-5" />
           </div>
-
-          <div className="lg:col-span-2">
-            <label className="block font-medium text-slate-600 mb-1">Room Type</label>
-            <select
-              value={roomTypeFilter}
-              onChange={(e) => setRoomTypeFilter(e.target.value)}
-              className="w-full h-9 border border-slate-200 rounded-lg px-2.5 bg-white"
-            >
-              <option value="ALL">All Room Types</option>
-              {uniqueRoomTypes.map((rt) => (
-                <option key={rt} value={rt}>
-                  {rt}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="lg:col-span-2">
-            <label className="block font-medium text-slate-600 mb-1">Check-In</label>
-            <input
-              type="date"
-              value={availCheckIn}
-              onChange={(e) => {
-                const nextIn = e.target.value;
-                if (!nextIn) return;
-                setAvailCheckIn(nextIn);
-                if (availCheckOut <= nextIn) {
-                  setAvailCheckOut(addDaysIso(nextIn, 1));
-                }
-              }}
-              className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular"
-            />
-          </div>
-
-          <div className="lg:col-span-2">
-            <label className="block font-medium text-slate-600 mb-1">
-              Check-Out ({availabilitySummary.availNights}n)
-            </label>
-            <input
-              type="date"
-              min={addDaysIso(availCheckIn, 1)}
-              value={availCheckOut}
-              onChange={(e) => {
-                const nextOut = e.target.value;
-                if (!nextOut) return;
-                setAvailCheckOut(nextOut <= availCheckIn ? addDaysIso(availCheckIn, 1) : nextOut);
-              }}
-              className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular"
-            />
-          </div>
-
-          <div className="lg:col-span-1">
-            <button
-              type="button"
-              onClick={() => setCalendarStart(availCheckIn)}
-              title="Jump timeline grid to Check-In date"
-              className="w-full h-9 px-2.5 border border-slate-200 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-800 text-slate-700 font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-            >
-              View
-            </button>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Check-Ins Today</p>
+            <p className="font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
+              {kpiStats.checkInsToday}
+            </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-slate-100 text-xs">
-          <div className="flex flex-wrap items-center gap-4">
-            <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={onlyShowAvailable}
-                onChange={(e) => setOnlyShowAvailable(e.target.checked)}
-                className="rounded border-slate-300 text-emerald-600"
-              />
-              <span>
-                Only open rooms ({availCheckIn} → {availCheckOut})
-              </span>
-            </label>
-            {(searchQuery || sectionFilter !== 'ALL' || roomTypeFilter !== 'ALL' || onlyShowAvailable) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery('');
-                  setSectionFilter('ALL');
-                  setRoomTypeFilter('ALL');
-                  setOnlyShowAvailable(false);
-                }}
-                className="text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
-              >
-                Reset Filters
-              </button>
-            )}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3.5 col-span-2 md:col-span-1">
+          <div className="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+            <LogOut className="w-5 h-5" />
           </div>
-
-          <div className="flex flex-wrap items-center gap-3.5 text-[11px] text-slate-600">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-emerald-600 inline-block" />
-              Checked In
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block" />
-              Confirmed
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-orange-500 inline-block" />
-              Airbnb / OTA
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-violet-600 inline-block" />
-              Pending
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-rose-700 inline-block" />
-              Blocked Hold
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-slate-400 inline-block" />
-              Out of Order
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm border border-slate-300 bg-white inline-block" />
-              Open Date
-            </span>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Check-Outs Today</p>
+            <p className="font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
+              {kpiStats.checkOutsToday}
+            </p>
           </div>
         </div>
       </div>
@@ -1042,7 +996,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       {calendarNotice && (
         <div
           role="alert"
-          className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-900 flex items-center justify-between gap-3 shadow-xs"
+          className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-900 flex items-center justify-between gap-3"
         >
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -1061,318 +1015,113 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       {calendarConflicts.length > 0 && (
         <div
           role="alert"
-          className="bg-rose-50 border border-rose-300 rounded-xl px-4 py-3.5 text-xs text-rose-950 space-y-2 shadow-xs"
+          className="bg-rose-50 border border-rose-300 rounded-xl px-4 py-3 text-xs text-rose-950 space-y-2"
         >
           <div className="flex items-center gap-2 font-bold text-rose-800">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>
               {calendarConflicts.length} Calendar Overlap Conflict
-              {calendarConflicts.length === 1 ? '' : 's'} Detected — Resolve to Prevent Double Bookings
+              {calendarConflicts.length === 1 ? '' : 's'} Detected
             </span>
           </div>
           <div className="space-y-1.5">
-            {calendarConflicts.slice(0, 5).map((conflict) => (
+            {calendarConflicts.slice(0, 4).map((conflict) => (
               <div
                 key={conflict.id}
-                className="flex flex-wrap items-center justify-between gap-2 bg-white/80 border border-rose-200 rounded-lg px-3 py-1.5"
+                className="flex flex-wrap items-center justify-between gap-2 bg-white border border-rose-200 rounded-lg px-3 py-1.5"
               >
                 <span className="text-[11px] font-medium text-rose-900">{conflict.summary}</span>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setCalendarStart(conflict.startDate)}
-                    className="px-2 py-1 rounded bg-rose-700 hover:bg-rose-800 text-white text-[10px] font-semibold cursor-pointer"
-                  >
-                    Jump to {conflict.startDate}
-                  </button>
-                  {conflict.reservationId && onOpenReservationFolio && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenReservationFolio(conflict.reservationId!, 'front_desk')}
-                      className="px-2 py-1 rounded border border-rose-300 bg-white hover:bg-rose-50 text-rose-800 text-[10px] font-semibold cursor-pointer"
-                    >
-                      Open Folio
-                    </button>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setCalendarStart(conflict.startDate)}
+                  className="px-2.5 py-1 rounded bg-rose-700 hover:bg-rose-800 text-white text-[10px] font-semibold cursor-pointer"
+                >
+                  Jump to {conflict.startDate}
+                </button>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Synced OTA / Airbnb Bookings Quick-Jump Strip */}
-      {syncedOtaReservations.length > 0 && (
-        <div className="bg-orange-50/75 border border-orange-200 rounded-xl px-4 py-3 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-orange-950">
-              <span className="w-2 h-2 rounded-full bg-orange-500" />
-              <span>
-                {syncedOtaReservations.length} Active OTA / Airbnb Reservation
-                {syncedOtaReservations.length === 1 ? '' : 's'} on Calendar
-              </span>
-            </div>
-            <span className="text-[11px] text-orange-800">
-              Click any booking below to jump the calendar matrix directly to its dates
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {syncedOtaReservations.map((res) => {
-              const inIso = normalizeIsoDate(res.checkInDate) || res.checkInDate;
-              const outIso = normalizeIsoDate(res.checkOutDate) || res.checkOutDate;
-              const sourceLabel = formatBookingSourceLabel(res.channel);
-              const inVisibleGrid =
-                calendarDays.length > 0 &&
-                inIso <= calendarDays[calendarDays.length - 1] &&
-                outIso > calendarDays[0];
-              return (
-                <button
-                  key={res.id}
-                  type="button"
-                  onClick={() => {
-                    setCalendarStart(inIso);
-                    setOnlyShowAvailable(false);
-                    setSectionFilter('ALL');
-                    setRoomTypeFilter('ALL');
-                    setSearchQuery('');
-                  }}
-                  className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left text-[11px] transition-colors cursor-pointer ${
-                    inVisibleGrid
-                      ? 'bg-white border-orange-300 text-orange-950 hover:bg-orange-100/70'
-                      : 'bg-orange-100/80 border-orange-300 text-orange-950 hover:bg-orange-200/80'
-                  }`}
-                  title={`Jump calendar to ${res.guestName} (${sourceLabel}) · ${inIso} → ${outIso}`}
-                >
-                  <span className="font-bold text-orange-700">{sourceLabel}</span>
-                  <span className="font-mono-tabular font-semibold text-slate-900">
-                    {res.roomNumber || 'Unassigned'}
-                  </span>
-                  <span className="font-mono-tabular text-slate-600">
-                    {inIso} → {outIso}
-                  </span>
-                  <span className="text-slate-700 truncate max-w-[130px]">{res.guestName}</span>
-                  {!inVisibleGrid && (
-                    <span className="text-[10px] font-bold text-orange-700 underline">
-                      Jump
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Advanced 14-Day / 30-Day / 60-Day Horizontal Availability Matrix */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/70">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <CalendarIcon className="w-4 h-4 text-slate-600" />
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                {gridDaysCount}-Day Room Availability Matrix
-              </h2>
-            </div>
-
-            {/* Horizon Switcher */}
-            <div className="inline-flex items-center p-0.5 bg-slate-200/70 rounded-lg text-[11px] font-semibold">
-              <button
-                type="button"
-                onClick={() => setGridDaysCount(14)}
-                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  gridDaysCount === 14
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                14 Days
-              </button>
-              <button
-                type="button"
-                onClick={() => setGridDaysCount(30)}
-                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  gridDaysCount === 30
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                30 Days
-              </button>
-              <button
-                type="button"
-                onClick={() => setGridDaysCount(60)}
-                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  gridDaysCount === 60
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                60 Days
-              </button>
-            </div>
-
-            {/* Open Cell Quick-Click Action Mode */}
-            <div className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
-              <span>Click open date to:</span>
-              <div className="inline-flex items-center p-0.5 bg-slate-200/70 rounded-lg font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setCellClickMode('book')}
-                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                    cellClickMode === 'book'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Book
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCellClickMode('block')}
-                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                    cellClickMode === 'block'
-                      ? 'bg-rose-700 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Block
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => setCalendarStart(addDaysIso(calendarStart, -7))}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg font-medium text-slate-700 cursor-pointer whitespace-nowrap"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-              <span>Prev</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setCalendarStart(todayIso)}
-              className="px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg font-medium text-slate-700 cursor-pointer whitespace-nowrap"
-            >
-              Today
-            </button>
-            <input
-              type="date"
-              value={calendarStart}
-              onChange={(e) => e.target.value && setCalendarStart(e.target.value)}
-              className="border border-slate-200 bg-white rounded-lg px-2.5 py-1 font-mono-tabular text-xs"
-            />
-            <button
-              type="button"
-              onClick={() => setCalendarStart(addDaysIso(calendarStart, 7))}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg font-medium text-slate-700 cursor-pointer whitespace-nowrap"
-            >
-              <span>Next</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setCalendarStart(addDaysIso(calendarStart, 30))}
-              className="px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg font-medium text-slate-700 cursor-pointer whitespace-nowrap"
-            >
-              +30d
-            </button>
-          </div>
-        </div>
-
+      {/* Main Clean Room Timeline Grid Card */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
         <div className="overflow-x-auto">
           <table
             className={`w-full text-left border-collapse ${
-              gridDaysCount === 60
-                ? 'min-w-[3480px]'
-                : gridDaysCount === 30
-                  ? 'min-w-[1860px]'
-                  : 'min-w-[1040px]'
+              viewMode === 'month' ? 'min-w-[2280px]' : 'min-w-[860px]'
             }`}
           >
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600">
-                <th className="py-2.5 px-4 w-64 sticky left-0 bg-slate-50 z-10 border-r border-slate-200">
-                  Room / Rate &amp; Quick Action
+              <tr className="bg-[#0d2247] text-white text-xs font-bold">
+                <th className="py-3.5 px-4 w-28 sticky left-0 bg-[#0d2247] z-20 border-r border-white/15">
+                  Room
+                </th>
+                <th className="py-3.5 px-4 w-40 sticky left-28 bg-[#0d2247] z-20 border-r border-white/15">
+                  Room Type
                 </th>
                 {calendarDays.map((day) => {
                   const hdr = formatDayHeader(day);
                   const isToday = day === todayIso;
-                  const isInSearchRange = day >= availCheckIn && day < availCheckOut;
                   return (
                     <th
                       key={day}
-                      className={`py-2 px-1.5 text-center border-r border-slate-100 last:border-r-0 ${
-                        isToday
-                          ? 'bg-emerald-100/80 text-emerald-900'
-                          : isInSearchRange
-                            ? 'bg-emerald-50/70 text-emerald-800'
-                            : ''
+                      className={`py-2.5 px-2 text-center border-r border-white/10 last:border-r-0 ${
+                        isToday ? 'bg-[#154596]' : ''
                       }`}
                     >
-                      <div className="text-[10px] font-medium uppercase tracking-wide">
-                        {hdr.weekday}
+                      <div className="text-[11px] font-semibold text-blue-100">{hdr.weekday}</div>
+                      <div className="text-xs font-bold text-white mt-0.5 whitespace-nowrap">
+                        {hdr.label}
                       </div>
-                      <div className="font-mono-tabular text-[11px]">{hdr.label}</div>
                     </th>
                   );
                 })}
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-200 text-xs">
+              {/* Optional Unassigned Reservations Row */}
               {unassignedActiveReservations.length > 0 && (
-                <tr className="bg-violet-50/60">
-                  <td className="py-2.5 px-4 sticky left-0 bg-violet-50 z-10 border-r border-violet-200">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-violet-950 text-xs">
-                        Unassigned Bookings
-                      </span>
-                      <span className="font-mono-tabular text-[10px] font-bold text-violet-700">
-                        {unassignedActiveReservations.length} pending
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-violet-700 mt-0.5">
-                      Click any booking to assign a room
+                <tr className="bg-violet-50/50">
+                  <td
+                    colSpan={2}
+                    className="py-3 px-4 sticky left-0 bg-violet-50 z-10 border-r border-slate-200"
+                  >
+                    <p className="font-bold text-violet-950">Unassigned</p>
+                    <p className="text-[11px] text-violet-700">
+                      {unassignedActiveReservations.length} awaiting room
                     </p>
                   </td>
                   {calendarDays.map((day) => {
-                    const dayUnassigned = unassignedActiveReservations.filter((r) => {
+                    const dayItems = unassignedActiveReservations.filter((r) => {
                       const rIn = normalizeIsoDate(r.checkInDate);
                       const rOutRaw = normalizeIsoDate(r.checkOutDate);
                       if (!rIn) return false;
                       const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
                       return rIn <= day && day < rOut;
                     });
-                    if (dayUnassigned.length === 0) {
+                    if (dayItems.length === 0) {
                       return (
                         <td
                           key={day}
-                          className="p-1 border-r border-violet-100 last:border-r-0 align-middle text-center text-[10px] text-violet-300"
-                        >
-                          —
-                        </td>
+                          className="p-1.5 border-r border-slate-100 last:border-r-0"
+                        />
                       );
                     }
-                    const lead = dayUnassigned[0];
+                    const lead = dayItems[0];
                     return (
                       <td
                         key={day}
-                        title={dayUnassigned
-                          .map(
-                            (r) =>
-                              `${r.bookingRef} · ${r.guestName} (${r.requestedRoomType || 'Unassigned'}) · ${normalizeIsoDate(r.checkInDate)} → ${normalizeIsoDate(r.checkOutDate)}`
-                          )
-                          .join(' | ')}
-                        className="p-1 border-r border-violet-100 last:border-r-0 align-middle"
+                        className="p-1.5 border-r border-slate-100 last:border-r-0 align-middle"
                       >
                         <button
                           type="button"
                           onClick={() => onOpenReservationFolio?.(lead.id, 'front_desk')}
-                          className="w-full text-left px-1.5 py-2 rounded bg-violet-600 hover:bg-violet-700 text-white text-[10px] font-semibold truncate cursor-pointer"
+                          className="w-full text-left px-2.5 py-2 rounded-lg bg-[#c4a7f5] hover:bg-[#b490f2] text-slate-900 font-semibold truncate cursor-pointer"
                         >
-                          {lead.guestName.split(' ')[0]}
-                          {dayUnassigned.length > 1 ? ` +${dayUnassigned.length - 1}` : ''}
+                          {lead.guestName}
+                          {dayItems.length > 1 ? ` +${dayItems.length - 1}` : ''}
                         </button>
                       </td>
                     );
@@ -1380,490 +1129,397 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                 </tr>
               )}
 
-              {sectionsToRender.map((sectionName) => {
-                const sectionRooms = filteredRooms.filter((r) => getRoomSection(r) === sectionName);
-                if (sectionRooms.length === 0) return null;
+              {filteredRooms.map((room) => {
+                const isOoo = room.occupancyStatus === 'out_of_order';
+                const segments = buildRowSegments(room);
+
                 return (
-                  <React.Fragment key={sectionName}>
-                    <tr className="bg-slate-100/80">
-                      <td
-                        colSpan={calendarDays.length + 1}
-                        className="py-1.5 px-4 text-[11px] font-bold tracking-wide text-slate-700 uppercase"
-                      >
-                        {sectionName === 'Serviced Apartment'
-                          ? 'Serviced Apartment Section'
-                          : 'Hotel Rooms'}{' '}
-                        · {sectionRooms.length}
-                      </td>
-                    </tr>
-                    {sectionRooms.map((room) => {
-                      const rangeCheck = checkRoomDateRangeAvailability({
-                        room,
-                        checkInDate: availCheckIn,
-                        checkOutDate: availCheckOut,
-                        reservations,
-                        blockedDates,
-                      });
-                      const rangeStatusText =
-                        room.occupancyStatus === 'out_of_order'
-                          ? 'OOO'
-                          : rangeCheck.available
-                            ? 'Open'
-                            : rangeCheck.status === 'blocked'
-                              ? 'Blocked'
-                              : 'Booked';
-                      const rangeStatusColor =
-                        room.occupancyStatus === 'out_of_order'
-                          ? 'text-slate-500'
-                          : rangeCheck.available
-                            ? 'text-emerald-700'
-                            : rangeCheck.status === 'blocked'
-                              ? 'text-rose-700'
-                              : 'text-amber-700';
+                  <tr key={room.id} className="hover:bg-slate-50/50 transition-colors">
+                    {/* Room Column */}
+                    <td className="py-3.5 px-4 sticky left-0 bg-white z-10 border-r border-slate-200 whitespace-nowrap">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                            isOoo ? 'bg-slate-400' : 'bg-emerald-500'
+                          }`}
+                        />
+                        <span className="font-mono-tabular text-sm font-bold text-[#061f4d]">
+                          {room.roomNumber}
+                        </span>
+                      </div>
+                    </td>
+
+                    {/* Room Type Column */}
+                    <td className="py-3.5 px-4 sticky left-28 bg-white z-10 border-r border-slate-200 text-slate-600 font-medium">
+                      <span className="block truncate max-w-[140px]" title={room.roomType}>
+                        {room.roomType}
+                      </span>
+                    </td>
+
+                    {/* Spanning Timeline Segments */}
+                    {segments.map((seg) => {
+                      if (seg.kind === 'reservation') {
+                        const res = seg.reservation;
+                        const inShort = formatShortMonthDay(res.checkInDate);
+                        const outShort = formatShortMonthDay(res.checkOutDate);
+                        const barStyle = getReservationBarStyle(res, seg.hasConflict);
+                        const sourceLabel = isOtaBookingChannel(res.channel)
+                          ? ` · ${formatBookingSourceLabel(res.channel)}`
+                          : '';
+
+                        return (
+                          <td
+                            key={seg.key}
+                            colSpan={seg.span}
+                            className="p-1.5 border-r border-slate-100 last:border-r-0 align-middle"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
+                              title={`${res.bookingRef} · ${res.guestName}${sourceLabel} · Check-in: ${inShort} · Check-out: ${outShort}`}
+                              className={`w-full text-left px-3 py-2 rounded-lg transition-colors shadow-2xs cursor-pointer ${barStyle}`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-xs truncate">
+                                  {res.guestName}
+                                  {seg.extraConflictCount > 0
+                                    ? ` (+${seg.extraConflictCount} overlap)`
+                                    : ''}
+                                </span>
+                                {isOtaBookingChannel(res.channel) && (
+                                  <span className="text-[10px] font-bold opacity-85 shrink-0">
+                                    {formatBookingSourceLabel(res.channel)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] opacity-90 truncate mt-0.5">
+                                Check-in: {inShort} · Check-out: {outShort}
+                              </div>
+                            </button>
+                          </td>
+                        );
+                      }
+
+                      if (seg.kind === 'block') {
+                        const blk = seg.block;
+                        return (
+                          <td
+                            key={seg.key}
+                            colSpan={seg.span}
+                            className="p-1.5 border-r border-slate-100 last:border-r-0 align-middle"
+                          >
+                            <button
+                              type="button"
+                              disabled={busyId === blk.id}
+                              onClick={() => handleUnblock(blk)}
+                              title={`${blk.category}: ${blk.reason} (${blk.startDate} → ${blk.endDate}) — Click to remove block`}
+                              className="w-full py-3 px-3 rounded-lg bg-[repeating-linear-gradient(-45deg,#f1f5f9,#f1f5f9_8px,#e2e8f0_8px,#e2e8f0_16px)] border border-slate-200 text-slate-700 hover:border-slate-400 text-xs font-semibold text-center truncate cursor-pointer"
+                            >
+                              {blk.category}
+                            </button>
+                          </td>
+                        );
+                      }
+
+                      if (seg.kind === 'ooo') {
+                        return (
+                          <td
+                            key={seg.key}
+                            colSpan={seg.span}
+                            className="p-1.5 border-r border-slate-100 last:border-r-0 align-middle"
+                          >
+                            <div
+                              aria-disabled="true"
+                              className="w-full py-3 px-3 rounded-lg bg-[repeating-linear-gradient(-45deg,#f1f5f9,#f1f5f9_8px,#e2e8f0_8px,#e2e8f0_16px)] border border-slate-200 text-slate-600 text-xs font-semibold text-center cursor-not-allowed select-none"
+                            >
+                              Out of Order
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      if (seg.kind === 'past') {
+                        return (
+                          <td
+                            key={seg.key}
+                            title={`${seg.day} is unavailable for selection`}
+                            className="p-1.5 border-r border-slate-100 last:border-r-0 bg-slate-100/75 cursor-not-allowed"
+                          >
+                            <div className="h-11 rounded-lg bg-slate-100/90" />
+                          </td>
+                        );
+                      }
 
                       return (
-                      <tr key={room.id} className="hover:bg-slate-50/40">
-                        <td className="py-2.5 px-4 sticky left-0 bg-white z-10 border-r border-slate-200">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="font-mono-tabular font-bold text-slate-900">
-                                {room.roomNumber}
-                              </span>
-                              <span className={`text-[10px] font-semibold ${rangeStatusColor}`}>
-                                · {rangeStatusText}
-                              </span>
-                            </div>
-                            <span className="font-mono-tabular text-[11px] font-semibold text-emerald-700 shrink-0">
-                              {formatNgn(room.nightlyRateNgn)}
-                            </span>
-                          </div>
-                          <div className="mt-1 flex items-center justify-between gap-2">
-                            <p className="text-[11px] text-slate-500 truncate max-w-[140px]">
-                              {room.roomType}
-                            </p>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => openQuickAction('book', room)}
-                                title={`Book ${room.roomNumber} for ${availCheckIn} → ${availCheckOut}`}
-                                className="px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50 border border-emerald-200 rounded transition-colors cursor-pointer"
-                              >
-                                Book
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openQuickAction('block', room)}
-                                title={`Block dates for ${room.roomNumber}`}
-                                className="px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 rounded transition-colors cursor-pointer"
-                              >
-                                Block
-                              </button>
-                            </div>
-                          </div>
+                        <td
+                          key={seg.key}
+                          className="p-1.5 border-r border-slate-100 last:border-r-0 align-middle"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => openQuickAction('book', room, seg.day)}
+                            title={`Reserve ${room.roomNumber} starting ${seg.day}`}
+                            className="w-full h-11 rounded-lg hover:bg-blue-50/70 hover:border hover:border-dashed hover:border-[#0a367a]/40 text-transparent hover:text-[#0a367a] text-xs font-bold flex items-center justify-center transition-colors cursor-pointer"
+                          >
+                            +
+                          </button>
                         </td>
-
-                        {calendarDays.map((day) => {
-                          const matchingRes = activeReservations.filter((r) => {
-                            if (!matchesRoomRecord(room, r.roomId, r.roomNumber)) return false;
-                            const rIn = normalizeIsoDate(r.checkInDate);
-                            const rOutRaw = normalizeIsoDate(r.checkOutDate);
-                            if (!rIn) return false;
-                            const rOut = rOutRaw > rIn ? rOutRaw : addDaysIso(rIn, 1);
-                            return rIn <= day && day < rOut;
-                          });
-                          const res = matchingRes[0];
-                          const blk = blockedDates.find((b) => {
-                            if (!matchesRoomRecord(room, b.roomId, b.roomNumber)) return false;
-                            const bStart = normalizeIsoDate(b.startDate);
-                            const bEndRaw = normalizeIsoDate(b.endDate);
-                            if (!bStart) return false;
-                            const bEnd = bEndRaw > bStart ? bEndRaw : addDaysIso(bStart, 1);
-                            return bStart <= day && day < bEnd;
-                          });
-
-                          if (res) {
-                            const hasConflict = matchingRes.length > 1 || Boolean(blk);
-                            return (
-                              <td
-                                key={day}
-                                className="p-1 border-r border-slate-100 last:border-r-0 align-middle"
-                              >
-                                <div className="space-y-1">
-                                  {matchingRes.map((item) => {
-                                    const isCheckedIn = item.status === 'checked_in';
-                                    const isPending = item.status === 'pending';
-                                    const isOta = isOtaBookingChannel(item.channel);
-                                    const cellColor = hasConflict
-                                      ? 'bg-rose-600 ring-1 ring-rose-900/50'
-                                      : isCheckedIn
-                                        ? 'bg-emerald-600'
-                                        : isPending
-                                          ? 'bg-violet-600'
-                                          : isOta
-                                            ? 'bg-orange-500'
-                                            : 'bg-amber-500';
-                                    const sourceTag = isOta
-                                      ? ` · ${formatBookingSourceLabel(item.channel)}`
-                                      : '';
-                                    const conflictSuffix =
-                                      matchingRes.length > 1
-                                        ? ` [OVERLAP: ${matchingRes.map((m) => m.bookingRef).join(' & ')}]`
-                                        : blk
-                                          ? ` [OVERLAPS BLOCK: ${blk.category}]`
-                                          : '';
-                                    return (
-                                      <button
-                                        key={item.id}
-                                        type="button"
-                                        title={`${item.bookingRef} · ${item.guestName} (${item.status}${sourceTag}) · ${normalizeIsoDate(item.checkInDate)} → ${normalizeIsoDate(item.checkOutDate)}${conflictSuffix} — Click to open Folio`}
-                                        onClick={() => onOpenReservationFolio?.(item.id, 'front_desk')}
-                                        className={`w-full text-left px-1.5 ${
-                                          matchingRes.length > 1 ? 'py-1' : 'py-2'
-                                        } rounded text-[10px] font-semibold truncate text-white cursor-pointer transition-opacity hover:opacity-90 ${cellColor}`}
-                                      >
-                                        {item.guestName.split(' ')[0]}
-                                        {isOta ? ` (${formatBookingSourceLabel(item.channel).slice(0, 3)})` : ''}
-                                        {blk ? ' (!)' : ''}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </td>
-                            );
-                          }
-
-                          if (blk) {
-                            return (
-                              <td
-                                key={day}
-                                title={`${blk.category}: ${blk.reason} (${blk.startDate} → ${blk.endDate}) — Click to unblock`}
-                                className="p-1 border-r border-slate-100 last:border-r-0 align-middle"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => handleUnblock(blk)}
-                                  disabled={busyId === blk.id}
-                                  className="w-full px-1.5 py-2 rounded bg-rose-700 hover:bg-rose-800 text-white text-[10px] font-semibold truncate cursor-pointer"
-                                >
-                                  {blk.category}
-                                </button>
-                              </td>
-                            );
-                          }
-
-                          if (room.occupancyStatus === 'out_of_order') {
-                            return (
-                              <td
-                                key={day}
-                                title={`${room.roomNumber} is currently Out of Order — unavailable`}
-                                className="p-1 border-r border-slate-100 last:border-r-0 align-middle bg-slate-100/80"
-                              >
-                                <button
-                                  type="button"
-                                  disabled
-                                  aria-disabled="true"
-                                  className="w-full py-2 rounded bg-slate-200/80 text-slate-400 text-[10px] font-semibold truncate cursor-not-allowed"
-                                >
-                                  OOO
-                                </button>
-                              </td>
-                            );
-                          }
-
-                          const isPastDay = day < todayIso;
-                          if (isPastDay) {
-                            return (
-                              <td
-                                key={day}
-                                title={`${day} is in the past — unavailable for selection`}
-                                className="p-1 border-r border-slate-100 last:border-r-0 align-middle bg-slate-100/70"
-                              >
-                                <button
-                                  type="button"
-                                  disabled
-                                  aria-disabled="true"
-                                  className="w-full py-2 rounded border border-slate-200 bg-slate-100 text-slate-300 text-[10px] font-medium cursor-not-allowed"
-                                >
-                                  —
-                                </button>
-                              </td>
-                            );
-                          }
-
-                          const isInSearchRange = day >= availCheckIn && day < availCheckOut;
-                          return (
-                            <td
-                              key={day}
-                              className={`p-1 border-r border-slate-100 last:border-r-0 align-middle ${
-                                isInSearchRange ? 'bg-emerald-50/40' : ''
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => openQuickAction(cellClickMode, room, day)}
-                                title={
-                                  cellClickMode === 'block'
-                                    ? `Block ${room.roomNumber} starting ${day}`
-                                    : `Open ${room.roomNumber} on ${day} — Click to reserve`
-                                }
-                                className={`w-full py-2 rounded border border-dashed text-[10px] font-medium transition-colors cursor-pointer ${
-                                  cellClickMode === 'block'
-                                    ? 'border-rose-200/80 hover:border-rose-600 hover:bg-rose-50 text-slate-400 hover:text-rose-700'
-                                    : 'border-slate-200 hover:border-emerald-600 hover:bg-emerald-50 text-slate-400 hover:text-emerald-700'
-                                }`}
-                              >
-                                {cellClickMode === 'block' ? '×' : '+'}
-                              </button>
-                            </td>
-                          );
-                        })}
-                      </tr>
                       );
                     })}
-                  </React.Fragment>
+                  </tr>
                 );
               })}
 
               {filteredRooms.length === 0 && (
                 <tr>
-                  <td colSpan={calendarDays.length + 1} className="py-10 text-center text-xs text-slate-500">
-                    No rooms match your current search or availability filter.
+                  <td
+                    colSpan={calendarDays.length + 2}
+                    className="py-12 text-center text-sm text-slate-500"
+                  >
+                    No rooms match your selected filter.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-      </div>
 
-      {/* Bottom Split: Blocked Date Holds & Active Reservations */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Blocked Dates Ledger */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h3 className="font-display text-sm font-bold text-slate-900">
-                Blocked Dates &amp; Holds
-              </h3>
-              <p className="text-xs text-slate-500">
-                Owner holds, maintenance windows, and deep cleaning schedules
-              </p>
-            </div>
+        {/* Clean Footer Legend + Print & Refresh Controls */}
+        <div className="px-5 py-4 border-t border-slate-200 bg-white flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-5 text-xs font-semibold text-slate-700">
+            <span className="inline-flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-[#25b462] inline-block" />
+              Confirmed
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-[#1677f2] inline-block" />
+              Checked In
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-[#f59e0b] inline-block" />
+              OTA Booking
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-slate-400 inline-block" />
+              Out of Order
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full border border-slate-300 bg-white inline-block" />
+              Available
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2.5 no-print">
             <button
               type="button"
-              onClick={() => openQuickAction('block')}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-slate-900 hover:underline cursor-pointer"
+              onClick={() => window.print()}
+              className="h-10 inline-flex items-center gap-2 px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-[#061f4d] transition-colors cursor-pointer whitespace-nowrap"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Block</span>
+              <Printer className="w-4 h-4 text-[#0a367a]" />
+              <span>Print Calendar</span>
             </button>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {filteredBlocks.map((blk) => (
-              <div
-                key={blk.id}
-                className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-slate-50"
-              >
-                <div className="space-y-0.5 min-w-0">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="font-mono-tabular font-bold text-slate-900">
-                      {blk.roomNumber}
-                    </span>
-                    <span className="text-rose-700 font-semibold">{blk.category}</span>
-                  </div>
-                  <p className="text-xs text-slate-700 truncate">{blk.reason}</p>
-                  <p className="font-mono-tabular text-[11px] text-slate-500">
-                    {blk.startDate} → {blk.endDate}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setCalendarStart(normalizeIsoDate(blk.startDate) || todayIso)}
-                    className="px-2.5 py-1.5 text-xs font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
-                  >
-                    View
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busyId === blk.id}
-                    onClick={() => handleUnblock(blk)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-rose-700 border border-rose-200 hover:bg-rose-50 rounded-lg shrink-0 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Unblock</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-            {filteredBlocks.length === 0 && (
-              <p className="py-8 text-center text-xs text-slate-500">
-                No active or upcoming blocked dates match your filter.
-              </p>
-            )}
+            <button
+              type="button"
+              disabled={syncingOta}
+              onClick={() => void handleRefreshCalendar()}
+              className="h-10 inline-flex items-center gap-2 px-4 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-bold transition-colors disabled:opacity-60 cursor-pointer whitespace-nowrap"
+            >
+              <RefreshCw className={`w-4 h-4 ${syncingOta ? 'animate-spin' : ''}`} />
+              <span>{syncingOta ? 'Refreshing...' : 'Refresh'}</span>
+            </button>
           </div>
         </div>
+      </div>
 
-        {/* Active & Upcoming Calendar Reservations */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h3 className="font-display text-sm font-bold text-slate-900">
-                Current &amp; Future Reservations ({filteredReservations.length})
-              </h3>
-              <p className="text-xs text-slate-500">
-                Chronological view of all in-house, confirmed, pending &amp; OTA stays
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => openQuickAction('book')}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Book Room</span>
-            </button>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {filteredReservations.map((res) => {
-              const normIn = normalizeIsoDate(res.checkInDate);
-              const isFutureStay = normIn > todayIso;
-              const otaCheckInBlock = getCheckInDateRestriction(res, todayIso);
-              const otaCancelBlock = getOtaCancellationRestriction(res);
-              return (
-              <div
-                key={res.id}
-                onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
-                className="px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-emerald-50/40 cursor-pointer transition-colors"
+      {/* Compact Upcoming Stays & Blocked Holds Strip (Preserves Quick Check-In, OTA Guards & Unblock) */}
+      {(upcomingReservations.length > 0 || activeBlocks.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 no-print">
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="font-display text-sm font-bold text-[#061f4d]">
+                Active &amp; Upcoming Reservations ({upcomingReservations.length})
+              </h2>
+              <button
+                type="button"
+                onClick={() => openQuickAction('book')}
+                className="text-xs font-semibold text-[#0a367a] hover:underline cursor-pointer"
               >
-                <div className="space-y-0.5 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-mono-tabular font-bold text-slate-900">
-                      {res.bookingRef}
-                    </span>
-                    <span className="font-mono-tabular text-slate-600">{res.roomNumber}</span>
-                    <span
-                      className={`font-semibold ${
-                        res.status === 'checked_in'
-                          ? 'text-emerald-700'
-                          : res.status === 'pending'
-                            ? 'text-violet-700'
-                            : 'text-amber-700'
-                      }`}
-                    >
-                      {res.status === 'checked_in'
-                        ? 'In-House'
-                        : res.status === 'pending'
-                          ? 'Pending Hold'
-                          : isFutureStay
-                            ? 'Future Confirmed'
-                            : 'Confirmed'}
-                    </span>
+                + New Reservation
+              </button>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+              {upcomingReservations.slice(0, 12).map((res) => {
+                const normIn = normalizeIsoDate(res.checkInDate);
+                const otaCheckInBlock = getCheckInDateRestriction(res, todayIso);
+                const otaCancelBlock = getOtaCancellationRestriction(res);
+                return (
+                  <div
+                    key={res.id}
+                    className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-bold text-[#061f4d] truncate">{res.guestName}</span>
+                        <span className="font-mono-tabular text-[11px] font-semibold text-slate-500">
+                          {res.roomNumber}
+                        </span>
+                        {isOtaBookingChannel(res.channel) && (
+                          <span className="text-[10px] font-bold text-amber-700">
+                            · {formatBookingSourceLabel(res.channel)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="font-mono-tabular text-[11px] text-slate-500 mt-0.5">
+                        {formatShortMonthDay(res.checkInDate)} → {formatShortMonthDay(res.checkOutDate)} ({res.nights}n)
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setCalendarStart(normIn || todayIso)}
+                        className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
+                      >
+                        Jump
+                      </button>
+                      {(res.status === 'confirmed' || res.status === 'pending') &&
+                        !otaCheckInBlock.restricted && (
+                          <button
+                            type="button"
+                            disabled={busyId === res.id}
+                            onClick={() => setCheckInTarget(res)}
+                            className="px-2.5 py-1.5 text-[11px] font-semibold bg-[#0a367a] hover:bg-[#07275a] text-white rounded-lg cursor-pointer"
+                          >
+                            Check In
+                          </button>
+                        )}
+                      {(res.status === 'confirmed' || res.status === 'pending') &&
+                        otaCheckInBlock.restricted && (
+                          <span
+                            title={otaCheckInBlock.message}
+                            className="px-2 py-1 text-[10px] font-semibold bg-amber-50 border border-amber-200 text-amber-800 rounded-lg"
+                          >
+                            Arrival {otaCheckInBlock.checkInIso}
+                          </span>
+                        )}
+                      {(res.status === 'confirmed' || res.status === 'pending') &&
+                        !otaCancelBlock.restricted && (
+                          <button
+                            type="button"
+                            disabled={busyId === res.id}
+                            onClick={async () => {
+                              setBusyId(res.id);
+                              try {
+                                const targetRoom = rooms.find((rm) => rm.id === res.roomId);
+                                await transitionReservationStatus({
+                                  property,
+                                  reservation: res,
+                                  room: targetRoom,
+                                  nextStatus: 'cancelled',
+                                  actorRole,
+                                });
+                                onNotify(`Cancelled reservation ${res.bookingRef}`);
+                              } catch (err) {
+                                setCalendarNotice(
+                                  getUserFriendlyErrorMessage(
+                                    err,
+                                    `Unable to cancel reservation ${res.bookingRef}. Please try again.`,
+                                    'Calendar:CancelReservation'
+                                  )
+                                );
+                              } finally {
+                                setBusyId(null);
+                              }
+                            }}
+                            className="px-2 py-1.5 text-[11px] font-medium text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-lg cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      {(res.status === 'confirmed' || res.status === 'pending') &&
+                        otaCancelBlock.restricted && (
+                          <button
+                            type="button"
+                            title={otaCancelBlock.message}
+                            onClick={() => setCalendarNotice(otaCancelBlock.message)}
+                            className="px-2 py-1.5 text-[10px] font-medium text-amber-800 border border-amber-200 bg-amber-50 hover:bg-amber-100 rounded-lg cursor-pointer"
+                          >
+                            Cancel via {otaCancelBlock.platformLabel}
+                          </button>
+                        )}
+                    </div>
                   </div>
-                  <p className="text-xs font-semibold text-slate-900 truncate">{res.guestName}</p>
-                  <p className="font-mono-tabular text-[11px] text-slate-500">
-                    {normIn} → {normalizeIsoDate(res.checkOutDate)} ({res.nights}n) ·{' '}
-                    {formatBookingSourceLabel(res.channel)}
-                  </p>
-                </div>
+                );
+              })}
+              {upcomingReservations.length === 0 && (
+                <p className="py-6 text-center text-xs text-slate-500">
+                  No active or upcoming reservations.
+                </p>
+              )}
+            </div>
+          </div>
 
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="font-display text-sm font-bold text-[#061f4d]">
+                Blocked Dates &amp; Holds ({activeBlocks.length})
+              </h2>
+              <button
+                type="button"
+                onClick={() => openQuickAction('block')}
+                className="text-xs font-semibold text-[#0a367a] hover:underline cursor-pointer"
+              >
+                + Add Block
+              </button>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+              {activeBlocks.map((blk) => (
                 <div
-                  className="flex items-center gap-2 shrink-0"
-                  onClick={(e) => e.stopPropagation()}
+                  key={blk.id}
+                  className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-slate-50/70"
                 >
-                  <button
-                    type="button"
-                    onClick={() => setCalendarStart(normIn || todayIso)}
-                    className="px-2.5 py-1.5 text-xs font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
-                  >
-                    Jump
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenReservationFolio?.(res.id, 'front_desk')}
-                    className="px-2.5 py-1.5 text-xs font-medium text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
-                  >
-                    Open Folio
-                  </button>
-                  {(res.status === 'confirmed' || res.status === 'pending') &&
-                    !otaCheckInBlock.restricted && (
-                      <button
-                        type="button"
-                        disabled={busyId === res.id}
-                        onClick={() => setCheckInTarget(res)}
-                        className="px-2.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
-                      >
-                        Check In
-                      </button>
-                    )}
-                  {(res.status === 'confirmed' || res.status === 'pending') &&
-                    otaCheckInBlock.restricted && (
-                      <span
-                        title={otaCheckInBlock.message}
-                        className="px-2.5 py-1.5 text-[11px] font-semibold bg-amber-50 border border-amber-200 text-amber-800 rounded-lg"
-                      >
-                        Check-in {otaCheckInBlock.checkInIso}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-mono-tabular font-bold text-[#061f4d]">
+                        {blk.roomNumber}
                       </span>
-                    )}
-                  {(res.status === 'confirmed' || res.status === 'pending') &&
-                    !otaCancelBlock.restricted && (
-                      <button
-                        type="button"
-                        disabled={busyId === res.id}
-                        onClick={async () => {
-                          setBusyId(res.id);
-                          try {
-                            const targetRoom = rooms.find((rm) => rm.id === res.roomId);
-                            await transitionReservationStatus({
-                              property,
-                              reservation: res,
-                              room: targetRoom,
-                              nextStatus: 'cancelled',
-                              actorRole,
-                            });
-                            onNotify(`Cancelled reservation ${res.bookingRef}`);
-                          } catch (err) {
-                            setCalendarNotice(
-                              getUserFriendlyErrorMessage(
-                                err,
-                                `Unable to cancel reservation ${res.bookingRef}. Please try again.`,
-                                'Calendar:CancelReservation'
-                              )
-                            );
-                          } finally {
-                            setBusyId(null);
-                          }
-                        }}
-                        className="px-2.5 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-lg cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                  {(res.status === 'confirmed' || res.status === 'pending') &&
-                    otaCancelBlock.restricted && (
-                      <button
-                        type="button"
-                        title={otaCancelBlock.message}
-                        onClick={() => setCalendarNotice(otaCancelBlock.message)}
-                        className="px-2.5 py-1.5 text-[11px] font-medium text-amber-800 border border-amber-200 bg-amber-50/70 hover:bg-amber-100/70 rounded-lg cursor-pointer"
-                      >
-                        Cancel via {otaCancelBlock.platformLabel}
-                      </button>
-                    )}
+                      <span className="text-rose-700 font-semibold">{blk.category}</span>
+                    </div>
+                    <p className="text-xs text-slate-600 truncate">{blk.reason}</p>
+                    <p className="font-mono-tabular text-[11px] text-slate-500">
+                      {blk.startDate} → {blk.endDate}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setCalendarStart(normalizeIsoDate(blk.startDate) || todayIso)}
+                      className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg cursor-pointer"
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === blk.id}
+                      onClick={() => handleUnblock(blk)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 border border-rose-200 hover:bg-rose-50 rounded-lg cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Unblock</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-              );
-            })}
-            {filteredReservations.length === 0 && (
-              <p className="py-8 text-center text-xs text-slate-500">
-                No active reservations match your search.
-              </p>
-            )}
+              ))}
+              {activeBlocks.length === 0 && (
+                <p className="py-6 text-center text-xs text-slate-500">
+                  No active or upcoming blocked dates.
+                </p>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Block / Book Modal */}
+      {/* Block / Book Modal (All Reservation Form Placeholders Removed) */}
       {modalMode !== 'none' && (
         <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-3 sm:p-4">
           <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-4">
@@ -1875,9 +1531,9 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     setConflictError(null);
                     setModalMode('book');
                   }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${
                     modalMode === 'book'
-                      ? 'bg-emerald-600 text-white'
+                      ? 'bg-[#0a367a] text-white'
                       : 'bg-slate-100 text-slate-700'
                   }`}
                 >
@@ -1889,7 +1545,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     setConflictError(null);
                     setModalMode('block');
                   }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${
                     modalMode === 'block'
                       ? 'bg-rose-700 text-white'
                       : 'bg-slate-100 text-slate-700'
@@ -1901,7 +1557,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
               <button
                 type="button"
                 onClick={() => setModalMode('none')}
-                className="text-slate-400 hover:text-slate-700"
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1915,7 +1571,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
 
             {modalMode === 'block' ? (
               <form onSubmit={handleSaveBlockDates} className="space-y-4 text-xs">
-                {/* Block Scope Switcher: Single Room vs Multi-Room / Property-Wide Hold */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
                   <div className="flex items-center gap-1.5 text-slate-600 font-medium">
                     <Layers className="w-3.5 h-3.5 text-slate-500" />
@@ -2077,7 +1732,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                               setSelectedBulkRoomIds(openIds);
                               setConflictError(null);
                             }}
-                            className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                            className="text-[11px] font-semibold text-[#0a367a] hover:underline cursor-pointer"
                           >
                             Select All Available
                           </button>
@@ -2148,10 +1803,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                                     ? 'Out of Order'
                                     : avail.status === 'blocked'
                                       ? 'Already Blocked'
-                                      : avail.conflictReservation &&
-                                          isOtaBookingChannel(avail.conflictReservation.channel)
-                                        ? `${formatBookingSourceLabel(avail.conflictReservation.channel)} Booked`
-                                        : 'Reserved'}
+                                      : 'Reserved'}
                               </span>
                             </label>
                           );
@@ -2184,7 +1836,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     required
                     value={blockReason}
                     onChange={(e) => setBlockReason(e.target.value)}
-                    placeholder="e.g. Owner family arrival, Split AC servicing..."
                     className="w-full h-10 border border-slate-200 rounded-lg px-3"
                   />
                 </div>
@@ -2231,7 +1882,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       const rm = rooms.find((r) => r.id === e.target.value);
                       setTargetRoomId(e.target.value);
                       setConflictError(null);
-                      if (rm) setDepositNgn(rm.nightlyRateNgn);
+                      if (rm) setDepositNgn(rm.nightlyRateNgn * diffNights(bookCheckIn, bookCheckOut));
                     }}
                     className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white"
                   >
@@ -2261,31 +1912,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     setBookCheckOut(nextOut);
                     setConflictError(null);
                     const currentRm = rooms.find((r) => r.id === targetRoomId);
-                    if (
-                      currentRm &&
-                      !checkRoomDateRangeAvailability({
-                        room: currentRm,
-                        checkInDate: nextIn,
-                        checkOutDate: nextOut,
-                        reservations,
-                        blockedDates,
-                      }).available
-                    ) {
-                      const fallbackOpen = sortedRooms.find(
-                        (cand) =>
-                          cand.roomType === currentRm.roomType &&
-                          checkRoomDateRangeAvailability({
-                            room: cand,
-                            checkInDate: nextIn,
-                            checkOutDate: nextOut,
-                            reservations,
-                            blockedDates,
-                          }).available
-                      );
-                      if (fallbackOpen) {
-                        setTargetRoomId(fallbackOpen.id);
-                        setDepositNgn(fallbackOpen.nightlyRateNgn);
-                      }
+                    if (currentRm) {
+                      setDepositNgn(currentRm.nightlyRateNgn * diffNights(nextIn, nextOut));
                     }
                   }}
                   room={rooms.find((r) => r.id === targetRoomId)}
@@ -2294,7 +1922,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   blockedDates={blockedDates}
                   onSelectAlternativeRoom={(alt) => {
                     setTargetRoomId(alt.id);
-                    setDepositNgn(alt.nightlyRateNgn);
+                    setDepositNgn(alt.nightlyRateNgn * diffNights(bookCheckIn, bookCheckOut));
                     setConflictError(null);
                   }}
                   checkInLabel="Check-In Date *"
@@ -2303,7 +1931,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                 />
 
                 <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 space-y-3">
-                  <p className="font-display text-[11px] font-bold uppercase tracking-wider text-[#061539]">
+                  <p className="font-display text-[11px] font-bold uppercase tracking-wider text-[#061f4d]">
                     Guest Details &amp; Address
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -2314,7 +1942,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         required
                         value={guestFirstName}
                         onChange={(e) => setGuestFirstName(e.target.value)}
-                        placeholder="First name"
                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
                       />
                     </div>
@@ -2325,7 +1952,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         required
                         value={guestLastName}
                         onChange={(e) => setGuestLastName(e.target.value)}
-                        placeholder="Last name"
                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
                       />
                     </div>
@@ -2336,7 +1962,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         required
                         value={guestPhone}
                         onChange={(e) => setGuestPhone(e.target.value)}
-                        placeholder="+234 800 000 0000"
                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 font-mono-tabular"
                       />
                     </div>
@@ -2349,17 +1974,15 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         type="email"
                         value={guestEmail}
                         onChange={(e) => setGuestEmail(e.target.value)}
-                        placeholder="guest@example.com"
                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
                       />
                     </div>
                     <div>
-                      <label className="block font-medium text-slate-700 mb-1">Street Address</label>
+                      <label className="block font-medium text-slate-700 mb-1">Residential Address</label>
                       <input
                         type="text"
                         value={guestAddress}
                         onChange={(e) => setGuestAddress(e.target.value)}
-                        placeholder="House / Street / Estate"
                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
                       />
                     </div>
@@ -2372,7 +1995,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         type="text"
                         value={guestCity}
                         onChange={(e) => setGuestCity(e.target.value)}
-                        placeholder="e.g. Enugu"
                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
                       />
                     </div>
@@ -2382,7 +2004,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                         type="text"
                         value={guestState}
                         onChange={(e) => setGuestState(e.target.value)}
-                        placeholder="State"
                         className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
                       />
                     </div>
@@ -2391,7 +2012,32 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       <CountrySelect
                         value={guestCountry}
                         onChange={setGuestCountry}
-                        placeholder="Search country..."
+                        placeholder=""
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">ID Type</label>
+                      <select
+                        value={quickIdType}
+                        onChange={(e) => setQuickIdType(e.target.value as GuestRecord['idType'])}
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3"
+                      >
+                        <option value="NIN">NIN</option>
+                        <option value="International Passport">International Passport</option>
+                        <option value="Driver License">Driver License</option>
+                        <option value="Voter Card">Voter Card</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">ID Number</label>
+                      <input
+                        type="text"
+                        value={quickIdNumber}
+                        onChange={(e) => setQuickIdNumber(e.target.value)}
+                        className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 font-mono-tabular"
                       />
                     </div>
                   </div>
@@ -2445,7 +2091,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                   <div>
                     <label className="block font-medium text-slate-700 mb-1">Payment Method</label>
                     <select
@@ -2481,11 +2127,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       <option value="Unpaid">Unpaid</option>
                     </select>
                   </div>
-                  <div className="h-10 inline-flex items-center gap-2 px-3 rounded-lg border border-emerald-200 bg-emerald-50/70 text-[11px] font-medium text-emerald-900">
-                    <span>
-                      Check-in opens on arrival date ({normalizeIsoDate(bookCheckIn)})
-                    </span>
-                  </div>
                 </div>
 
                 <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 space-y-2.5">
@@ -2494,7 +2135,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       type="checkbox"
                       checked={cautionEnabled}
                       onChange={(e) => setCautionEnabled(e.target.checked)}
-                      className="rounded border-amber-400 text-emerald-600"
+                      className="rounded border-amber-400 text-[#0a367a]"
                     />
                     <span>Optional Refundable Caution / Deposit Fee</span>
                   </label>
@@ -2533,7 +2174,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                           type="checkbox"
                           checked={cautionRefunded}
                           onChange={(e) => setCautionRefunded(e.target.checked)}
-                          className="rounded border-amber-400 text-emerald-600"
+                          className="rounded border-amber-400 text-[#0a367a]"
                         />
                         <span>Refunded</span>
                       </label>
@@ -2545,7 +2186,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   <button
                     type="button"
                     onClick={() => setModalMode('none')}
-                    className="px-4 py-2 text-slate-600 hover:text-slate-900"
+                    className="px-4 py-2 text-slate-600 hover:text-slate-900 cursor-pointer"
                   >
                     Cancel
                   </button>

@@ -434,13 +434,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       canSee('shifts_attendance') || canSee('payroll') || canSee('shift_daily_report');
     const showRestaurantPos = canSee('pos_kitchen');
     const showReports = canSee('reports');
+    const canAccessSettings =
+      portalMode !== 'staff' &&
+      (activeRole === 'property_admin' || activeRole === 'pch_admin') &&
+      canSee('profile');
     const showAdminGroup =
       canSee('procurement') ||
       canSee('inventory') ||
       canSee('maintenance') ||
       canSee('user_management') ||
       canSee('staff') ||
-      canSee('profile') ||
+      canAccessSettings ||
       canSee('messages') ||
       canSee('staff_sessions');
 
@@ -784,7 +788,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               </button>
             )}
-            {canSee('profile') && (
+            {canAccessSettings && (
               <button
                 type="button"
                 onClick={() => handleNavClick('profile')}
@@ -929,19 +933,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         )}
 
-        {canSee('profile') && (
-          <button
-            type="button"
-            onClick={() => handleNavClick('profile')}
-            title={isCollapsed ? 'Settings' : undefined}
-            className={navItemClass(activeSection === 'profile', isCollapsed)}
-          >
-            <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
-              <Settings className={iconClass(activeSection === 'profile')} />
-              {!isCollapsed && <span className="truncate">Settings</span>}
-            </span>
-          </button>
-        )}
+        {portalMode !== 'staff' &&
+          (activeRole === 'property_admin' || activeRole === 'pch_admin') &&
+          canSee('profile') && (
+            <button
+              type="button"
+              onClick={() => handleNavClick('profile')}
+              title={isCollapsed ? 'Settings' : undefined}
+              className={navItemClass(activeSection === 'profile', isCollapsed)}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-2.5 min-w-0'}`}>
+                <Settings className={iconClass(activeSection === 'profile')} />
+                {!isCollapsed && <span className="truncate">Settings</span>}
+              </span>
+            </button>
+          )}
 
         <button
           type="button"

@@ -55,6 +55,11 @@ import { PchAdminDashboardView } from './components/PchAdminDashboardView';
 import { PortalGateway } from './components/PortalGateway';
 import { PosKitchenView } from './components/PosKitchenView';
 import { ProfileView } from './components/ProfileView';
+import {
+  OfflineIndicator,
+  PropertyPwaInstallControl,
+  usePropertyPwaBranding,
+} from './components/PropertyPwaInstallControl';
 import { ReservationsCalendarView } from './components/ReservationsCalendarView';
 import { RoomsReservationsView } from './components/RoomsReservationsView';
 import { Sidebar } from './components/Sidebar';
@@ -1445,6 +1450,9 @@ export default function App() {
     }
   }, [messages, activeRole, user?.email]);
 
+  // Sync dynamic property-branded Web App Manifest & offline branding cache
+  usePropertyPwaBranding(activePropertyForRole);
+
   // Record active employee/admin login & keep session heartbeat fresh for the Session Monitor
   useEffect(() => {
     if (!authReady || !user || !user.email || portalMode === 'home') return;
@@ -1963,6 +1971,17 @@ export default function App() {
               <span className="whitespace-nowrap">{headerFormattedDate}</span>
             </div>
 
+            {activeProperty && (
+              <PropertyPwaInstallControl
+                property={activeProperty}
+                isPropertyAdmin={
+                  portalMode === 'richgates-admin' &&
+                  (effectiveRole === 'property_admin' || effectiveRole === 'pch_admin')
+                }
+                onNotify={notify}
+              />
+            )}
+
             {/* Real-Time Message Alert Bell & Dropdown */}
             <div className="relative">
               <button
@@ -2088,54 +2107,43 @@ export default function App() {
               {showUserMenu && (
                 <div
                   role="menu"
-                  className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-40 overflow-hidden"
+                  className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-40 overflow-hidden"
                 >
-                  <div className="bg-[#0a367a] text-white px-4 py-3">
-                    <p className="text-xs font-bold truncate">
-                      {matchedUserAccount?.fullName ||
-                        userProfile?.displayName ||
-                        user.displayName ||
-                        'Property Admin'}
-                    </p>
-                    {user.email && (
-                      <p className="text-[11px] text-blue-100 truncate mt-0.5">{user.email}</p>
-                    )}
-                    <p className="text-[10px] font-semibold text-blue-200 uppercase tracking-wider mt-1">
-                      {ROLE_LABELS[effectiveRole]}
-                      {activeProperty ? ` · ${activeProperty.name}` : ''}
-                    </p>
-                  </div>
-
                   <div className="p-1.5 space-y-0.5 text-xs">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        handleSelectSection('profile');
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-700 hover:bg-blue-50 hover:text-[#0a367a] font-semibold transition-colors cursor-pointer"
-                    >
-                      <UserCircle2 className="w-4 h-4 text-[#0a367a]" />
-                      <span>My Profile &amp; Property Settings</span>
-                    </button>
+                    {portalMode !== 'staff' &&
+                      (effectiveRole === 'property_admin' || effectiveRole === 'pch_admin') && (
+                        <>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setShowUserMenu(false);
+                              handleSelectSection('profile');
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-700 hover:bg-blue-50 hover:text-[#0a367a] font-semibold transition-colors cursor-pointer"
+                          >
+                            <UserCircle2 className="w-4 h-4 text-[#0a367a]" />
+                            <span>My Profile &amp; Property Settings</span>
+                          </button>
 
-                    {portalMode === 'pch-admin' && isSignedInBootstrapped && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setShowUserMenu(false);
-                          setShowPortalModal(true);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-700 hover:bg-blue-50 hover:text-[#0a367a] font-semibold transition-colors cursor-pointer"
-                      >
-                        <ExternalLink className="w-4 h-4 text-[#0a367a]" />
-                        <span>{cms.brand.portalLinksButton || 'Portal Links'}</span>
-                      </button>
-                    )}
+                          {portalMode === 'pch-admin' && isSignedInBootstrapped && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setShowUserMenu(false);
+                                setShowPortalModal(true);
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-700 hover:bg-blue-50 hover:text-[#0a367a] font-semibold transition-colors cursor-pointer"
+                            >
+                              <ExternalLink className="w-4 h-4 text-[#0a367a]" />
+                              <span>{cms.brand.portalLinksButton || 'Portal Links'}</span>
+                            </button>
+                          )}
 
-                    <div className="my-1 border-t border-slate-100" />
+                          <div className="my-1 border-t border-slate-100" />
+                        </>
+                      )}
 
                     <button
                       type="button"
@@ -2991,6 +2999,8 @@ export default function App() {
           onNotify={notify}
         />
       )}
+
+      <OfflineIndicator />
     </div>
   );
 }

@@ -20,8 +20,15 @@ export interface GuestRegistrationFormData {
   state?: string;
   country?: string;
   nationality?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
   idType: string;
   idNumber?: string;
+  idExpiryDate?: string;
+  idIssuingCountry?: string;
+  vehiclePlateNumber?: string;
   idVerified?: boolean;
   vipTier?: string;
   notes?: string;
@@ -71,8 +78,15 @@ export function buildFormDataFromGuest(guest: GuestRecord): GuestRegistrationFor
     state: guest.state,
     country: guest.country || guest.nationality || 'Nigeria',
     nationality: guest.nationality || guest.country || 'Nigeria',
+    dateOfBirth: guest.dateOfBirth,
+    gender: guest.gender,
+    emergencyContactName: guest.emergencyContactName,
+    emergencyContactPhone: guest.emergencyContactPhone,
     idType: guest.idType || 'NIN',
     idNumber: guest.idNumber,
+    idExpiryDate: guest.idExpiryDate,
+    idIssuingCountry: guest.idIssuingCountry,
+    vehiclePlateNumber: guest.vehiclePlateNumber,
     idVerified: Boolean(guest.idNumber && guest.idNumber.trim().length >= 3),
     vipTier: guest.vipTier || 'Standard',
     notes: guest.notes,
@@ -127,12 +141,12 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
   doc.setLineWidth(0.5);
   doc.line(margin, 28, pageWidth - margin, 28);
 
-  let cursorY = 34;
+  let cursorY = 38;
 
   // Section 1: Personal & Contact Information
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
+  doc.setFontSize(9.2);
   doc.text('1. PERSONAL & CONTACT DETAILS', margin, cursorY);
 
   autoTable(doc, {
@@ -140,8 +154,8 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     margin: { left: margin, right: margin },
     theme: 'grid',
     styles: {
-      fontSize: 8.5,
-      cellPadding: 2.3,
+      fontSize: 8.2,
+      cellPadding: 1.9,
       lineColor: [203, 213, 225],
       lineWidth: 0.2,
       textColor: [15, 23, 42],
@@ -162,20 +176,26 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
         [guest.city, guest.state].filter(Boolean).join(', ') || '—',
       ],
       [
-        'Country',
-        safeVal(guest.country || guest.nationality, 'Nigeria'),
-        'Nationality',
+        'Nationality / Country',
         safeVal(guest.nationality || guest.country, 'Nigeria'),
+        'Date of Birth / Gender',
+        [guest.dateOfBirth, guest.gender].filter(Boolean).join(' · ') || '—',
+      ],
+      [
+        'Emergency Contact',
+        safeVal(guest.emergencyContactName),
+        'Emergency Phone',
+        safeVal(guest.emergencyContactPhone),
       ],
     ],
   });
 
-  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 85) + 6;
+  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 92) + 5;
 
   // Section 2: Identification Details
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
+  doc.setFontSize(9.2);
   doc.text('2. IDENTIFICATION DETAILS', margin, cursorY);
 
   autoTable(doc, {
@@ -183,8 +203,8 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     margin: { left: margin, right: margin },
     theme: 'grid',
     styles: {
-      fontSize: 8.5,
-      cellPadding: 2.3,
+      fontSize: 8.2,
+      cellPadding: 1.9,
       lineColor: [203, 213, 225],
       lineWidth: 0.2,
       textColor: [15, 23, 42],
@@ -198,15 +218,21 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     body: [
       ['ID Document Type', safeVal(guest.idType, 'NIN'), 'ID / Passport No.', safeVal(guest.idNumber)],
       [
+        'Issuing Country',
+        safeVal(guest.idIssuingCountry),
+        'ID Expiry Date',
+        safeVal(guest.idExpiryDate),
+      ],
+      [
         'ID Verification',
         guest.idVerified ? 'Verified by Front Desk' : 'Pending Verification',
-        'Registration Date',
-        generatedDate,
+        'Vehicle Plate No.',
+        safeVal(guest.vehiclePlateNumber),
       ],
     ],
   });
 
-  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 116) + 6;
+  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 128) + 5;
 
   // Section 3: Reservation / Stay Details
   doc.setTextColor(6, 21, 57);
@@ -452,19 +478,19 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       line-height: 1.3;
     }
     .instruction {
-      margin: 4px 0 2px;
+      margin: 14px 0 6px;
       font-size: 8.2px;
       color: #475569;
       font-style: italic;
     }
     .section {
-      margin-top: 5px;
+      margin-top: 4.5px;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .section-title {
-      margin: 0 0 2.5px;
-      font-size: 8.8px;
+      margin: 0 0 2px;
+      font-size: 8.6px;
       font-weight: 800;
       letter-spacing: 0.07em;
       text-transform: uppercase;
@@ -477,11 +503,11 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
-      font-size: 8.8px;
+      font-size: 8.6px;
     }
     th, td {
       border: 1px solid #94a3b8;
-      padding: 3px 6px;
+      padding: 2.5px 6px;
       text-align: left;
       vertical-align: middle;
     }
@@ -490,11 +516,11 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       font-weight: 700;
       color: #1e293b;
       width: 19%;
-      font-size: 8.4px;
+      font-size: 8.2px;
     }
     td {
       width: 31%;
-      height: 18px;
+      height: 16.5px;
       background: #ffffff;
       color: #475569;
     }
@@ -503,7 +529,7 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       flex-wrap: wrap;
       align-items: center;
       gap: 10px;
-      font-size: 8.4px;
+      font-size: 8.2px;
       color: #1e293b;
     }
     .checkbox-item {
@@ -528,25 +554,25 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     }
     .notes-box {
       border: 1px solid #94a3b8;
-      padding: 3px 7px 4px;
+      padding: 2.5px 7px 3.5px;
       background: #ffffff;
     }
     .write-line {
-      height: 14px;
+      height: 13px;
       border-bottom: 1px dashed #cbd5e1;
     }
     .write-line:last-child {
       border-bottom: none;
-      height: 12px;
+      height: 11px;
     }
     .declaration {
-      margin-top: 6px;
+      margin-top: 5px;
       background: #f8fafc;
       border: 1px solid #cbd5e1;
       border-radius: 3px;
-      padding: 5px 8px;
-      font-size: 8px;
-      line-height: 1.32;
+      padding: 4.5px 8px;
+      font-size: 7.9px;
+      line-height: 1.3;
       color: #334155;
       page-break-inside: avoid;
       break-inside: avoid;
@@ -555,7 +581,7 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       display: block;
       color: #0f172a;
       margin-bottom: 1.5px;
-      font-size: 8.4px;
+      font-size: 8.2px;
       letter-spacing: 0.05em;
       text-transform: uppercase;
     }
@@ -563,14 +589,14 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 24px;
-      margin-top: 16px;
+      margin-top: 13px;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .sig-block {
       border-top: 1px solid #334155;
-      padding-top: 3.5px;
-      font-size: 8.5px;
+      padding-top: 3px;
+      font-size: 8.3px;
     }
     .sig-block strong {
       display: block;
@@ -578,17 +604,17 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       font-weight: 700;
     }
     .sig-block .sig-sub {
-      margin-top: 2px;
+      margin-top: 1.5px;
       color: #64748b;
-      font-size: 8px;
+      font-size: 7.8px;
     }
     .footer {
-      margin-top: 8px;
-      padding-top: 4px;
+      margin-top: 6px;
+      padding-top: 3.5px;
       border-top: 1px solid #cbd5e1;
       display: flex;
       justify-content: space-between;
-      font-size: 7.5px;
+      font-size: 7.4px;
       color: #64748b;
     }
   </style>
