@@ -261,6 +261,11 @@ export interface PropertyRecord {
   status: 'active' | 'onboarding' | 'suspended';
   licenseKey?: string;
   licensePlan?: 'Starter' | 'Professional' | 'Enterprise' | 'Lifetime Sovereign';
+  posServiceChargeRate?: number;
+  posTaxRate?: number;
+  posReceiptHeader?: string;
+  posReceiptFooter?: string;
+  posCategories?: string[];
   adminEmail: string;
   authorizedEmails: string[];
   ownerUid: string;
@@ -448,6 +453,7 @@ export interface GuestRecord {
   nationality?: string;
   idType: 'NIN' | 'International Passport' | 'Driver License' | 'Voter Card';
   idNumber?: string;
+  idExpiryDate?: string;
   vipTier: 'Standard' | 'Silver' | 'Gold' | 'Diplomatic';
   totalStays: number;
   lifetimeSpendNgn: number;
@@ -565,6 +571,9 @@ export interface ReservationRecord {
   idVerified?: boolean;
   idType?: GuestRecord['idType'];
   idNumber?: string;
+  idExpiryDate?: string;
+  ratePlan?: string;
+  specialRequests?: string;
   keyIssued?: boolean;
   checkedInAtIso?: string;
   checkOutTime?: string;
@@ -594,15 +603,172 @@ export function matchesBookingSourceFilter(channel: string, filter: string): boo
 }
 
 export function isOtaBookingChannel(channel: string | undefined): boolean {
-  const ch = String(channel || '');
+  const ch = String(channel || '').trim().toLowerCase();
+  if (!ch) return false;
   return (
-    ch === 'Airbnb' ||
-    ch === 'Booking.com' ||
-    ch === 'Expedia' ||
-    ch === 'Hotels.ng' ||
-    ch === 'VRBO' ||
-    ch === 'Custom iCal'
+    ch === 'airbnb' ||
+    ch === 'booking.com' ||
+    ch === 'expedia' ||
+    ch === 'hotels.ng' ||
+    ch === 'vrbo' ||
+    ch === 'custom ical' ||
+    ch === 'agoda' ||
+    ch === 'hotels.com' ||
+    ch === 'trip.com' ||
+    ch === 'hostelworld' ||
+    ch.includes('airbnb') ||
+    ch.includes('booking.com') ||
+    ch.includes('expedia') ||
+    ch.includes('vrbo') ||
+    ch.includes('agoda') ||
+    ch.includes('ical') ||
+    ch.includes('ota')
   );
+}
+
+export function isOtaReservation(
+  res:
+    | (Pick<ReservationRecord, 'channel'> &
+        Partial<Pick<ReservationRecord, 'externalUid' | 'paymentCollectionMode'>>)
+    | null
+    | undefined
+): boolean {
+  if (!res) return false;
+  return (
+    isOtaBookingChannel(res.channel) ||
+    Boolean(res.externalUid && res.externalUid.trim().length > 0) ||
+    res.paymentCollectionMode === 'ota_prepaid'
+  );
+}
+
+export function getOtaPlatformLabel(
+  res:
+    | (Pick<ReservationRecord, 'channel'> &
+        Partial<Pick<ReservationRecord, 'externalUid' | 'paymentCollectionMode'>>)
+    | null
+    | undefined
+): string {
+  if (!res) return 'OTA';
+  const raw = formatBookingSourceLabel(res.channel || '').trim();
+  if (raw && isOtaBookingChannel(raw)) return raw;
+  if (raw && raw.toLowerCase() !== 'walk-in' && raw.toLowerCase() !== 'website') return raw;
+  return 'the OTA booking platform';
+}
+
+function normalizeOtaIsoDate(raw: string | undefined): string {
+  const cleaned = String(raw || '').trim();
+  const match = cleaned.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : cleaned;
+}
+
+export function getOtaCheckInRestriction(
+  res:
+    | (Pick<ReservationRecord, 'channel' | 'checkInDate'> &
+        Partial<Pick<ReservationRecord, 'externalUid' | 'paymentCollectionMode'>>)
+    | null
+    | undefined,
+  todayIso: string
+): {
+  restricted: boolean;
+  isOta: boolean;
+  platformLabel: string;
+  checkInIso: string;
+  message: string;
+} {
+  const ota = isOtaReservation(res);
+  const platformLabel = getOtaPlatformLabel(res);
+  const checkInIso = normalizeOtaIsoDate(res?.checkInDate);
+  const normalizedToday = normalizeOtaIsoDate(todayIso);
+  if (ota && checkInIso && normalizedToday && normalizedToday < checkInIso) {
+    return {
+      restricted: true,
+      isOta: true,
+      platformLabel,
+      checkInIso,
+      message: `${platformLabel} reservations cannot be checked in before their scheduled arrival date (${checkInIso}).`,
+    };
+  }
+  return {
+    restricted: false,
+    isOta: ota,
+    platformLabel,
+    checkInIso,
+    message: '',
+  };
+}
+
+export const RATE_PLAN_OPTIONS = [
+  'Standard Rate',
+  'Corporate Rate',
+  'Weekend Special',
+  'Long Stay Rate',
+  'OTA Channel Rate',
+  'Complimentary / VIP',
+] as const;
+
+export function getCheckInDateRestriction(
+  res:
+    | (Pick<ReservationRecord, 'channel' | 'checkInDate'> &
+        Partial<Pick<ReservationRecord, 'externalUid' | 'paymentCollectionMode'>>)
+    | null
+    | undefined,
+  todayIso: string
+): {
+  restricted: boolean;
+  isOta: boolean;
+  platformLabel: string;
+  checkInIso: string;
+  message: string;
+} {
+  const ota = isOtaReservation(res);
+  const platformLabel = getOtaPlatformLabel(res);
+  const checkInIso = normalizeOtaIsoDate(res?.checkInDate);
+  const normalizedToday = normalizeOtaIsoDate(todayIso);
+  if (checkInIso && normalizedToday && normalizedToday < checkInIso) {
+    return {
+      restricted: true,
+      isOta: ota,
+      platformLabel,
+      checkInIso,
+      message: ota
+        ? `${platformLabel} reservations cannot be checked in before their scheduled arrival date (${checkInIso}).`
+        : `Check-in is only allowed on or after the scheduled arrival date (${checkInIso}).`,
+    };
+  }
+  return {
+    restricted: false,
+    isOta: ota,
+    platformLabel,
+    checkInIso,
+    message: '',
+  };
+}
+
+export function getOtaCancellationRestriction(
+  res:
+    | (Pick<ReservationRecord, 'channel'> &
+        Partial<Pick<ReservationRecord, 'externalUid' | 'paymentCollectionMode'>>)
+    | null
+    | undefined
+): {
+  restricted: boolean;
+  platformLabel: string;
+  message: string;
+} {
+  const ota = isOtaReservation(res);
+  const platformLabel = getOtaPlatformLabel(res);
+  if (ota) {
+    return {
+      restricted: true,
+      platformLabel,
+      message: `${platformLabel} reservations cannot be cancelled directly from the PMS. Please direct the guest to cancel through ${platformLabel} (their original booking platform).`,
+    };
+  }
+  return {
+    restricted: false,
+    platformLabel,
+    message: '',
+  };
 }
 
 export function getDefaultOtaChannelCurrency(channelName: string | undefined): ChannelCurrency {
@@ -975,6 +1141,8 @@ export interface PosOrderRecord {
   itemsSummary: string;
   itemCount: number;
   subtotalNgn: number;
+  serviceChargeNgn?: number;
+  discountNgn?: number;
   vatNgn: number;
   totalNgn: number;
   paymentStatus: 'paid' | 'room_folio' | 'unpaid';
@@ -1202,18 +1370,25 @@ export interface PropertyMessageRecord {
   ownerUid: string;
 }
 
+export type PosSection = 'Kitchen' | 'Food & Beverage';
+
+export const POS_SECTIONS: PosSection[] = ['Kitchen', 'Food & Beverage'];
+
 export const POS_DEFAULT_CATEGORIES = [
+  'Breakfast',
+  'Lunch',
+  'Dinner',
+  'Snacks',
+  'Drinks',
   'Nigerian Kitchen',
   'Grill & Continental',
-  'Breakfast',
   'Bar & Cocktails',
-  'Beverage',
-  'Food',
 ] as const;
 
 export interface PosMenuItem {
   id: string;
   name: string;
+  section?: PosSection;
   category: string;
   priceNgn: number;
   costNgn?: number;
@@ -1223,10 +1398,59 @@ export interface PosMenuItem {
 
 export interface PosMenuItemRecord extends PosMenuItem {
   propertyId: string;
+  section?: PosSection;
   available: boolean;
   authorizedEmails: string[];
   ownerUid: string;
 }
+
+export function inferPosItemSection(item: Pick<PosMenuItem, 'section' | 'category'>): PosSection {
+  if (item.section === 'Kitchen' || item.section === 'Food & Beverage') {
+    return item.section;
+  }
+  const cat = (item.category || '').toLowerCase();
+  if (
+    cat.includes('drink') ||
+    cat.includes('beverage') ||
+    cat.includes('bar') ||
+    cat.includes('cocktail') ||
+    cat.includes('snack') ||
+    cat.includes('juice')
+  ) {
+    return 'Food & Beverage';
+  }
+  return 'Kitchen';
+}
+
+export const STANDARD_POS_MENU_TEMPLATE: Array<{
+  name: string;
+  section: PosSection;
+  category: string;
+  priceNgn: number;
+  costNgn: number;
+  prepMinutes: number;
+}> = [
+  { name: 'Fried Rice', section: 'Kitchen', category: 'Lunch', priceNgn: 3000, costNgn: 1400, prepMinutes: 15 },
+  { name: 'Jollof Rice', section: 'Kitchen', category: 'Lunch', priceNgn: 3000, costNgn: 1400, prepMinutes: 15 },
+  { name: 'Plain Rice', section: 'Kitchen', category: 'Lunch', priceNgn: 2000, costNgn: 900, prepMinutes: 10 },
+  { name: 'Fried Plantain', section: 'Kitchen', category: 'Breakfast', priceNgn: 1500, costNgn: 700, prepMinutes: 10 },
+  { name: 'Grilled Chicken', section: 'Kitchen', category: 'Dinner', priceNgn: 5000, costNgn: 2500, prepMinutes: 20 },
+  { name: 'Chicken Stew', section: 'Kitchen', category: 'Lunch', priceNgn: 4000, costNgn: 1900, prepMinutes: 15 },
+  { name: 'Beef Stew', section: 'Kitchen', category: 'Dinner', priceNgn: 4500, costNgn: 2200, prepMinutes: 15 },
+  { name: 'Fish Pepper Soup', section: 'Kitchen', category: 'Dinner', priceNgn: 5000, costNgn: 2400, prepMinutes: 20 },
+  { name: 'Vegetable Soup', section: 'Kitchen', category: 'Lunch', priceNgn: 3500, costNgn: 1600, prepMinutes: 15 },
+  { name: 'Egusi Soup', section: 'Kitchen', category: 'Lunch', priceNgn: 3500, costNgn: 1600, prepMinutes: 15 },
+  { name: 'Pounded Yam', section: 'Kitchen', category: 'Dinner', priceNgn: 3000, costNgn: 1200, prepMinutes: 15 },
+  { name: 'Amala', section: 'Kitchen', category: 'Dinner', priceNgn: 3000, costNgn: 1200, prepMinutes: 15 },
+  { name: 'French Fries', section: 'Food & Beverage', category: 'Snacks', priceNgn: 2000, costNgn: 850, prepMinutes: 10 },
+  { name: 'Spring Rolls', section: 'Food & Beverage', category: 'Snacks', priceNgn: 1500, costNgn: 650, prepMinutes: 8 },
+  { name: 'Meat Pie', section: 'Food & Beverage', category: 'Snacks', priceNgn: 1500, costNgn: 650, prepMinutes: 5 },
+  { name: 'Samosa', section: 'Food & Beverage', category: 'Snacks', priceNgn: 1500, costNgn: 650, prepMinutes: 8 },
+  { name: 'Fresh Juice', section: 'Food & Beverage', category: 'Drinks', priceNgn: 1500, costNgn: 600, prepMinutes: 5 },
+  { name: 'Soft Drink', section: 'Food & Beverage', category: 'Drinks', priceNgn: 1000, costNgn: 450, prepMinutes: 2 },
+  { name: 'Water 50cl', section: 'Food & Beverage', category: 'Drinks', priceNgn: 500, costNgn: 200, prepMinutes: 2 },
+  { name: 'Chapman', section: 'Food & Beverage', category: 'Drinks', priceNgn: 1500, costNgn: 650, prepMinutes: 5 },
+];
 
 export const POS_MENU_ITEMS: PosMenuItem[] = [];
 

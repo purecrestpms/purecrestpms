@@ -72,8 +72,11 @@ import {
   formatPaymentCollectionLabel,
   formatPriceInputWithCommas,
   formatUsd,
+  getCheckInDateRestriction,
   getDefaultOtaChannelCurrency,
   getFxRateToNgn,
+  getOtaCancellationRestriction,
+  getOtaCheckInRestriction,
   getPropertySystemId,
   getReservationBookedDate,
   getReservationPaymentSummary,
@@ -82,6 +85,7 @@ import {
   getRoomSection,
   GuestRecord,
   isOtaBookingChannel,
+  isOtaReservation,
   LicenseRecord,
   matchesBookingSourceFilter,
   NavSectionId,
@@ -91,6 +95,7 @@ import {
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
   PropertyRecord,
+  RATE_PLAN_OPTIONS,
   RESERVATION_STATUS_LABELS,
   ReservationRecord,
   ReservationStatus,
@@ -106,6 +111,7 @@ import {
   checkRoomDateRangeAvailability,
   formatRoomAvailabilityTag,
   getLocalIsoDate,
+  normalizeIsoDate,
 } from '../utils/availability';
 import {
   DEFAULT_ROOM_COVER_IMAGE_URL,
@@ -394,6 +400,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [immediateCheckIn, setImmediateCheckIn] = useState(false);
   const [inlineIdType, setInlineIdType] = useState<GuestRecord['idType']>('NIN');
   const [inlineIdNumber, setInlineIdNumber] = useState('');
+  const [inlineIdExpiryDate, setInlineIdExpiryDate] = useState('');
+  const [bookingRatePlan, setBookingRatePlan] = useState<string>('Standard Rate');
+  const [bookingSpecialRequests, setBookingSpecialRequests] = useState<string>('');
+  const [createdReservationSuccess, setCreatedReservationSuccess] =
+    useState<ReservationRecord | null>(null);
   const [inlinePayConfirmed, setInlinePayConfirmed] = useState(false);
   const [inlineIdVerified, setInlineIdVerified] = useState(false);
   const [inlineRoomReady, setInlineRoomReady] = useState(false);
@@ -502,6 +513,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   const [editGuestCityRes, setEditGuestCityRes] = useState('');
   const [editGuestStateRes, setEditGuestStateRes] = useState('');
   const [editGuestCountryRes, setEditGuestCountryRes] = useState('');
+  const [editIdTypeRes, setEditIdTypeRes] = useState<GuestRecord['idType']>('NIN');
+  const [editIdNumberRes, setEditIdNumberRes] = useState('');
+  const [editIdExpiryDateRes, setEditIdExpiryDateRes] = useState('');
+  const [editRatePlanRes, setEditRatePlanRes] = useState('Standard Rate');
+  const [editSpecialRequestsRes, setEditSpecialRequestsRes] = useState('');
   const [editRoomId, setEditRoomId] = useState('');
   const [editRequestedRoomType, setEditRequestedRoomType] = useState('Studio');
   const [editCheckInDate, setEditCheckInDate] = useState('');
@@ -691,6 +707,17 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setEditGuestCountryRes(
         activeFolioReservation.guestCountry || matchedGuestProfile?.country || matchedGuestProfile?.nationality || ''
       );
+      setEditIdTypeRes(
+        activeFolioReservation.idType || matchedGuestProfile?.idType || 'NIN'
+      );
+      setEditIdNumberRes(
+        activeFolioReservation.idNumber || matchedGuestProfile?.idNumber || ''
+      );
+      setEditIdExpiryDateRes(
+        activeFolioReservation.idExpiryDate || matchedGuestProfile?.idExpiryDate || ''
+      );
+      setEditRatePlanRes(activeFolioReservation.ratePlan || 'Standard Rate');
+      setEditSpecialRequestsRes(activeFolioReservation.specialRequests || '');
       setEditRoomId(activeFolioReservation.roomId || '');
       setEditRequestedRoomType(
         getReservationRoomDisplay(activeFolioReservation, rooms).roomTypeLabel
@@ -1241,25 +1268,6 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       return;
     }
 
-    if (immediateCheckIn) {
-      if (!targetRoom) {
-        setBookingError('Please assign a specific room before performing immediate check-in.');
-        return;
-      }
-      if (
-        !inlinePayConfirmed ||
-        !inlineIdVerified ||
-        inlineIdNumber.trim().length < 3 ||
-        inlineKeyIssued !== 'yes' ||
-        !inlineRoomReady
-      ) {
-        setBookingError(
-          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming room readiness.'
-        );
-        return;
-      }
-    }
-
     const trimmedGuest = combinedBookingGuest;
     const resolvedRoomType = targetRoom ? targetRoom.roomType : newRequestedRoomType;
     const fallbackNightlyRate =
@@ -1381,6 +1389,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         guestCountry: guestCountry.trim() || 'Nigeria',
         guestIdType: inlineIdType,
         guestIdNumber: inlineIdNumber.trim(),
+        guestIdExpiryDate: inlineIdExpiryDate.trim(),
+        ratePlan: bookingRatePlan,
+        specialRequests: bookingSpecialRequests.trim(),
         checkInDate,
         checkOutDate,
         bookedDate: todayIso,
@@ -1411,41 +1422,17 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         cautionDepositNgn: cautionFeeNgnVal,
         cautionDepositCollectedNgn: cautionCollectedNgnVal,
         cautionDepositRefunded: cautionDepositEnabled && cautionDepositRefunded,
-        immediateCheckIn,
+        immediateCheckIn: false,
         initialStatus: initialBookingStatus,
-        paymentConfirmed: immediateCheckIn ? inlinePayConfirmed : isCollectedByOtaMode,
-        idVerified: immediateCheckIn ? inlineIdVerified : false,
-        keyIssued: immediateCheckIn ? inlineKeyIssued === 'yes' : false,
+        paymentConfirmed: isCollectedByOtaMode || hotelPaidNgnVal > 0,
+        idVerified: false,
+        keyIssued: false,
         actorRole,
       });
       onNotify(
-        immediateCheckIn && targetRoom
-          ? `Verified & checked in ${trimmedGuest} to ${targetRoom.roomNumber}`
-          : `${RESERVATION_STATUS_LABELS[initialBookingStatus]} reservation for ${trimmedGuest} (${assignedLabel})`
+        `Reservation Created Successfully — ${created.bookingRef} for ${trimmedGuest} (${assignedLabel})`
       );
-      if (immediateCheckIn && targetRoom) {
-        onGuestCheckedIn?.({
-          guestName: trimmedGuest,
-          roomNumber: targetRoom.roomNumber,
-          bookingRef: created.bookingRef,
-          reservationId: created.id,
-        });
-      } else if (
-        hotelPaidNgnVal > 0 ||
-        computedPayStatus === 'Paid' ||
-        computedPayStatus === 'Partial' ||
-        computedPayStatus === 'Paid to OTA'
-      ) {
-        setReceiptModalState({
-          reservation: created.reservation,
-          mode: 'reservation_payment',
-          amountJustPaidNgn: hotelPaidNgnVal,
-          settlementMethodOverride:
-            !isOtaSource && paymentMethod === 'OTA Platform Payout'
-              ? 'Bank Transfer'
-              : paymentMethod,
-        });
-      }
+      setCreatedReservationSuccess(created.reservation);
       setShowBookingForm(false);
       setGuestFirstName('');
       setGuestLastName('');
@@ -1474,10 +1461,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setCautionDepositCollectedInput('0');
       setCautionDepositRefunded(false);
       setInlineIdNumber('');
+      setInlineIdExpiryDate('');
+      setBookingRatePlan('Standard Rate');
+      setBookingSpecialRequests('');
       setInlinePayConfirmed(false);
       setInlineIdVerified(false);
       setInlineRoomReady(false);
       setInlineKeyIssued(null);
+      setImmediateCheckIn(false);
     } catch (err) {
       setBookingError(
         err instanceof Error ? err.message : 'Unable to save reservation. Please try again.'
@@ -1652,6 +1643,34 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       return;
     }
 
+    if (editStatus === 'checked_in' && res.status !== 'checked_in') {
+      const editCheckInGuard = getCheckInDateRestriction(
+        {
+          channel: isOtaReservation(res) ? res.channel : editChannel,
+          checkInDate: editCheckInDate,
+          externalUid: res.externalUid,
+          paymentCollectionMode: editCollectionMode,
+        },
+        todayIso
+      );
+      if (editCheckInGuard.restricted) {
+        setEditStayError(editCheckInGuard.message);
+        return;
+      }
+    }
+
+    if (editStatus === 'cancelled' && res.status !== 'cancelled') {
+      const editOtaCancelGuard = getOtaCancellationRestriction({
+        channel: isOtaReservation(res) ? res.channel : editChannel,
+        externalUid: res.externalUid,
+        paymentCollectionMode: editCollectionMode,
+      });
+      if (editOtaCancelGuard.restricted) {
+        setEditStayError(editOtaCancelGuard.message);
+        return;
+      }
+    }
+
     const willOccupyRoom =
       editStatus === 'confirmed' || editStatus === 'pending' || editStatus === 'checked_in';
     if (willOccupyRoom) {
@@ -1765,6 +1784,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         guestCity: editGuestCityRes,
         guestState: editGuestStateRes,
         guestCountry: editGuestCountryRes,
+        idType: editIdTypeRes,
+        idNumber: editIdNumberRes,
+        idExpiryDate: editIdExpiryDateRes,
+        ratePlan: editRatePlanRes,
+        specialRequests: editSpecialRequestsRes,
         checkInDate: editCheckInDate,
         checkOutDate: editCheckOutDate,
         nights: updatedNights,
@@ -1897,6 +1921,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
   };
 
   const openCancelDialog = (res: ReservationRecord) => {
+    const otaCancelBlock = getOtaCancellationRestriction(res);
+    if (otaCancelBlock.restricted) {
+      setActionError(otaCancelBlock.message);
+      onNotify(otaCancelBlock.message);
+      return;
+    }
     setActionError(null);
     setCancelTarget(res);
     setCancelMode('free');
@@ -1908,6 +1938,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
   const handleConfirmCancelOrNoShow = async (nextStatus: 'cancelled' | 'no_show') => {
     if (!cancelTarget) return;
+    if (nextStatus === 'cancelled') {
+      const otaCancelBlock = getOtaCancellationRestriction(cancelTarget);
+      if (otaCancelBlock.restricted) {
+        setActionError(otaCancelBlock.message);
+        onNotify(otaCancelBlock.message);
+        setCancelTarget(null);
+        return;
+      }
+    }
     if (nextStatus === 'cancelled' && cancelMode === 'paid' && cancelFeeNgn <= 0) {
       setActionError('Enter a cancellation fee greater than ₦0 or select Free Cancellation.');
       return;
@@ -3938,8 +3977,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
                       : 'bg-rose-100 text-rose-800 border-rose-200';
 
-              const canCheckIn = res.status === 'confirmed' || res.status === 'pending';
-              const canCancel = res.status !== 'cancelled' && res.status !== 'checked_out' && res.status !== 'no_show';
+              const otaCheckInBlock = getCheckInDateRestriction(res, todayIso);
+              const otaCancelBlock = getOtaCancellationRestriction(res);
+              const isAwaitingCheckIn = res.status === 'confirmed' || res.status === 'pending';
+              const canEdit =
+                res.status !== 'cancelled' &&
+                res.status !== 'checked_out' &&
+                res.status !== 'no_show';
+              const canCheckIn = isAwaitingCheckIn && !otaCheckInBlock.restricted;
+              const canCancel = canEdit && !otaCancelBlock.restricted;
 
               return (
                 <div
@@ -4138,7 +4184,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                         <Eye className="w-3.5 h-3.5" />
                         <span>View Folio</span>
                       </button>
-                      {canCancel && (
+                      {canEdit && (
                         <button
                           type="button"
                           onClick={() => {
@@ -4166,6 +4212,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           <span>{mode === 'future' ? 'Early Check-in' : 'Check-in Guest'}</span>
                         </button>
                       )}
+                      {isAwaitingCheckIn && otaCheckInBlock.restricted && (
+                        <span
+                          title={otaCheckInBlock.message}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 font-semibold text-[11px]"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>Check-in opens {otaCheckInBlock.checkInIso}</span>
+                        </span>
+                      )}
                       {res.status === 'checked_in' && (
                         <button
                           type="button"
@@ -4184,6 +4239,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                           className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 font-semibold cursor-pointer"
                         >
                           Cancel
+                        </button>
+                      )}
+                      {canEdit && otaCancelBlock.restricted && (
+                        <button
+                          type="button"
+                          title={otaCancelBlock.message}
+                          onClick={() => {
+                            setActionError(otaCancelBlock.message);
+                            onNotify(otaCancelBlock.message);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50/70 hover:bg-amber-100/70 text-amber-900 font-semibold text-[11px] cursor-pointer"
+                        >
+                          Cancel via {otaCancelBlock.platformLabel}
                         </button>
                       )}
                       {canManageRooms && confirmDeleteResId !== res.id && (
@@ -4547,11 +4615,15 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                       res.checkInDate <= todayIso;
                     const isDueOutToday =
                       res.status === 'checked_in' && res.checkOutDate <= todayIso;
-                    const canCheckIn = res.status === 'confirmed' || res.status === 'pending';
-                    const canCancel =
+                    const otaCheckInBlock = getCheckInDateRestriction(res, todayIso);
+                    const otaCancelBlock = getOtaCancellationRestriction(res);
+                    const isAwaitingCheckIn = res.status === 'confirmed' || res.status === 'pending';
+                    const canEdit =
                       res.status !== 'cancelled' &&
                       res.status !== 'checked_out' &&
                       res.status !== 'no_show';
+                    const canCheckIn = isAwaitingCheckIn && !otaCheckInBlock.restricted;
+                    const canCancel = canEdit && !otaCancelBlock.restricted;
 
                     const paymentStatusColor =
                       paymentStatus === 'Paid'
@@ -4815,7 +4887,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 <span>Payment</span>
                               </button>
                             )}
-                            {canCancel && (
+                            {canEdit && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -4837,6 +4909,14 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               >
                                 Check-in
                               </button>
+                            )}
+                            {isAwaitingCheckIn && otaCheckInBlock.restricted && (
+                              <span
+                                title={otaCheckInBlock.message}
+                                className="px-2 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-800 font-medium text-[10px] whitespace-nowrap shrink-0"
+                              >
+                                Check-in {otaCheckInBlock.checkInIso}
+                              </span>
                             )}
                             {res.status === 'checked_in' && (
                               <>
@@ -4867,6 +4947,19 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 className="px-2.5 py-1 rounded-md border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 font-medium whitespace-nowrap shrink-0 cursor-pointer"
                               >
                                 Cancel
+                              </button>
+                            )}
+                            {canEdit && otaCancelBlock.restricted && (
+                              <button
+                                type="button"
+                                title={otaCancelBlock.message}
+                                onClick={() => {
+                                  setActionError(otaCancelBlock.message);
+                                  onNotify(otaCancelBlock.message);
+                                }}
+                                className="px-2 py-1 rounded-md border border-amber-200 bg-amber-50/70 hover:bg-amber-100/70 text-amber-900 font-medium text-[10px] whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                Cancel via {otaCancelBlock.platformLabel}
                               </button>
                             )}
                             {canManageRooms && confirmDeleteResId !== res.id && (
@@ -6230,9 +6323,63 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                 >
                                   <option value="confirmed">Confirmed</option>
                                   <option value="pending">Pending</option>
-                                  <option value="checked_in">Checked-in</option>
+                                  <option
+                                    value="checked_in"
+                                    disabled={
+                                      activeFolioReservation.status !== 'checked_in' &&
+                                      getCheckInDateRestriction(
+                                        {
+                                          channel: isOtaReservation(activeFolioReservation)
+                                            ? activeFolioReservation.channel
+                                            : editChannel,
+                                          checkInDate: editCheckInDate,
+                                          externalUid: activeFolioReservation.externalUid,
+                                          paymentCollectionMode: editCollectionMode,
+                                        },
+                                        todayIso
+                                      ).restricted
+                                    }
+                                  >
+                                    {activeFolioReservation.status !== 'checked_in' &&
+                                    getCheckInDateRestriction(
+                                      {
+                                        channel: isOtaReservation(activeFolioReservation)
+                                          ? activeFolioReservation.channel
+                                          : editChannel,
+                                        checkInDate: editCheckInDate,
+                                        externalUid: activeFolioReservation.externalUid,
+                                        paymentCollectionMode: editCollectionMode,
+                                      },
+                                      todayIso
+                                    ).restricted
+                                      ? `Checked-in (Opens ${normalizeIsoDate(editCheckInDate)})`
+                                      : 'Checked-in'}
+                                  </option>
                                   <option value="checked_out">Checked-out</option>
-                                  <option value="cancelled">Cancelled</option>
+                                  <option
+                                    value="cancelled"
+                                    disabled={
+                                      activeFolioReservation.status !== 'cancelled' &&
+                                      getOtaCancellationRestriction({
+                                        channel: isOtaReservation(activeFolioReservation)
+                                          ? activeFolioReservation.channel
+                                          : editChannel,
+                                        externalUid: activeFolioReservation.externalUid,
+                                        paymentCollectionMode: editCollectionMode,
+                                      }).restricted
+                                    }
+                                  >
+                                    {activeFolioReservation.status !== 'cancelled' &&
+                                    getOtaCancellationRestriction({
+                                      channel: isOtaReservation(activeFolioReservation)
+                                        ? activeFolioReservation.channel
+                                        : editChannel,
+                                      externalUid: activeFolioReservation.externalUid,
+                                      paymentCollectionMode: editCollectionMode,
+                                    }).restricted
+                                      ? 'Cancelled (Guest must cancel via OTA)'
+                                      : 'Cancelled'}
+                                  </option>
                                   <option value="no_show">No-show</option>
                                 </select>
                               </div>
@@ -6356,12 +6503,80 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                               </div>
                               <div>
                                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                                  Country
+                                  Country / Nationality
                                 </label>
                                 <CountrySelect
                                   value={editGuestCountryRes}
                                   onChange={setEditGuestCountryRes}
                                   placeholder="Search country..."
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  ID Type
+                                </label>
+                                <select
+                                  value={editIdTypeRes}
+                                  onChange={(e) =>
+                                    setEditIdTypeRes(e.target.value as GuestRecord['idType'])
+                                  }
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                >
+                                  <option value="NIN">NIN</option>
+                                  <option value="International Passport">International Passport</option>
+                                  <option value="Driver License">Driver License</option>
+                                  <option value="Voter Card">Voter Card</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  ID Number
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editIdNumberRes}
+                                  onChange={(e) => setEditIdNumberRes(e.target.value)}
+                                  placeholder="NIN / Passport / License No."
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  ID Expiry Date
+                                </label>
+                                <input
+                                  type="date"
+                                  value={editIdExpiryDateRes}
+                                  onChange={(e) => setEditIdExpiryDateRes(e.target.value)}
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Rate Plan
+                                </label>
+                                <select
+                                  value={editRatePlanRes}
+                                  onChange={(e) => setEditRatePlanRes(e.target.value)}
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
+                                >
+                                  {RATE_PLAN_OPTIONS.map((plan) => (
+                                    <option key={plan} value={plan}>
+                                      {plan}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="sm:col-span-2 lg:col-span-4">
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Special Requests
+                                </label>
+                                <textarea
+                                  rows={2}
+                                  value={editSpecialRequestsRes}
+                                  onChange={(e) => setEditSpecialRequestsRes(e.target.value)}
+                                  placeholder="Any special request..."
+                                  className="w-full border border-slate-200 bg-white rounded-lg px-3 py-2 text-xs"
                                 />
                               </div>
                             </div>
@@ -7123,34 +7338,67 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
 
                     <div className="flex flex-wrap items-center gap-2">
                       {(activeFolioReservation.status === 'confirmed' ||
-                        activeFolioReservation.status === 'pending') && (
-                        <>
-                          <button
-                            type="button"
-                            disabled={busyId === activeFolioReservation.id}
-                            onClick={() => {
-                              const target = activeFolioReservation;
-                              onSelectReservation?.(null);
-                              openCancelDialog(target);
-                            }}
-                            className="px-3 py-2 border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg cursor-pointer"
-                          >
-                            Cancel Booking
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busyId === activeFolioReservation.id}
-                            onClick={() => {
-                              const target = activeFolioReservation;
-                              onSelectReservation?.(null);
-                              setCheckInTarget(target);
-                            }}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
-                          >
-                            Check In Guest Now
-                          </button>
-                        </>
-                      )}
+                        activeFolioReservation.status === 'pending') &&
+                        (() => {
+                          const folioOtaCheckInBlock = getCheckInDateRestriction(
+                            activeFolioReservation,
+                            todayIso
+                          );
+                          const folioOtaCancelBlock = getOtaCancellationRestriction(
+                            activeFolioReservation
+                          );
+                          return (
+                            <>
+                              {!folioOtaCancelBlock.restricted ? (
+                                <button
+                                  type="button"
+                                  disabled={busyId === activeFolioReservation.id}
+                                  onClick={() => {
+                                    const target = activeFolioReservation;
+                                    onSelectReservation?.(null);
+                                    openCancelDialog(target);
+                                  }}
+                                  className="px-3 py-2 border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg cursor-pointer"
+                                >
+                                  Cancel Booking
+                                </button>
+                              ) : (
+                                <span
+                                  title={folioOtaCancelBlock.message}
+                                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 font-medium text-[11px]"
+                                >
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                  <span>
+                                    OTA booking: guest must cancel via{' '}
+                                    {folioOtaCancelBlock.platformLabel}
+                                  </span>
+                                </span>
+                              )}
+                              {!folioOtaCheckInBlock.restricted ? (
+                                <button
+                                  type="button"
+                                  disabled={busyId === activeFolioReservation.id}
+                                  onClick={() => {
+                                    const target = activeFolioReservation;
+                                    onSelectReservation?.(null);
+                                    setCheckInTarget(target);
+                                  }}
+                                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                                >
+                                  Check In Guest Now
+                                </button>
+                              ) : (
+                                <span
+                                  title={folioOtaCheckInBlock.message}
+                                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 font-semibold text-[11px]"
+                                >
+                                  <Clock className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                  <span>Check-in opens {folioOtaCheckInBlock.checkInIso}</span>
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
 
                       {activeFolioReservation.status === 'checked_in' && (
                         <>
@@ -7775,28 +8023,104 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
               );
               const propertyShortName = property.name.split(' ')[0] || 'Property';
 
+              const typeRoomsForAvail = sortedRooms.filter(
+                (r) => !newRequestedRoomType || r.roomType === newRequestedRoomType
+              );
+              const openTypeRoomsCount = typeRoomsForAvail.filter(
+                (r) =>
+                  checkRoomDateRangeAvailability({
+                    room: r,
+                    checkInDate,
+                    checkOutDate,
+                    reservations,
+                    blockedDates,
+                  }).available
+              ).length;
+              const currentSelectionAvailability = checkRoomDateRangeAvailability({
+                room: pickedRoom,
+                roomType: pickedRoom ? pickedRoom.roomType : newRequestedRoomType,
+                rooms,
+                checkInDate,
+                checkOutDate,
+                reservations,
+                blockedDates,
+              });
+              const totalGuestsCount = Math.max(1, adults) + Math.max(0, childrenCount);
+
+              const handleResetBookingForm = () => {
+                setBookingError(null);
+                setGuestFirstName('');
+                setGuestLastName('');
+                setGuestPhone('+234 ');
+                setGuestEmail('');
+                setGuestAddress('');
+                setGuestCity('Enugu');
+                setGuestState('Enugu');
+                setGuestCountry('Nigeria');
+                setInlineIdType('NIN');
+                setInlineIdNumber('');
+                setInlineIdExpiryDate('');
+                setBookingRatePlan('Standard Rate');
+                setBookingSpecialRequests('');
+                setAdults(2);
+                setChildrenCount(0);
+                setCheckInDate(todayIso);
+                const resetOut = addDaysIso(todayIso, 1);
+                setCheckOutDate(resetOut);
+                setNights(1);
+                setSelectedRoomId('');
+                setChannel('Website');
+                setInitialBookingStatus('confirmed');
+                setBookingCollectionMode('hotel_collect');
+                setBookingCurrency('NGN');
+                setBookingFxRateInput('1');
+                setBookingNightlyRateInput(formatPriceInputWithCommas(baseRateNgn));
+                setBookingExpectedPayoutManual(false);
+                setBookingExpectedPayoutInput(formatPriceInputWithCommas(baseRateNgn));
+                setBookingHotelPaidInput('0');
+                setBookingAmountDueManual(false);
+                setBookingAmountDueInput('');
+                setBookingPaymentStatusManual(false);
+                setBookingPaymentStatus('Unpaid');
+                setCautionDepositEnabled(false);
+                setCautionDepositCollectedInput('0');
+                setCautionDepositRefunded(false);
+              };
+
+              const formatPrettyDate = (iso: string) => {
+                if (!iso) return '—';
+                const parts = iso.split('-').map(Number);
+                if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return iso;
+                const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+                return d.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: '2-digit',
+                  year: 'numeric',
+                  timeZone: 'UTC',
+                });
+              };
+
               return (
-                <form
-                  onSubmit={handleCreateBooking}
-                  className="bg-white border border-slate-200 border-t-4 border-t-[#1c46be] rounded-xl p-6 space-y-6 shadow-xs"
-                >
-                  {/* Clean Header — No subtitle beneath title */}
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <form onSubmit={handleCreateBooking} className="space-y-5">
+                  {/* Breadcrumb / Top Header Strip */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
                         onClick={() => setShowBookingForm(false)}
-                        className="h-10 inline-flex items-center gap-1.5 px-3.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+                        className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
                       >
                         <ArrowLeft className="w-3.5 h-3.5" />
                         <span>Back</span>
                       </button>
-                      <h2 className="font-display text-lg font-bold text-[#061539]">
-                        New Reservation
-                      </h2>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-display font-bold text-[#0b6b3a]">Front Desk</span>
+                        <span className="text-slate-400">›</span>
+                        <h2 className="font-display font-bold text-slate-900">New Reservation</h2>
+                      </div>
                     </div>
-                    <span className="text-xs font-mono-tabular text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
-                      Booked: {todayIso}
+                    <span className="text-xs font-mono-tabular text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+                      {property.name} · {formatPrettyDate(todayIso)}
                     </span>
                   </div>
 
@@ -7820,1132 +8144,1134 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     </div>
                   )}
 
-                  {/* SECTION 1: STAYS (Check-in, Check-out & Room Type at Top) */}
-                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3.5 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
-                        1. Stay Details
-                      </h3>
-                      <span className="font-mono-tabular text-[11px] font-semibold text-slate-600">
-                        {safeNights} Night{safeNights !== 1 ? 's' : ''} · {adults} Adult{adults !== 1 ? 's' : ''}
-                        {childrenCount > 0 ? `, ${childrenCount} Child${childrenCount !== 1 ? 'ren' : ''}` : ''}
-                      </span>
-                    </div>
-
-                    {/* Row 1: Interactive Availability Date Picker + Room Type & Room Assignment */}
-                    <AvailabilityDateRangePicker
-                      checkInDate={checkInDate}
-                      checkOutDate={checkOutDate}
-                      onChangeDates={(val, safeOut) => {
-                        setBookingError(null);
-                        setCheckInDate(val);
-                        setCheckOutDate(safeOut);
-                        const nextNights = diffNights(val, safeOut);
-                        setNights(nextNights);
-                        let effectiveRate = activeSourceNightlyRate;
-                        // Automatically switch away from a room if it is booked/reserved on OTA or PMS for the new dates
-                        if (selectedRoomId) {
-                          const curRoom = rooms.find((r) => r.id === selectedRoomId);
-                          if (
-                            curRoom &&
-                            !checkRoomDateRangeAvailability({
-                              room: curRoom,
-                              checkInDate: val,
-                              checkOutDate: safeOut,
-                              reservations,
-                              blockedDates,
-                            }).available
-                          ) {
-                            const sameTypeOpen = sortedRooms.find(
-                              (r) =>
-                                r.roomType === curRoom.roomType &&
-                                checkRoomDateRangeAvailability({
-                                  room: r,
-                                  checkInDate: val,
-                                  checkOutDate: safeOut,
-                                  reservations,
-                                  blockedDates,
-                                }).available
-                            );
-                            if (sameTypeOpen) {
-                              setSelectedRoomId(sameTypeOpen.id);
-                              effectiveRate =
-                                activeCur === 'NGN'
-                                  ? sameTypeOpen.nightlyRateNgn
-                                  : Number((sameTypeOpen.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2));
-                              setBookingNightlyRateInput(
-                                activeCur === 'NGN'
-                                  ? formatPriceInputWithCommas(sameTypeOpen.nightlyRateNgn)
-                                  : String(effectiveRate)
-                              );
-                            }
-                          }
-                        }
-                        const nextStayNgn =
-                          activeCur === 'NGN'
-                            ? Math.round(effectiveRate * nextNights)
-                            : Math.round(effectiveRate * nextNights * fxRate);
-                        if (!bookingExpectedPayoutManual) {
-                          setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
-                        }
-                        if (!isOta && estPayStatus === 'Paid') {
-                          setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
-                        }
-                        setBookingError(null);
-                      }}
-                      room={selectedRoomId ? rooms.find((r) => r.id === selectedRoomId) : undefined}
-                      roomType={newRequestedRoomType}
-                      rooms={sortedRooms}
-                      reservations={reservations}
-                      blockedDates={blockedDates}
-                      onSelectAlternativeRoom={(alt) => {
-                        setSelectedRoomId(alt.id);
-                        setNewRequestedRoomType(alt.roomType);
-                        const nextTotal = alt.nightlyRateNgn * Math.max(1, nights);
-                        setBookingNightlyRateInput(
-                          activeCur === 'NGN'
-                            ? formatPriceInputWithCommas(alt.nightlyRateNgn)
-                            : String(
-                                Number((alt.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
-                              )
-                        );
-                        if (!bookingExpectedPayoutManual) {
-                          setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
-                        }
-                        if (!isOta && estPayStatus === 'Paid') {
-                          setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
-                        }
-                        setBookingError(null);
-                      }}
-                      checkInLabel="Check-In Date *"
-                      checkOutLabel="Check-Out Date *"
-                    />
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Room Type *
-                        </label>
-                        <select
-                          value={newRequestedRoomType}
-                          onChange={(e) => {
-                            const rt = e.target.value;
-                            setNewRequestedRoomType(rt);
-                            const matching = sortedRooms.filter(
-                              (r) => r.roomType === rt && r.occupancyStatus !== 'out_of_order'
-                            );
-                            const preferred = matching.find(
-                              (r) =>
-                                checkRoomDateRangeAvailability({
-                                  room: r,
-                                  checkInDate,
-                                  checkOutDate,
-                                  reservations,
-                                  blockedDates,
-                                }).available
-                            );
-                            const rateSource = preferred || matching[0];
-                            if (preferred) {
-                              setSelectedRoomId(preferred.id);
-                            } else {
-                              setSelectedRoomId('');
-                            }
-                            if (rateSource) {
-                              const nextTotal = rateSource.nightlyRateNgn * Math.max(1, nights);
-                              setBookingNightlyRateInput(
-                                activeCur === 'NGN'
-                                  ? formatPriceInputWithCommas(rateSource.nightlyRateNgn)
-                                  : String(
-                                      Number((rateSource.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
-                                    )
-                              );
-                              if (!bookingExpectedPayoutManual) {
-                                setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
-                              }
-                              if (!isOta && estPayStatus === 'Paid') {
-                                setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
-                              }
-                            }
-                            setBookingError(null);
-                          }}
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium"
-                        >
-                          {uniqueRoomTypes.map((rt) => {
-                            const typeRooms = sortedRooms.filter((r) => r.roomType === rt);
-                            const sample = typeRooms[0];
-                            const openCount = typeRooms.filter(
-                              (r) =>
-                                checkRoomDateRangeAvailability({
-                                  room: r,
-                                  checkInDate,
-                                  checkOutDate,
-                                  reservations,
-                                  blockedDates,
-                                }).available
-                            ).length;
-                            const availLabel =
-                              typeRooms.length > 0
-                                ? openCount > 0
-                                  ? `(${openCount} available)`
-                                  : '(Unavailable for selected dates)'
-                                : '';
-                            return (
-                              <option key={rt} value={rt}>
-                                {rt} {sample ? `· ${formatNgn(sample.nightlyRateNgn)}/nt` : ''}{' '}
-                                {availLabel}
-                              </option>
-                            );
-                          })}
-                        </select>
+                  {/* Two-Column PureCrest New Reservation Workspace */}
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+                    {/* LEFT COLUMN (8/12): Reservation Details Form Card */}
+                    <div className="xl:col-span-8 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                      <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5">
+                          <BedDouble className="w-5 h-5 text-emerald-200 shrink-0" />
+                          <h3 className="font-display text-base font-bold tracking-tight">
+                            Reservation Details
+                          </h3>
+                        </div>
+                        <span className="text-[11px] font-mono-tabular text-emerald-100">
+                          Booked: {todayIso}
+                        </span>
                       </div>
 
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Room Assignment
-                        </label>
-                        <select
-                          value={selectedRoomId}
-                          onChange={(e) => {
-                            const nextId = e.target.value;
-                            const rm = rooms.find((r) => r.id === nextId);
-                            setSelectedRoomId(nextId);
-                            setBookingError(null);
-                            if (rm) {
-                              setNewRequestedRoomType(rm.roomType);
-                              const nextTotal = rm.nightlyRateNgn * Math.max(1, nights);
-                              setBookingNightlyRateInput(
-                                activeCur === 'NGN'
-                                  ? formatPriceInputWithCommas(rm.nightlyRateNgn)
-                                  : String(
-                                      Number((rm.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
-                                    )
-                              );
-                              if (!bookingExpectedPayoutManual) {
-                                setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextTotal));
-                              }
-                              if (!isOta && estPayStatus === 'Paid') {
-                                setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
-                              }
-                            } else {
-                              setImmediateCheckIn(false);
-                            }
-                          }}
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                        >
-                          <option value="">Unassigned — Assign later</option>
-                          {(roomsMatchingType.length > 0 ? roomsMatchingType : sortedRooms).map((r) => {
-                            const avail = checkRoomDateRangeAvailability({
-                              room: r,
-                              checkInDate,
-                              checkOutDate,
-                              reservations,
-                              blockedDates,
-                            });
-                            return (
-                              <option
-                                key={r.id}
-                                value={r.id}
-                                disabled={!avail.available}
-                              >
-                                {r.roomNumber} · {r.name} — {formatRoomAvailabilityTag(avail)}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Row 2: Booking Source, Nights, Adults/Children, Reservation Status */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Booking Source
-                        </label>
-                        <select
-                          value={channel}
-                          onChange={(e) => {
-                            const nextCh = e.target.value as ReservationRecord['channel'];
-                            setChannel(nextCh);
-                            setBookingPaymentStatusManual(false);
-                            const nextIsOta = isOtaBookingChannel(nextCh);
-                            const defaultRoomTotal = baseRateNgn * Math.max(1, nights);
-                            if (!nextIsOta) {
-                              setBookingCollectionMode('hotel_collect');
-                              setBookingOtaPayoutStatus('pending');
-                              setBookingActualPayoutInput('0');
-                              setBookingAmountDueManual(false);
-                              setBookingCurrency('NGN');
-                              setBookingFxRateInput('1');
-                              setBookingNightlyRateInput(formatPriceInputWithCommas(baseRateNgn));
-                              setBookingOtaPaidSourceInput('');
-                              setBookingExpectedPayoutManual(false);
-                              setBookingExpectedPayoutInput(
-                                formatPriceInputWithCommas(defaultRoomTotal)
-                              );
-                              setBookingHotelPaidInput(formatPriceInputWithCommas(defaultRoomTotal));
-                              setPaymentMethod('Bank Transfer');
-                            } else {
-                              setBookingCollectionMode('ota_prepaid');
-                              setBookingOtaPayoutStatus('pending');
-                              setBookingActualPayoutInput('0');
-                              setBookingAmountDueInput('0');
-                              setBookingAmountDueManual(false);
-                              const nextCur = getDefaultOtaChannelCurrency(nextCh);
-                              const nextFx =
-                                nextCur === 'NGN'
-                                  ? 1
-                                  : getFxRateToNgn(nextCur, property.usdExchangeRateNgn);
-                              setBookingCurrency(nextCur);
-                              setBookingFxRateInput(
-                                nextCur === 'NGN' ? '1' : formatPriceInputWithCommas(nextFx)
-                              );
-                              const srcNightly =
-                                nextCur === 'NGN'
-                                  ? baseRateNgn
-                                  : Number((baseRateNgn / Math.max(1, nextFx)).toFixed(2));
-                              setBookingNightlyRateInput(
-                                nextCur === 'NGN'
-                                  ? formatPriceInputWithCommas(baseRateNgn)
-                                  : String(srcNightly)
-                              );
-                              setBookingOtaPaidSourceInput(
-                                String(Number((srcNightly * Math.max(1, nights)).toFixed(2)))
-                              );
-                              setBookingHotelPaidInput('0');
-                              setPaymentMethod('OTA Platform Payout');
-                              if (!bookingExpectedPayoutManual) {
-                                setBookingExpectedPayoutInput(
-                                  formatPriceInputWithCommas(defaultRoomTotal)
+                      <div className="p-5 space-y-5 text-xs">
+                        {/* Row 1: Check-In / Check-Out Date Picker + Nights */}
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+                          <div className="lg:col-span-9">
+                            <AvailabilityDateRangePicker
+                              checkInDate={checkInDate}
+                              checkOutDate={checkOutDate}
+                              onChangeDates={(val, safeOut) => {
+                                setBookingError(null);
+                                setCheckInDate(val);
+                                setCheckOutDate(safeOut);
+                                const nextNights = diffNights(val, safeOut);
+                                setNights(nextNights);
+                                let effectiveRate = activeSourceNightlyRate;
+                                if (selectedRoomId) {
+                                  const curRoom = rooms.find((r) => r.id === selectedRoomId);
+                                  if (
+                                    curRoom &&
+                                    !checkRoomDateRangeAvailability({
+                                      room: curRoom,
+                                      checkInDate: val,
+                                      checkOutDate: safeOut,
+                                      reservations,
+                                      blockedDates,
+                                    }).available
+                                  ) {
+                                    const sameTypeOpen = sortedRooms.find(
+                                      (r) =>
+                                        r.roomType === curRoom.roomType &&
+                                        checkRoomDateRangeAvailability({
+                                          room: r,
+                                          checkInDate: val,
+                                          checkOutDate: safeOut,
+                                          reservations,
+                                          blockedDates,
+                                        }).available
+                                    );
+                                    if (sameTypeOpen) {
+                                      setSelectedRoomId(sameTypeOpen.id);
+                                      effectiveRate =
+                                        activeCur === 'NGN'
+                                          ? sameTypeOpen.nightlyRateNgn
+                                          : Number(
+                                              (
+                                                sameTypeOpen.nightlyRateNgn / Math.max(1, fxRate)
+                                              ).toFixed(2)
+                                            );
+                                      setBookingNightlyRateInput(
+                                        activeCur === 'NGN'
+                                          ? formatPriceInputWithCommas(sameTypeOpen.nightlyRateNgn)
+                                          : String(effectiveRate)
+                                      );
+                                    } else {
+                                      setSelectedRoomId('');
+                                    }
+                                  }
+                                }
+                                const nextStayNgn =
+                                  activeCur === 'NGN'
+                                    ? Math.round(effectiveRate * nextNights)
+                                    : Math.round(effectiveRate * nextNights * fxRate);
+                                if (!bookingExpectedPayoutManual) {
+                                  setBookingExpectedPayoutInput(
+                                    formatPriceInputWithCommas(nextStayNgn)
+                                  );
+                                }
+                                if (!isOta && estPayStatus === 'Paid') {
+                                  setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
+                                }
+                              }}
+                              room={pickedRoom}
+                              roomType={newRequestedRoomType}
+                              rooms={sortedRooms}
+                              reservations={reservations}
+                              blockedDates={blockedDates}
+                              onSelectAlternativeRoom={(alt) => {
+                                setSelectedRoomId(alt.id);
+                                setNewRequestedRoomType(alt.roomType);
+                                const nextTotal = alt.nightlyRateNgn * Math.max(1, nights);
+                                setBookingNightlyRateInput(
+                                  activeCur === 'NGN'
+                                    ? formatPriceInputWithCommas(alt.nightlyRateNgn)
+                                    : String(
+                                        Number((alt.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
+                                      )
                                 );
-                              }
-                            }
-                          }}
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium"
-                        >
-                          {PRIMARY_BOOKING_SOURCES.map((src) => (
-                            <option key={src.value} value={src.value}>
-                              {src.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                                if (!bookingExpectedPayoutManual) {
+                                  setBookingExpectedPayoutInput(
+                                    formatPriceInputWithCommas(nextTotal)
+                                  );
+                                }
+                                if (!isOta && estPayStatus === 'Paid') {
+                                  setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
+                                }
+                                setBookingError(null);
+                              }}
+                              checkInLabel="Check-In Date *"
+                              checkOutLabel="Check-Out Date *"
+                            />
+                          </div>
 
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Nights
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          value={nights}
-                          onChange={(e) => {
-                            const nextN = Math.max(1, Number(e.target.value));
-                            const nextOut = addDaysIso(checkInDate, nextN);
-                            setNights(nextN);
-                            setCheckOutDate(nextOut);
-                            let effectiveRate = activeSourceNightlyRate;
-                            if (selectedRoomId) {
-                              const curRoom = rooms.find((r) => r.id === selectedRoomId);
-                              if (
-                                curRoom &&
-                                !checkRoomDateRangeAvailability({
-                                  room: curRoom,
-                                  checkInDate,
-                                  checkOutDate: nextOut,
-                                  reservations,
-                                  blockedDates,
-                                }).available
-                              ) {
-                                const sameTypeOpen = sortedRooms.find(
+                          <div className="lg:col-span-3">
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                              Nights
+                            </label>
+                            <input
+                              type="number"
+                              min={1}
+                              value={nights}
+                              onChange={(e) => {
+                                const nextN = Math.max(1, Number(e.target.value));
+                                const nextOut = addDaysIso(checkInDate, nextN);
+                                setNights(nextN);
+                                setCheckOutDate(nextOut);
+                                const nextStayNgn =
+                                  activeCur === 'NGN'
+                                    ? Math.round(activeSourceNightlyRate * nextN)
+                                    : Math.round(activeSourceNightlyRate * nextN * fxRate);
+                                if (!bookingExpectedPayoutManual) {
+                                  setBookingExpectedPayoutInput(
+                                    formatPriceInputWithCommas(nextStayNgn)
+                                  );
+                                }
+                                if (!isOta && estPayStatus === 'Paid') {
+                                  setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
+                                }
+                                setBookingError(null);
+                              }}
+                              className="w-full h-10 border border-emerald-200 bg-emerald-50/70 rounded-lg px-3 text-sm font-mono-tabular font-bold text-[#0b6b3a]"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Row 2: Room Type, Room Assignment, Guests */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                          <div className="sm:col-span-5">
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                              Room Type <span className="text-rose-600">*</span>
+                            </label>
+                            <select
+                              value={newRequestedRoomType}
+                              onChange={(e) => {
+                                const rt = e.target.value;
+                                setNewRequestedRoomType(rt);
+                                const matching = sortedRooms.filter(
+                                  (r) => r.roomType === rt && r.occupancyStatus !== 'out_of_order'
+                                );
+                                const preferred = matching.find(
                                   (r) =>
-                                    r.roomType === curRoom.roomType &&
                                     checkRoomDateRangeAvailability({
                                       room: r,
                                       checkInDate,
-                                      checkOutDate: nextOut,
+                                      checkOutDate,
                                       reservations,
                                       blockedDates,
                                     }).available
                                 );
-                                if (sameTypeOpen) {
-                                  setSelectedRoomId(sameTypeOpen.id);
-                                  effectiveRate =
-                                    activeCur === 'NGN'
-                                      ? sameTypeOpen.nightlyRateNgn
-                                      : Number(
-                                          (sameTypeOpen.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2)
-                                        );
+                                const rateSource = preferred || matching[0];
+                                setSelectedRoomId(preferred ? preferred.id : '');
+                                if (rateSource) {
+                                  const nextTotal = rateSource.nightlyRateNgn * Math.max(1, nights);
                                   setBookingNightlyRateInput(
                                     activeCur === 'NGN'
-                                      ? formatPriceInputWithCommas(sameTypeOpen.nightlyRateNgn)
-                                      : String(effectiveRate)
+                                      ? formatPriceInputWithCommas(rateSource.nightlyRateNgn)
+                                      : String(
+                                          Number(
+                                            (rateSource.nightlyRateNgn / Math.max(1, fxRate)).toFixed(
+                                              2
+                                            )
+                                          )
+                                        )
                                   );
-                                }
-                              }
-                            }
-                            const nextStayNgn =
-                              activeCur === 'NGN'
-                                ? Math.round(effectiveRate * nextN)
-                                : Math.round(effectiveRate * nextN * fxRate);
-                            if (!bookingExpectedPayoutManual) {
-                              setBookingExpectedPayoutInput(formatPriceInputWithCommas(nextStayNgn));
-                            }
-                            if (!isOta && estPayStatus === 'Paid') {
-                              setBookingHotelPaidInput(formatPriceInputWithCommas(nextStayNgn));
-                            }
-                            setBookingError(null);
-                          }}
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Adults / Children
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="number"
-                            min={1}
-                            title="Adults"
-                            value={adults}
-                            onChange={(e) => setAdults(Math.max(1, Number(e.target.value)))}
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular"
-                          />
-                          <input
-                            type="number"
-                            min={0}
-                            title="Children"
-                            value={childrenCount}
-                            onChange={(e) =>
-                              setChildrenCount(Math.max(0, Number(e.target.value)))
-                            }
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Reservation Status
-                        </label>
-                        <select
-                          value={immediateCheckIn ? 'checked_in' : initialBookingStatus}
-                          disabled={immediateCheckIn}
-                          onChange={(e) =>
-                            setInitialBookingStatus(e.target.value as 'confirmed' | 'pending')
-                          }
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs disabled:bg-slate-100"
-                        >
-                          <option value="confirmed">Confirmed</option>
-                          <option value="pending">Pending</option>
-                          {immediateCheckIn && <option value="checked_in">Checked-in</option>}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SECTION 2: GUEST INFORMATION (Essential Fields + Searchable Country Dropdown) */}
-                  <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3.5 text-xs">
-                    <h3 className="font-display text-xs font-bold text-[#061539] uppercase tracking-wider">
-                      2. Guest Information
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          First Name *
-                        </label>
-                        <input
-                          required
-                          type="text"
-                          value={guestFirstName}
-                          onChange={(e) => setGuestFirstName(e.target.value)}
-                          placeholder="First name"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Last Name *
-                        </label>
-                        <input
-                          required
-                          type="text"
-                          value={guestLastName}
-                          onChange={(e) => setGuestLastName(e.target.value)}
-                          placeholder="Last name"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Phone Number *
-                        </label>
-                        <input
-                          required
-                          type="text"
-                          value={guestPhone}
-                          onChange={(e) => setGuestPhone(e.target.value)}
-                          placeholder="+234 800 000 0000"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Guest Email
-                        </label>
-                        <input
-                          type="email"
-                          value={guestEmail}
-                          onChange={(e) => setGuestEmail(e.target.value)}
-                          placeholder="guest@example.com"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Street Address
-                        </label>
-                        <input
-                          type="text"
-                          value={guestAddress}
-                          onChange={(e) => setGuestAddress(e.target.value)}
-                          placeholder="House / Street / Estate"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          City
-                        </label>
-                        <input
-                          type="text"
-                          value={guestCity}
-                          onChange={(e) => setGuestCity(e.target.value)}
-                          placeholder="e.g. Enugu"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          State
-                        </label>
-                        <input
-                          type="text"
-                          value={guestState}
-                          onChange={(e) => setGuestState(e.target.value)}
-                          placeholder="State"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Country
-                        </label>
-                        <CountrySelect
-                          value={guestCountry}
-                          onChange={setGuestCountry}
-                          placeholder="Search country..."
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Guest ID Type
-                        </label>
-                        <select
-                          value={inlineIdType}
-                          onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                        >
-                          <option value="NIN">NIN</option>
-                          <option value="International Passport">International Passport</option>
-                          <option value="Driver License">Driver License</option>
-                          <option value="Voter Card">Voter Card</option>
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-1 lg:col-span-3">
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Guest ID / Passport Number {immediateCheckIn ? '*' : '(Optional)'}
-                        </label>
-                        <input
-                          type="text"
-                          required={immediateCheckIn}
-                          value={inlineIdNumber}
-                          onChange={(e) => setInlineIdNumber(e.target.value)}
-                          placeholder="Enter NIN / International Passport / Driver License No."
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SECTION 3: PAYMENTS (Separated Platform vs Direct vs Outstanding Hotel Balance) */}
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 space-y-4 text-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="font-display text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                        3. Payment
-                      </h3>
-                      <span className="text-[11px] font-mono-tabular font-semibold text-emerald-800">
-                        Internal FX: 1 USD = ₦{internalUsdRate.toLocaleString()}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Nightly Rate ({activeCur})
-                        </label>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={bookingNightlyRateInput}
-                          onChange={(e) => {
-                            handleCommaPriceChange(
-                              e,
-                              bookingNightlyRateInput,
-                              (nextVal) => {
-                                setBookingNightlyRateInput(nextVal);
-                                const parsedRate = parseFormattedPriceInput(nextVal) ?? 0;
-                                if (parsedRate >= 0) {
-                                  const nextTotalSrc = parsedRate * safeNights;
-                                  const nextTotalNgn =
-                                    activeCur === 'NGN'
-                                      ? Math.round(nextTotalSrc)
-                                      : Math.round(nextTotalSrc * fxRate);
                                   if (!bookingExpectedPayoutManual) {
                                     setBookingExpectedPayoutInput(
-                                      formatPriceInputWithCommas(nextTotalNgn)
+                                      formatPriceInputWithCommas(nextTotal)
                                     );
                                   }
                                   if (!isOta && estPayStatus === 'Paid') {
-                                    setBookingHotelPaidInput(
-                                      formatPriceInputWithCommas(nextTotalNgn)
-                                    );
+                                    setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
                                   }
                                 }
-                              }
-                            );
-                          }}
-                          placeholder={activeCur === 'NGN' ? '65,500' : '120.00'}
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
-                        />
-                      </div>
+                                setBookingError(null);
+                              }}
+                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium focus:outline-none focus:border-[#0b6b3a]"
+                            >
+                              {uniqueRoomTypes.map((rt) => {
+                                const typeRooms = sortedRooms.filter((r) => r.roomType === rt);
+                                const sample = typeRooms[0];
+                                const openCount = typeRooms.filter(
+                                  (r) =>
+                                    checkRoomDateRangeAvailability({
+                                      room: r,
+                                      checkInDate,
+                                      checkOutDate,
+                                      reservations,
+                                      blockedDates,
+                                    }).available
+                                ).length;
+                                const availLabel =
+                                  typeRooms.length > 0
+                                    ? openCount > 0
+                                      ? `(${openCount} open)`
+                                      : '(Sold out)'
+                                    : '';
+                                return (
+                                  <option key={rt} value={rt}>
+                                    {rt} {sample ? `· ${formatNgn(sample.nightlyRateNgn)}/nt` : ''}{' '}
+                                    {availLabel}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
 
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Stay Total ({safeNights}n · USD &amp; ₦)
-                        </label>
-                        <div className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 flex items-center justify-between text-xs font-mono-tabular font-bold text-slate-900">
-                          <span>
-                            {formatChannelCurrency(activeSourceStayTotal, activeCur)}
-                          </span>
-                          <span className="text-[10px] font-semibold text-blue-700">
-                            {activeCur === 'USD'
-                              ? `≈ ${formatNgn(activeStayNgnEquivalent)}`
-                              : `≈ ${formatUsd(activeStayUsdEquivalent)} USD`}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Payment Method
-                        </label>
-                        <select
-                          value={paymentMethod}
-                          onChange={(e) =>
-                            setPaymentMethod(e.target.value as ReservationRecord['paymentMethod'])
-                          }
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                        >
-                          <option value="Bank Transfer">Bank Transfer</option>
-                          <option value="Card POS">Card POS</option>
-                          <option value="Cash NGN">Cash NGN</option>
-                          <option value="Online Gateway">Online Gateway</option>
-                          <option value="Corporate Invoice">Corporate Invoice</option>
-                          {isOta && <option value="OTA Platform Payout">OTA Platform Payout</option>}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Payment Status
-                        </label>
-                        <select
-                          value={estPayStatus}
-                          onChange={(e) => {
-                            const nextStatus = e.target.value as PaymentStatusLabel;
-                            setBookingPaymentStatus(nextStatus);
-                            setBookingPaymentStatusManual(true);
-                            if (isOta && nextStatus === 'Paid to OTA') {
-                              setBookingCollectionMode('ota_prepaid');
-                              setBookingAmountDueInput('0');
-                              setBookingAmountDueManual(true);
-                            } else if (nextStatus === 'Unpaid') {
-                              setBookingHotelPaidInput('0');
-                              setBookingAmountDueManual(false);
-                              if (isOta) setBookingOtaPaidSourceInput('0');
-                            } else if (nextStatus === 'Paid' && !isCollectedByOtaNew) {
-                              setBookingHotelPaidInput(formatPriceInputWithCommas(estTotalCharges));
-                              setBookingAmountDueManual(false);
-                            }
-                          }}
-                          className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
-                        >
-                          {isOta && <option value="Paid to OTA">Paid to OTA</option>}
-                          <option value="Paid">Paid</option>
-                          <option value="Partial">Partial</option>
-                          <option value="Unpaid">Unpaid</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Amount Due at Property (₦)
-                        </label>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={
-                            bookingAmountDueManual
-                              ? bookingAmountDueInput
-                              : formatPriceInputWithCommas(estBalanceDue)
-                          }
-                          onChange={(e) => {
-                            setBookingAmountDueManual(true);
-                            handleCommaPriceChange(
-                              e,
-                              bookingAmountDueInput,
-                              setBookingAmountDueInput
-                            );
-                          }}
-                          placeholder="0"
-                          className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
-                        />
-                      </div>
-
-                      {(isOta || isCollectedByOtaNew) && (
-                        <>
-                          <div>
+                          <div className="sm:col-span-4">
                             <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                              Platform Currency &amp; FX (₦)
+                              Room Assignment
+                            </label>
+                            <select
+                              value={selectedRoomId}
+                              onChange={(e) => {
+                                const nextId = e.target.value;
+                                const rm = rooms.find((r) => r.id === nextId);
+                                setSelectedRoomId(nextId);
+                                setBookingError(null);
+                                if (rm) {
+                                  setNewRequestedRoomType(rm.roomType);
+                                  const nextTotal = rm.nightlyRateNgn * Math.max(1, nights);
+                                  setBookingNightlyRateInput(
+                                    activeCur === 'NGN'
+                                      ? formatPriceInputWithCommas(rm.nightlyRateNgn)
+                                      : String(
+                                          Number((rm.nightlyRateNgn / Math.max(1, fxRate)).toFixed(2))
+                                        )
+                                  );
+                                  if (!bookingExpectedPayoutManual) {
+                                    setBookingExpectedPayoutInput(
+                                      formatPriceInputWithCommas(nextTotal)
+                                    );
+                                  }
+                                  if (!isOta && estPayStatus === 'Paid') {
+                                    setBookingHotelPaidInput(formatPriceInputWithCommas(nextTotal));
+                                  }
+                                }
+                              }}
+                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs focus:outline-none focus:border-[#0b6b3a]"
+                            >
+                              <option value="">Assign at Check-In</option>
+                              {(roomsMatchingType.length > 0 ? roomsMatchingType : sortedRooms).map(
+                                (r) => {
+                                  const avail = checkRoomDateRangeAvailability({
+                                    room: r,
+                                    checkInDate,
+                                    checkOutDate,
+                                    reservations,
+                                    blockedDates,
+                                  });
+                                  return (
+                                    <option key={r.id} value={r.id} disabled={!avail.available}>
+                                      {r.roomNumber} · {r.name} — {formatRoomAvailabilityTag(avail)}
+                                    </option>
+                                  );
+                                }
+                              )}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                              Guests (Adults / Child) <span className="text-rose-600">*</span>
                             </label>
                             <div className="grid grid-cols-2 gap-1.5">
+                              <input
+                                type="number"
+                                min={1}
+                                title="Adults"
+                                value={adults}
+                                onChange={(e) => setAdults(Math.max(1, Number(e.target.value)))}
+                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                title="Children"
+                                value={childrenCount}
+                                onChange={(e) =>
+                                  setChildrenCount(Math.max(0, Number(e.target.value)))
+                                }
+                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <hr className="border-slate-100" />
+
+                        {/* Guest Information Block (with Residential Address, ID Type, ID Number, ID Expiry Date) */}
+                        <div className="space-y-3.5">
+                          <div className="flex items-center gap-2 text-[#0b6b3a]">
+                            <UserCircle2 className="w-4 h-4 shrink-0" />
+                            <h4 className="font-display text-sm font-bold">Guest Information</h4>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                First Name <span className="text-rose-600">*</span>
+                              </label>
+                              <input
+                                required
+                                type="text"
+                                value={guestFirstName}
+                                onChange={(e) => setGuestFirstName(e.target.value)}
+                                placeholder="e.g. John"
+                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Last Name <span className="text-rose-600">*</span>
+                              </label>
+                              <input
+                                required
+                                type="text"
+                                value={guestLastName}
+                                onChange={(e) => setGuestLastName(e.target.value)}
+                                placeholder="e.g. Doe"
+                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Phone <span className="text-rose-600">*</span>
+                              </label>
+                              <div className="relative">
+                                <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input
+                                  required
+                                  type="text"
+                                  value={guestPhone}
+                                  onChange={(e) => setGuestPhone(e.target.value)}
+                                  placeholder="+234 801 234 5678"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg pl-8 pr-3 text-xs font-mono-tabular focus:outline-none focus:border-[#0b6b3a]"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Email
+                              </label>
+                              <div className="relative">
+                                <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input
+                                  type="email"
+                                  value={guestEmail}
+                                  onChange={(e) => setGuestEmail(e.target.value)}
+                                  placeholder="john.doe@example.com"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg pl-8 pr-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="sm:col-span-2">
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Residential Address
+                              </label>
+                              <div className="relative">
+                                <MapPin className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input
+                                  type="text"
+                                  value={guestAddress}
+                                  onChange={(e) => setGuestAddress(e.target.value)}
+                                  placeholder="House / Street / Estate / Residential Address"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg pl-8 pr-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Nationality
+                              </label>
+                              <CountrySelect
+                                value={guestCountry}
+                                onChange={setGuestCountry}
+                                placeholder="Search nationality / country..."
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  City
+                                </label>
+                                <input
+                                  type="text"
+                                  value={guestCity}
+                                  onChange={(e) => setGuestCity(e.target.value)}
+                                  placeholder="e.g. Enugu"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  State
+                                </label>
+                                <input
+                                  type="text"
+                                  value={guestState}
+                                  onChange={(e) => setGuestState(e.target.value)}
+                                  placeholder="State"
+                                  className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* KYC Identity Row: ID Type, ID Number, ID Expiry Date */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                ID Type
+                              </label>
                               <select
-                                value={bookingCurrency}
-                                onChange={(e) => {
-                                  const nextCur = e.target.value as ChannelCurrency;
-                                  setBookingCurrency(nextCur);
+                                value={inlineIdType}
+                                onChange={(e) =>
+                                  setInlineIdType(e.target.value as GuestRecord['idType'])
+                                }
+                                className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs focus:outline-none focus:border-[#0b6b3a]"
+                              >
+                                <option value="NIN">NIN</option>
+                                <option value="International Passport">International Passport</option>
+                                <option value="Driver License">Driver License</option>
+                                <option value="Voter Card">Voter Card</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                ID Number
+                              </label>
+                              <input
+                                type="text"
+                                value={inlineIdNumber}
+                                onChange={(e) => setInlineIdNumber(e.target.value)}
+                                placeholder="Document / Passport No."
+                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#0b6b3a]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                ID Expiry Date
+                              </label>
+                              <input
+                                type="date"
+                                value={inlineIdExpiryDate}
+                                onChange={(e) => setInlineIdExpiryDate(e.target.value)}
+                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#0b6b3a]"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <hr className="border-slate-100" />
+
+                        {/* Booking Source, Rate Plan & Reservation Status */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-[#0b6b3a] mb-1">
+                              Booking Source
+                            </label>
+                            <select
+                              value={channel}
+                              onChange={(e) => {
+                                const nextCh = e.target.value as ReservationRecord['channel'];
+                                setChannel(nextCh);
+                                setBookingPaymentStatusManual(false);
+                                const nextIsOta = isOtaBookingChannel(nextCh);
+                                const defaultRoomTotal = baseRateNgn * Math.max(1, nights);
+                                if (!nextIsOta) {
+                                  setBookingCollectionMode('hotel_collect');
+                                  setBookingOtaPayoutStatus('pending');
+                                  setBookingActualPayoutInput('0');
+                                  setBookingAmountDueManual(false);
+                                  setBookingCurrency('NGN');
+                                  setBookingFxRateInput('1');
+                                  setBookingNightlyRateInput(formatPriceInputWithCommas(baseRateNgn));
+                                  setBookingOtaPaidSourceInput('');
+                                  setBookingExpectedPayoutManual(false);
+                                  setBookingExpectedPayoutInput(
+                                    formatPriceInputWithCommas(defaultRoomTotal)
+                                  );
+                                  setBookingHotelPaidInput('0');
+                                  setPaymentMethod('Bank Transfer');
+                                } else {
+                                  setBookingCollectionMode('ota_prepaid');
+                                  setBookingOtaPayoutStatus('pending');
+                                  setBookingActualPayoutInput('0');
+                                  setBookingAmountDueInput('0');
+                                  setBookingAmountDueManual(false);
+                                  const nextCur = getDefaultOtaChannelCurrency(nextCh);
                                   const nextFx =
                                     nextCur === 'NGN'
                                       ? 1
                                       : getFxRateToNgn(nextCur, property.usdExchangeRateNgn);
+                                  setBookingCurrency(nextCur);
                                   setBookingFxRateInput(
                                     nextCur === 'NGN' ? '1' : formatPriceInputWithCommas(nextFx)
                                   );
+                                  const srcNightly =
+                                    nextCur === 'NGN'
+                                      ? baseRateNgn
+                                      : Number((baseRateNgn / Math.max(1, nextFx)).toFixed(2));
                                   setBookingNightlyRateInput(
                                     nextCur === 'NGN'
                                       ? formatPriceInputWithCommas(baseRateNgn)
-                                      : String(
-                                          Number((baseRateNgn / Math.max(1, nextFx)).toFixed(2))
-                                        )
+                                      : String(srcNightly)
                                   );
+                                  setBookingOtaPaidSourceInput(
+                                    String(Number((srcNightly * Math.max(1, nights)).toFixed(2)))
+                                  );
+                                  setBookingHotelPaidInput('0');
+                                  setPaymentMethod('OTA Platform Payout');
                                   if (!bookingExpectedPayoutManual) {
-                                    const srcAmt =
-                                      parseFormattedPriceInput(bookingOtaPaidSourceInput) ?? 0;
-                                    if (srcAmt > 0) {
-                                      setBookingExpectedPayoutInput(
-                                        formatPriceInputWithCommas(Math.round(srcAmt * nextFx))
-                                      );
-                                    }
+                                    setBookingExpectedPayoutInput(
+                                      formatPriceInputWithCommas(defaultRoomTotal)
+                                    );
                                   }
-                                }}
-                                className="h-10 border border-slate-200 rounded-lg px-2 bg-white text-xs font-semibold"
-                              >
-                                {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
-                                  <option key={cur} value={cur}>
-                                    {cur}
-                                  </option>
-                                ))}
-                              </select>
+                                }
+                              }}
+                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium focus:outline-none focus:border-[#0b6b3a]"
+                            >
+                              {PRIMARY_BOOKING_SOURCES.map((src) => (
+                                <option key={src.value} value={src.value}>
+                                  {src.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-[#0b6b3a] mb-1">
+                              Rate Plan
+                            </label>
+                            <select
+                              value={bookingRatePlan}
+                              onChange={(e) => setBookingRatePlan(e.target.value)}
+                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium focus:outline-none focus:border-[#0b6b3a]"
+                            >
+                              {RATE_PLAN_OPTIONS.map((plan) => (
+                                <option key={plan} value={plan}>
+                                  {plan}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                              Reservation Status
+                            </label>
+                            <select
+                              value={initialBookingStatus}
+                              onChange={(e) =>
+                                setInitialBookingStatus(e.target.value as 'confirmed' | 'pending')
+                              }
+                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-medium focus:outline-none focus:border-[#0b6b3a]"
+                            >
+                              <option value="confirmed">Confirmed</option>
+                              <option value="pending">Pending</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Payment Section */}
+                        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/30 p-4 space-y-3.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h4 className="font-display text-xs font-bold text-[#0b6b3a] uppercase tracking-wider">
+                              Payment
+                            </h4>
+                            <span className="text-[11px] font-mono-tabular text-emerald-800">
+                              1 USD = ₦{internalUsdRate.toLocaleString()}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Nightly Rate ({activeCur})
+                              </label>
                               <input
                                 type="text"
                                 inputMode="decimal"
-                                disabled={bookingCurrency === 'NGN'}
-                                value={bookingCurrency === 'NGN' ? '1' : bookingFxRateInput}
-                                onChange={(e) =>
-                                  handleCommaPriceChange(
-                                    e,
-                                    bookingFxRateInput,
-                                    setBookingFxRateInput
-                                  )
-                                }
-                                placeholder="FX Rate"
-                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular disabled:bg-slate-100"
-                              />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="block text-[11px] font-semibold text-blue-900 mb-1">
-                              Paid to OTA — {channel} ({activeCur})
-                            </label>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="0.00"
-                              value={bookingOtaPaidSourceInput}
-                              onChange={(e) => {
-                                setBookingPaymentStatusManual(false);
-                                handleCommaPriceChange(
-                                  e,
-                                  bookingOtaPaidSourceInput,
-                                  (nextVal) => {
-                                    setBookingOtaPaidSourceInput(nextVal);
-                                    if (!bookingExpectedPayoutManual) {
-                                      const parsedSrc = parseFormattedPriceInput(nextVal) ?? 0;
-                                      if (parsedSrc > 0) {
+                                value={bookingNightlyRateInput}
+                                onChange={(e) => {
+                                  handleCommaPriceChange(e, bookingNightlyRateInput, (nextVal) => {
+                                    setBookingNightlyRateInput(nextVal);
+                                    const parsedRate = parseFormattedPriceInput(nextVal) ?? 0;
+                                    if (parsedRate >= 0) {
+                                      const nextTotalSrc = parsedRate * safeNights;
+                                      const nextTotalNgn =
+                                        activeCur === 'NGN'
+                                          ? Math.round(nextTotalSrc)
+                                          : Math.round(nextTotalSrc * fxRate);
+                                      if (!bookingExpectedPayoutManual) {
                                         setBookingExpectedPayoutInput(
-                                          formatPriceInputWithCommas(Math.round(parsedSrc * fxRate))
+                                          formatPriceInputWithCommas(nextTotalNgn)
+                                        );
+                                      }
+                                      if (!isOta && estPayStatus === 'Paid') {
+                                        setBookingHotelPaidInput(
+                                          formatPriceInputWithCommas(nextTotalNgn)
                                         );
                                       }
                                     }
+                                  });
+                                }}
+                                placeholder={activeCur === 'NGN' ? '120,000' : '120.00'}
+                                className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Payment Method
+                              </label>
+                              <select
+                                value={paymentMethod}
+                                onChange={(e) =>
+                                  setPaymentMethod(
+                                    e.target.value as ReservationRecord['paymentMethod']
+                                  )
+                                }
+                                className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                              >
+                                <option value="Bank Transfer">Bank Transfer</option>
+                                <option value="Card POS">Card POS</option>
+                                <option value="Cash NGN">Cash NGN</option>
+                                <option value="Online Gateway">Online Gateway</option>
+                                <option value="Corporate Invoice">Corporate Invoice</option>
+                                {isOta && (
+                                  <option value="OTA Platform Payout">OTA Platform Payout</option>
+                                )}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                Payment Status
+                              </label>
+                              <select
+                                value={estPayStatus}
+                                onChange={(e) => {
+                                  const nextStatus = e.target.value as PaymentStatusLabel;
+                                  setBookingPaymentStatus(nextStatus);
+                                  setBookingPaymentStatusManual(true);
+                                  if (isOta && nextStatus === 'Paid to OTA') {
+                                    setBookingCollectionMode('ota_prepaid');
+                                    setBookingAmountDueInput('0');
+                                    setBookingAmountDueManual(true);
+                                  } else if (nextStatus === 'Unpaid') {
+                                    setBookingHotelPaidInput('0');
+                                    setBookingAmountDueManual(false);
+                                    if (isOta) setBookingOtaPaidSourceInput('0');
+                                  } else if (nextStatus === 'Paid' && !isCollectedByOtaNew) {
+                                    setBookingHotelPaidInput(
+                                      formatPriceInputWithCommas(estTotalCharges)
+                                    );
+                                    setBookingAmountDueManual(false);
                                   }
-                                );
-                              }}
-                              className="w-full h-10 border border-blue-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-blue-900"
-                            />
-                          </div>
+                                }}
+                                className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-semibold"
+                              >
+                                {isOta && <option value="Paid to OTA">Paid to OTA</option>}
+                                <option value="Paid">Paid</option>
+                                <option value="Partial">Partial</option>
+                                <option value="Unpaid">Unpaid</option>
+                              </select>
+                            </div>
 
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                              Expected OTA Payout (₦)
-                            </label>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="e.g. 165,000"
-                              value={bookingExpectedPayoutInput}
-                              onChange={(e) => {
-                                setBookingExpectedPayoutManual(true);
-                                handleCommaPriceChange(
-                                  e,
-                                  bookingExpectedPayoutInput,
-                                  setBookingExpectedPayoutInput
-                                );
-                              }}
-                              className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
-                            />
-                          </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
+                                Amount Paid to {propertyShortName} (₦)
+                              </label>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={bookingHotelPaidInput}
+                                onChange={(e) => {
+                                  setBookingPaymentStatusManual(false);
+                                  setBookingAmountDueManual(false);
+                                  handleCommaPriceChange(
+                                    e,
+                                    bookingHotelPaidInput,
+                                    setBookingHotelPaidInput
+                                  );
+                                }}
+                                placeholder="0"
+                                className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900"
+                              />
+                            </div>
 
-                          {isCollectedByOtaNew && (
-                            <>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-blue-900 mb-1">
-                                  OTA Payout Status
-                                </label>
-                                <select
-                                  value={bookingOtaPayoutStatus}
-                                  onChange={(e) => {
-                                    const nextP = e.target.value as OtaPayoutStatus;
-                                    setBookingOtaPayoutStatus(nextP);
-                                    if (nextP === 'received') {
-                                      setBookingActualPayoutInput(
-                                        formatPriceInputWithCommas(expectedPayoutEst)
+                            {isOta && (
+                              <>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-blue-900 mb-1">
+                                    Payment Collection Type
+                                  </label>
+                                  <select
+                                    value={bookingCollectionMode}
+                                    onChange={(e) => {
+                                      const nextMode = e.target.value as OtaPaymentCollectionMode;
+                                      setBookingCollectionMode(nextMode);
+                                      setBookingPaymentStatusManual(false);
+                                      if (nextMode === 'ota_prepaid') {
+                                        setBookingAmountDueInput('0');
+                                        setBookingAmountDueManual(false);
+                                        setPaymentMethod('OTA Platform Payout');
+                                      } else {
+                                        setBookingAmountDueManual(false);
+                                        setPaymentMethod('Bank Transfer');
+                                      }
+                                    }}
+                                    className="w-full h-10 border border-blue-200 rounded-lg px-3 bg-white text-xs font-semibold text-blue-900"
+                                  >
+                                    <option value="ota_prepaid">Paid to OTA</option>
+                                    <option value="pay_at_property">Pay at Property</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                    OTA Currency &amp; FX (₦)
+                                  </label>
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <select
+                                      value={bookingCurrency}
+                                      onChange={(e) => {
+                                        const nextCur = e.target.value as ChannelCurrency;
+                                        setBookingCurrency(nextCur);
+                                        const nextFx =
+                                          nextCur === 'NGN'
+                                            ? 1
+                                            : getFxRateToNgn(nextCur, property.usdExchangeRateNgn);
+                                        setBookingFxRateInput(
+                                          nextCur === 'NGN' ? '1' : formatPriceInputWithCommas(nextFx)
+                                        );
+                                        setBookingNightlyRateInput(
+                                          nextCur === 'NGN'
+                                            ? formatPriceInputWithCommas(baseRateNgn)
+                                            : String(
+                                                Number(
+                                                  (baseRateNgn / Math.max(1, nextFx)).toFixed(2)
+                                                )
+                                              )
+                                        );
+                                      }}
+                                      className="h-10 border border-slate-200 rounded-lg px-2 bg-white text-xs font-semibold"
+                                    >
+                                      {SUPPORTED_CHANNEL_CURRENCIES.map((cur) => (
+                                        <option key={cur} value={cur}>
+                                          {cur}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      disabled={bookingCurrency === 'NGN'}
+                                      value={bookingCurrency === 'NGN' ? '1' : bookingFxRateInput}
+                                      onChange={(e) =>
+                                        handleCommaPriceChange(
+                                          e,
+                                          bookingFxRateInput,
+                                          setBookingFxRateInput
+                                        )
+                                      }
+                                      placeholder="FX Rate"
+                                      className="w-full h-10 border border-slate-200 bg-white rounded-lg px-2.5 text-xs font-mono-tabular disabled:bg-slate-100"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-blue-900 mb-1">
+                                    Paid to {channel} ({activeCur})
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="0.00"
+                                    value={bookingOtaPaidSourceInput}
+                                    onChange={(e) => {
+                                      setBookingPaymentStatusManual(false);
+                                      handleCommaPriceChange(
+                                        e,
+                                        bookingOtaPaidSourceInput,
+                                        (nextVal) => {
+                                          setBookingOtaPaidSourceInput(nextVal);
+                                          if (!bookingExpectedPayoutManual) {
+                                            const parsedSrc = parseFormattedPriceInput(nextVal) ?? 0;
+                                            if (parsedSrc > 0) {
+                                              setBookingExpectedPayoutInput(
+                                                formatPriceInputWithCommas(
+                                                  Math.round(parsedSrc * fxRate)
+                                                )
+                                              );
+                                            }
+                                          }
+                                        }
                                       );
-                                    } else {
-                                      setBookingActualPayoutInput('0');
+                                    }}
+                                    className="w-full h-10 border border-blue-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-blue-900"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                    Expected OTA Payout (₦)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="e.g. 165,000"
+                                    value={bookingExpectedPayoutInput}
+                                    onChange={(e) => {
+                                      setBookingExpectedPayoutManual(true);
+                                      handleCommaPriceChange(
+                                        e,
+                                        bookingExpectedPayoutInput,
+                                        setBookingExpectedPayoutInput
+                                      );
+                                    }}
+                                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                                  />
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Optional Refundable Caution Deposit */}
+                          <div className="pt-2 border-t border-emerald-200/70 space-y-2.5">
+                            <label className="inline-flex items-center gap-2 text-xs font-semibold text-amber-950 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={cautionDepositEnabled}
+                                onChange={(e) => setCautionDepositEnabled(e.target.checked)}
+                                className="rounded border-amber-400 text-[#0b6b3a]"
+                              />
+                              <span>Add Optional Refundable Caution / Deposit Fee</span>
+                            </label>
+                            {cautionDepositEnabled && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                    Caution Fee Amount (₦)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={cautionDepositAmountInput}
+                                    onChange={(e) =>
+                                      handleCommaPriceChange(
+                                        e,
+                                        cautionDepositAmountInput,
+                                        setCautionDepositAmountInput
+                                      )
                                     }
-                                  }}
-                                  className="w-full h-10 border border-blue-200 rounded-lg px-3 bg-white text-xs font-semibold text-blue-900"
-                                >
-                                  <option value="pending">Pending</option>
-                                  <option value="received">Received</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
-                                  Actual OTA Payout Received (₦)
+                                    placeholder="20,000"
+                                    className="w-full h-9 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                    Amount Collected (₦)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={cautionDepositCollectedInput}
+                                    onChange={(e) =>
+                                      handleCommaPriceChange(
+                                        e,
+                                        cautionDepositCollectedInput,
+                                        setCautionDepositCollectedInput
+                                      )
+                                    }
+                                    placeholder="0"
+                                    className="w-full h-9 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
+                                  />
+                                </div>
+                                <label className="h-9 inline-flex items-center gap-2 px-3 rounded-lg bg-white border border-amber-300 text-xs font-semibold text-amber-950 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={cautionDepositRefunded}
+                                    onChange={(e) => setCautionDepositRefunded(e.target.checked)}
+                                    className="rounded border-amber-400 text-[#0b6b3a]"
+                                  />
+                                  <span>Refunded</span>
                                 </label>
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  disabled={bookingOtaPayoutStatus !== 'received'}
-                                  value={
-                                    bookingOtaPayoutStatus === 'received'
-                                      ? bookingActualPayoutInput
-                                      : '0'
-                                  }
-                                  onChange={(e) =>
-                                    handleCommaPriceChange(
-                                      e,
-                                      bookingActualPayoutInput,
-                                      setBookingActualPayoutInput
-                                    )
-                                  }
-                                  placeholder="0"
-                                  className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900 disabled:bg-slate-100 disabled:text-slate-400"
-                                />
                               </div>
-                            </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Special Requests */}
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#0b6b3a] mb-1">
+                            Special Requests
+                          </label>
+                          <textarea
+                            rows={3}
+                            value={bookingSpecialRequests}
+                            onChange={(e) => setBookingSpecialRequests(e.target.value)}
+                            placeholder="Any special request (e.g. airport pickup, early check-in request, baby cot, dietary preference)..."
+                            className="w-full border border-slate-200 bg-white rounded-lg px-3 py-2.5 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                          />
+                        </div>
+
+                        {/* Bottom Action Row: Reset & Confirm Reservation */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={handleResetBookingForm}
+                            className="sm:col-span-4 h-11 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            <span>Reset</span>
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={busyId === 'booking' || !currentSelectionAvailability.available}
+                            className="sm:col-span-8 h-11 inline-flex items-center justify-center gap-2 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white text-sm font-bold disabled:opacity-50 cursor-pointer shadow-xs"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>
+                              {busyId === 'booking'
+                                ? 'Creating Reservation...'
+                                : 'Confirm Reservation'}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* RIGHT COLUMN (4/12): Sticky Room Availability & Reservation Summary */}
+                    <div className="xl:col-span-4 space-y-4 xl:sticky xl:top-4">
+                      {/* Card 1: Room Availability */}
+                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                        <div className="bg-[#0b6b3a] text-white px-5 py-3">
+                          <h3 className="font-display text-sm font-bold">Room Availability</h3>
+                        </div>
+                        <div className="p-5 space-y-3">
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`w-9 h-9 rounded-full inline-flex items-center justify-center shrink-0 ${
+                                currentSelectionAvailability.available
+                                  ? 'bg-[#0b6b3a] text-white'
+                                  : 'bg-rose-600 text-white'
+                              }`}
+                            >
+                              {currentSelectionAvailability.available ? (
+                                <CheckCircle2 className="w-5 h-5" />
+                              ) : (
+                                <Ban className="w-5 h-5" />
+                              )}
+                            </span>
+                            <div>
+                              <p
+                                className={`font-display text-base font-bold ${
+                                  currentSelectionAvailability.available
+                                    ? 'text-slate-900'
+                                    : 'text-rose-700'
+                                }`}
+                              >
+                                {currentSelectionAvailability.available
+                                  ? 'Room Available'
+                                  : 'Dates Unavailable'}
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                {currentSelectionAvailability.available
+                                  ? `${openTypeRoomsCount} open room${openTypeRoomsCount === 1 ? '' : 's'} for selected dates`
+                                  : currentSelectionAvailability.message || 'Select different dates or room'}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
+                            <span className="font-semibold text-slate-800 truncate">
+                              {pickedRoom
+                                ? `${pickedRoom.roomNumber} · ${pickedRoom.roomType}`
+                                : newRequestedRoomType || 'Select Room Type'}
+                            </span>
+                            <span className="font-mono-tabular font-bold text-[#0b6b3a] whitespace-nowrap">
+                              {formatChannelCurrency(activeSourceNightlyRate, activeCur)} / night
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card 2: Reservation Summary */}
+                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                        <div className="bg-[#0b6b3a] text-white px-5 py-3">
+                          <h3 className="font-display text-sm font-bold">Reservation Summary</h3>
+                        </div>
+                        <div className="p-5 text-xs space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Check-In</span>
+                            <span className="font-semibold text-slate-900 font-mono-tabular">
+                              {formatPrettyDate(checkInDate)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Check-Out</span>
+                            <span className="font-semibold text-slate-900 font-mono-tabular">
+                              {formatPrettyDate(checkOutDate)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Nights</span>
+                            <span className="font-semibold text-slate-900 font-mono-tabular">
+                              {safeNights}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Room Type</span>
+                            <span className="font-semibold text-slate-900 text-right">
+                              {newRequestedRoomType || '—'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Room Assigned</span>
+                            <span className="font-semibold text-slate-900 text-right">
+                              {pickedRoom ? pickedRoom.roomNumber : 'Assign at Check-In'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Guests</span>
+                            <span className="font-semibold text-slate-900 font-mono-tabular">
+                              {totalGuestsCount} ({adults}A{childrenCount > 0 ? `, ${childrenCount}C` : ''})
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Rate Plan</span>
+                            <span className="font-semibold text-slate-900 text-right">
+                              {bookingRatePlan}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-500">Payment Status</span>
+                            <span className="font-semibold text-[#0b6b3a]">{estPayStatus}</span>
+                          </div>
+
+                          <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                            <span className="text-slate-600 font-medium">Rate Per Night</span>
+                            <span className="font-mono-tabular font-bold text-slate-900">
+                              {formatChannelCurrency(activeSourceNightlyRate, activeCur)}
+                            </span>
+                          </div>
+
+                          <div className="-mx-5 px-5 py-3.5 mt-2 bg-emerald-50 border-y border-emerald-200 flex items-center justify-between gap-2">
+                            <span className="font-display text-sm font-bold text-[#0b6b3a]">
+                              Total Amount
+                            </span>
+                            <div className="text-right">
+                              <p className="font-mono-tabular text-lg font-extrabold text-[#0b6b3a]">
+                                {formatNgn(activeStayNgnEquivalent)}
+                              </p>
+                              <p className="text-[10px] font-mono-tabular text-emerald-800">
+                                ≈ {formatUsd(activeStayUsdEquivalent)} USD
+                              </p>
+                            </div>
+                          </div>
+
+                          {hotelMoneyReceivedEst > 0 && (
+                            <div className="flex items-center justify-between gap-2 pt-1">
+                              <span className="text-slate-500">Paid Now</span>
+                              <span className="font-mono-tabular font-semibold text-emerald-700">
+                                {formatNgn(hotelMoneyReceivedEst)}
+                              </span>
+                            </div>
                           )}
-                        </>
-                      )}
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
-                          Direct Payment Received by {propertyShortName} (₦)
-                        </label>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={bookingHotelPaidInput}
-                          onChange={(e) => {
-                            setBookingPaymentStatusManual(false);
-                            setBookingAmountDueManual(false);
-                            handleCommaPriceChange(
-                              e,
-                              bookingHotelPaidInput,
-                              setBookingHotelPaidInput
-                            );
-                          }}
-                          placeholder="0"
-                          className="w-full h-10 border border-emerald-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold text-emerald-900"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SECTION 4: OPTIONAL REFUNDABLE CAUTION / DEPOSIT FEE */}
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3 text-xs">
-                    <label className="inline-flex items-center gap-2 font-bold text-amber-950 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={cautionDepositEnabled}
-                        onChange={(e) => setCautionDepositEnabled(e.target.checked)}
-                        className="rounded border-amber-400 text-emerald-600"
-                      />
-                      <span>4. Optional Refundable Caution / Deposit Fee</span>
-                    </label>
-
-                    {cautionDepositEnabled && (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Caution / Deposit Fee Amount (₦)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={cautionDepositAmountInput}
-                            onChange={(e) =>
-                              handleCommaPriceChange(
-                                e,
-                                cautionDepositAmountInput,
-                                setCautionDepositAmountInput
-                              )
-                            }
-                            placeholder="20,000"
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
-                          />
+                          {estBalanceDue > 0 && (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-slate-500">Balance Due</span>
+                              <span className="font-mono-tabular font-bold text-rose-700">
+                                {formatNgn(estBalanceDue)} ({formatUsd(estBalanceUsd)})
+                              </span>
+                            </div>
+                          )}
                         </div>
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Amount Collected (₦)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={cautionDepositCollectedInput}
-                            onChange={(e) =>
-                              handleCommaPriceChange(
-                                e,
-                                cautionDepositCollectedInput,
-                                setCautionDepositCollectedInput
-                              )
-                            }
-                            placeholder="0"
-                            className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular font-semibold"
-                          />
-                        </div>
-                        <label className="h-10 inline-flex items-center gap-2 px-3 rounded-lg bg-white border border-amber-300 text-xs font-semibold text-amber-950 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={cautionDepositRefunded}
-                            onChange={(e) => setCautionDepositRefunded(e.target.checked)}
-                            className="rounded border-amber-400 text-emerald-600"
-                          />
-                          <span>Confirm Refunded to Guest</span>
-                        </label>
                       </div>
-                    )}
-                  </div>
 
-                  {/* SECTION 5: IMMEDIATE CHECK-IN & MANDATORY VERIFICATION */}
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3 text-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <label className="inline-flex items-center gap-2 font-bold text-slate-900 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={immediateCheckIn}
-                          onChange={(e) => setImmediateCheckIn(e.target.checked)}
-                          className="rounded border-slate-300 text-emerald-600"
-                        />
-                        <span>5. Check in guest immediately</span>
-                      </label>
-                      {immediateCheckIn && !selectedRoomId && (
-                        <span className="text-[11px] font-semibold text-amber-800">
-                          Assign a specific room above to enable immediate check-in.
+                      {/* Card 3: Confirmation & Check-In Policy Notice */}
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 flex items-start gap-3 text-xs text-emerald-950">
+                        <span className="w-6 h-6 rounded-full bg-[#0b6b3a] text-white inline-flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
+                          i
                         </span>
-                      )}
-                    </div>
-
-                    {immediateCheckIn && (
-                      <div className="space-y-3 pt-2 border-t border-emerald-200/70">
-                        <p className="font-bold text-slate-900">
-                          Mandatory Check-In Verification
-                        </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                              Guest ID Type
-                            </label>
-                            <select
-                              value={inlineIdType}
-                              onChange={(e) => setInlineIdType(e.target.value as GuestRecord['idType'])}
-                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
-                            >
-                              <option value="NIN">NIN</option>
-                              <option value="International Passport">International Passport</option>
-                              <option value="Driver License">Driver License</option>
-                              <option value="Voter Card">Voter Card</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                              ID Number *
-                            </label>
-                            <input
-                              type="text"
-                              required
-                              value={inlineIdNumber}
-                              onChange={(e) => setInlineIdNumber(e.target.value)}
-                              placeholder="ID / Passport No."
-                              className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs font-mono-tabular"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={inlinePayConfirmed}
-                              onChange={(e) => setInlinePayConfirmed(e.target.checked)}
-                            />
-                            <span>1. Payment confirmed (deposit/transfer verified)</span>
-                          </label>
-                          <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={inlineIdVerified}
-                              onChange={(e) => setInlineIdVerified(e.target.checked)}
-                            />
-                            <span>2. Guest government ID inspected &amp; verified</span>
-                          </label>
-                          <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={inlineRoomReady}
-                              onChange={(e) => setInlineRoomReady(e.target.checked)}
-                            />
-                            <span>3. Room inspected ready for guest</span>
-                          </label>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
-                          <span className="font-semibold text-slate-800">4. Key Issued? *</span>
-                          <div className="inline-flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setInlineKeyIssued('yes')}
-                              className={`h-8 px-3.5 rounded font-semibold border cursor-pointer ${
-                                inlineKeyIssued === 'yes'
-                                  ? 'bg-emerald-600 border-emerald-600 text-white'
-                                  : 'bg-white border-slate-200 text-slate-700'
-                              }`}
-                            >
-                              Yes
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setInlineKeyIssued('no')}
-                              className={`h-8 px-3.5 rounded font-semibold border cursor-pointer ${
-                                inlineKeyIssued === 'no'
-                                  ? 'bg-rose-600 border-rose-600 text-white'
-                                  : 'bg-white border-slate-200 text-slate-700'
-                              }`}
-                            >
-                              No
-                            </button>
-                          </div>
+                        <div className="space-y-1 leading-relaxed">
+                          <p className="font-semibold text-[#0b6b3a]">
+                            Reservation will be saved without automatic check-in.
+                          </p>
+                          <p className="text-slate-700">
+                            After confirmation, use <strong>Proceed to Check-In</strong> on the
+                            scheduled arrival date ({formatPrettyDate(checkInDate)}) to verify ID,
+                            assign a room if needed, and complete check-in.
+                          </p>
                         </div>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Action Footer */}
-                  <div className="flex flex-wrap items-center justify-end gap-3 pt-2 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => setShowBookingForm(false)}
-                      className="h-10 px-4 text-xs font-semibold text-slate-600 hover:text-slate-900 rounded-lg border border-slate-200 bg-white cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={
-                        busyId === 'booking' ||
-                        !checkRoomDateRangeAvailability({
-                          room: selectedRoomId
-                            ? rooms.find((r) => r.id === selectedRoomId)
-                            : undefined,
-                          roomType: selectedRoomId
-                            ? rooms.find((r) => r.id === selectedRoomId)?.roomType
-                            : newRequestedRoomType,
-                          rooms,
-                          checkInDate,
-                          checkOutDate,
-                          reservations,
-                          blockedDates,
-                        }).available ||
-                        (immediateCheckIn &&
-                          (!selectedRoomId ||
-                            !inlinePayConfirmed ||
-                            !inlineIdVerified ||
-                            inlineIdNumber.trim().length < 3 ||
-                            inlineKeyIssued !== 'yes' ||
-                            !inlineRoomReady))
-                      }
-                      className="h-10 px-5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 cursor-pointer"
-                    >
-                      {busyId === 'booking'
-                        ? 'Saving...'
-                        : immediateCheckIn
-                          ? `Verify & Check In (${safeNights} ${safeNights === 1 ? 'night' : 'nights'})`
-                          : `Confirm Reservation (${safeNights} ${safeNights === 1 ? 'night' : 'nights'})`}
-                    </button>
+                    </div>
                   </div>
                 </form>
               );
@@ -9654,17 +9980,161 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         </div>
       )}
 
+      {createdReservationSuccess && (() => {
+        const successCheckInGuard = getCheckInDateRestriction(createdReservationSuccess, todayIso);
+        const successSummary = getReservationPaymentSummary(
+          createdReservationSuccess,
+          property.usdExchangeRateNgn
+        );
+        const canStaffCheckIn =
+          activeRole === 'pch_admin' ||
+          activeRole === 'property_admin' ||
+          activeRole === 'front_desk';
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full overflow-hidden shadow-xl">
+              <div className="bg-[#0b6b3a] text-white px-6 py-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-200 shrink-0" />
+                  <div>
+                    <h3 className="font-display text-base font-bold">
+                      Reservation Created Successfully
+                    </h3>
+                    <p className="text-xs text-emerald-100 font-mono-tabular">
+                      Booking Ref: {createdReservationSuccess.bookingRef}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCreatedReservationSuccess(null)}
+                  className="text-emerald-100 hover:text-white cursor-pointer"
+                  aria-label="Close confirmation"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4 text-xs">
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Guest</span>
+                    <span className="font-bold text-slate-900">
+                      {createdReservationSuccess.guestName}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Stay Dates</span>
+                    <span className="font-mono-tabular font-semibold text-slate-900">
+                      {createdReservationSuccess.checkInDate} → {createdReservationSuccess.checkOutDate} (
+                      {createdReservationSuccess.nights}n)
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Room Status</span>
+                    <span className="font-semibold text-[#0b6b3a]">
+                      {createdReservationSuccess.roomId
+                        ? `${createdReservationSuccess.roomNumber} (${createdReservationSuccess.requestedRoomType || 'Assigned'})`
+                        : `Unassigned (${createdReservationSuccess.requestedRoomType || 'Assign during Check-In'})`}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Total Amount</span>
+                    <span className="font-mono-tabular font-bold text-slate-900">
+                      {formatNgn(successSummary.totalAmount)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Payment Status</span>
+                    <span className="font-semibold text-[#0b6b3a]">
+                      {successSummary.paymentStatus} · Balance Due:{' '}
+                      {formatNgn(successSummary.balance)}
+                    </span>
+                  </div>
+                </div>
+
+                {successCheckInGuard.restricted && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex items-start gap-2 text-amber-900">
+                    <Clock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <p>{successCheckInGuard.message}</p>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = createdReservationSuccess;
+                      setCreatedReservationSuccess(null);
+                      setReceiptModalState({
+                        reservation: target,
+                        mode: 'reservation_payment',
+                        amountJustPaidNgn: target.hotelPaidNgn || target.paidNgn || 0,
+                        settlementMethodOverride: target.paymentMethod,
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Print Receipt</span>
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = createdReservationSuccess;
+                        setCreatedReservationSuccess(null);
+                        onSelectReservation?.(target.id);
+                      }}
+                      className="px-3.5 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold cursor-pointer"
+                    >
+                      View Booking
+                    </button>
+                    <button
+                      type="button"
+                      disabled={successCheckInGuard.restricted || !canStaffCheckIn}
+                      title={
+                        successCheckInGuard.restricted
+                          ? successCheckInGuard.message
+                          : 'Open room assignment & check-in verification'
+                      }
+                      onClick={() => {
+                        const target = createdReservationSuccess;
+                        setCreatedReservationSuccess(null);
+                        setCheckInTarget(target);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] disabled:opacity-50 text-white font-bold cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      <span>Proceed to Check-In</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {checkInTarget && (
         <CheckInProcessModal
           property={property}
           reservation={checkInTarget}
           room={rooms.find((r) => r.id === checkInTarget.roomId)}
           rooms={rooms}
+          reservations={reservations}
+          blockedDates={blockedDates}
           guest={
             guests.find((g) => g.id === checkInTarget.guestId) ||
             guests.find((g) => g.fullName.toLowerCase() === checkInTarget.guestName.toLowerCase())
           }
           actorRole={actorRole}
+          canCompleteCheckIn={
+            activeRole === 'pch_admin' ||
+            activeRole === 'property_admin' ||
+            activeRole === 'front_desk'
+          }
           onClose={() => setCheckInTarget(null)}
           onCompleted={(info) => {
             onNotify(`Verified & checked in ${info.guestName} into ${info.roomNumber}`);

@@ -170,6 +170,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
   const [newCountry, setNewCountry] = useState('Nigeria');
   const [newIdType, setNewIdType] = useState<GuestRecord['idType']>('NIN');
   const [newIdNumber, setNewIdNumber] = useState('');
+  const [newIdExpiryDate, setNewIdExpiryDate] = useState('');
   const [newVipTier, setNewVipTier] = useState<GuestRecord['vipTier']>('Standard');
   const [newNotes, setNewNotes] = useState('');
 
@@ -184,6 +185,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
   const [editCountry, setEditCountry] = useState('Nigeria');
   const [editIdType, setEditIdType] = useState<GuestRecord['idType']>('NIN');
   const [editIdNumber, setEditIdNumber] = useState('');
+  const [editIdExpiryDate, setEditIdExpiryDate] = useState('');
   const [editVipTier, setEditVipTier] = useState<GuestRecord['vipTier']>('Standard');
   const [editNotes, setEditNotes] = useState('');
 
@@ -350,6 +352,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
     setEditCountry(g.country || g.nationality || 'Nigeria');
     setEditIdType(g.idType || 'NIN');
     setEditIdNumber(g.idNumber || '');
+    setEditIdExpiryDate(g.idExpiryDate || '');
     setEditVipTier(g.vipTier || 'Standard');
     setEditNotes(g.notes || '');
     setEditingProfile(startInEdit);
@@ -369,6 +372,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
     setNewCountry('Nigeria');
     setNewIdType('NIN');
     setNewIdNumber('');
+    setNewIdExpiryDate('');
     setNewVipTier('Standard');
     setNewNotes('');
     setFormError(null);
@@ -398,6 +402,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
           nationality: newCountry.trim() || 'Nigeria',
           idType: newIdType,
           idNumber: newIdNumber.trim(),
+          idExpiryDate: newIdExpiryDate.trim(),
           vipTier: newVipTier,
           totalStays: 0,
           lifetimeSpendNgn: 0,
@@ -442,6 +447,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
           nationality: editCountry.trim() || 'Nigeria',
           idType: editIdType,
           idNumber: editIdNumber.trim(),
+          idExpiryDate: editIdExpiryDate.trim(),
           vipTier: editVipTier,
           notes: editNotes.trim(),
         },
@@ -664,7 +670,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
 
             {/* Identification & Notes */}
             <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3.5">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     ID Document Type
@@ -694,6 +700,17 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    ID Expiry Date
+                  </label>
+                  <input
+                    type="date"
+                    value={newIdExpiryDate}
+                    onChange={(e) => setNewIdExpiryDate(e.target.value)}
+                    className="w-full h-10 border border-slate-200 bg-white rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     VIP Tier
                   </label>
                   <select
@@ -707,7 +724,7 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                     <option value="Diplomatic">Diplomatic</option>
                   </select>
                 </div>
-                <div className="sm:col-span-3">
+                <div className="sm:col-span-2 lg:col-span-4">
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     Guest Notes & Preferences
                   </label>
@@ -1085,7 +1102,18 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                       className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
                     />
                   </div>
-                  <div className="sm:col-span-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      ID Expiry Date
+                    </label>
+                    <input
+                      type="date"
+                      value={editIdExpiryDate}
+                      onChange={(e) => setEditIdExpiryDate(e.target.value)}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs font-mono-tabular focus:outline-none focus:border-[#1c46be]"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                       VIP Tier
                     </label>
@@ -1188,6 +1216,12 @@ export const GuestsDirectoryView: React.FC<GuestsDirectoryViewProps> = ({
                     </dt>
                     <dd className="font-mono-tabular font-medium text-slate-900 text-right">
                       {g.idNumber ? `${g.idType} · ${g.idNumber}` : `${g.idType} · Pending`}
+                    </dd>
+                  </div>
+                  <div className="py-2.5 flex items-start justify-between gap-4">
+                    <dt className="text-slate-500 shrink-0">ID Expiry Date</dt>
+                    <dd className="font-mono-tabular font-medium text-slate-900 text-right">
+                      {g.idExpiryDate || '—'}
                     </dd>
                   </div>
                   <div className="py-2.5 flex items-start justify-between gap-4">

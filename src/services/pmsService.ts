@@ -62,13 +62,17 @@ import {
   DepartmentName,
   formatSystemPropertyId,
   getDefaultOtaChannelCurrency,
+  getCheckInDateRestriction,
   getFxRateToNgn,
+  getOtaCancellationRestriction,
+  getOtaCheckInRestriction,
   getPropertyCodePrefix,
   getPropertySubdomainSlug,
   GuestRecord,
   HousekeepingTaskRecord,
   InventoryItemRecord,
   isOtaBookingChannel,
+  isOtaReservation,
   LedgerEntryRecord,
   LicenseRecord,
   MaintenanceTicketRecord,
@@ -85,6 +89,7 @@ import {
   PlanInquiryRecord,
   PosMenuItemRecord,
   PosOrderRecord,
+  PosSection,
   PropertyMessageRecord,
   PropertyRecord,
   PropertyUserAccountRecord,
@@ -101,6 +106,7 @@ import {
   sortRoomsByNumber,
   StaffMemberRecord,
   StaffRole,
+  STANDARD_POS_MENU_TEMPLATE,
   STARTING_PROPERTY_SEQ,
   UserRoleProfile,
 } from '../types/pms';
@@ -238,6 +244,9 @@ export async function createReservationWorkflow(params: {
   guestNationality?: string;
   guestIdType?: GuestRecord['idType'];
   guestIdNumber?: string;
+  guestIdExpiryDate?: string;
+  ratePlan?: string;
+  specialRequests?: string;
   checkInDate: string;
   checkOutDate: string;
   bookedDate?: string;
@@ -275,6 +284,19 @@ export async function createReservationWorkflow(params: {
 }) {
   if (params.immediateCheckIn && !params.room) {
     throw new Error('A physical room must be assigned for immediate front desk check-in.');
+  }
+  if (params.immediateCheckIn) {
+    const checkInGuard = getCheckInDateRestriction(
+      {
+        channel: params.channel,
+        checkInDate: params.checkInDate,
+        paymentCollectionMode: params.paymentCollectionMode,
+      },
+      getLocalIsoDate()
+    );
+    if (checkInGuard.restricted) {
+      throw new Error(checkInGuard.message);
+    }
   }
 
   // Enforce real Firestore-level room availability check to block double-booking
@@ -428,7 +450,10 @@ export async function createReservationWorkflow(params: {
     country: params.guestCountry || params.guestNationality || 'Nigeria',
     nationality: params.guestNationality || params.guestCountry || 'Nigeria',
     idType: params.guestIdType || 'NIN',
-    idNumber: params.guestIdNumber || '',
+    idNumber: (params.guestIdNumber || '').trim().slice(0, 64),
+    ...(params.guestIdExpiryDate?.trim()
+      ? { idExpiryDate: params.guestIdExpiryDate.trim().slice(0, 24) }
+      : {}),
     vipTier: 'Standard',
     totalStays: params.immediateCheckIn ? 1 : 0,
     lifetimeSpendNgn: hotelPaidNgn + (isOta && otaPaidNgn > 0 ? expectedPayoutNgn : 0),
@@ -511,7 +536,14 @@ export async function createReservationWorkflow(params: {
     status,
     paymentMethod: params.paymentMethod,
     ...(params.guestIdType ? { idType: params.guestIdType } : {}),
-    ...(params.guestIdNumber ? { idNumber: params.guestIdNumber } : {}),
+    ...(params.guestIdNumber?.trim() ? { idNumber: params.guestIdNumber.trim().slice(0, 64) } : {}),
+    ...(params.guestIdExpiryDate?.trim()
+      ? { idExpiryDate: params.guestIdExpiryDate.trim().slice(0, 24) }
+      : {}),
+    ...(params.ratePlan?.trim() ? { ratePlan: params.ratePlan.trim().slice(0, 64) } : {}),
+    ...(params.specialRequests?.trim()
+      ? { specialRequests: params.specialRequests.trim().slice(0, 500) }
+      : {}),
     ...(params.immediateCheckIn
       ? {
           paymentConfirmed: params.paymentConfirmed ?? true,
@@ -610,6 +642,19 @@ export async function transitionReservationStatus(params: {
   allBillsSettledConfirmed?: boolean;
   actorRole: string;
 }) {
+  if (params.nextStatus === 'checked_in' && params.reservation.status !== 'checked_in') {
+    const checkInGuard = getCheckInDateRestriction(params.reservation, getLocalIsoDate());
+    if (checkInGuard.restricted) {
+      throw new Error(checkInGuard.message);
+    }
+  }
+  if (params.nextStatus === 'cancelled' && params.reservation.status !== 'cancelled') {
+    const otaCancelGuard = getOtaCancellationRestriction(params.reservation);
+    if (otaCancelGuard.restricted) {
+      throw new Error(otaCancelGuard.message);
+    }
+  }
+
   const { uid } = getActorContext();
   const batch = writeBatch(db);
   const now = serverTimestamp();
@@ -828,10 +873,17 @@ export async function completeCheckInWorkflow(params: {
   idVerified: boolean;
   idType: GuestRecord['idType'];
   idNumber: string;
+  idExpiryDate?: string;
+  guestAddress?: string;
   keyIssued: boolean;
   roomReadyConfirmed: boolean;
   actorRole: string;
 }) {
+  const checkInGuard = getCheckInDateRestriction(params.reservation, getLocalIsoDate());
+  if (checkInGuard.restricted) {
+    throw new Error(checkInGuard.message);
+  }
+
   if (!params.paymentConfirmed || !params.idVerified || !params.keyIssued || !params.roomReadyConfirmed) {
     throw new Error(
       'All check-in steps (confirm payment, verify guest ID, assign room, and issue key = Yes) must be completed.'
@@ -884,10 +936,14 @@ export async function completeCheckInWorkflow(params: {
       ? Math.max(0, Math.round(params.reservation.amountDueAtPropertyNgn) - extraPayment)
       : undefined;
 
+  const cleanIdExpiry = (params.idExpiryDate ?? params.reservation.idExpiryDate ?? '').trim().slice(0, 24);
+  const cleanGuestAddr = (params.guestAddress ?? params.reservation.guestAddress ?? '').trim().slice(0, 200);
+
   batch.update(resRef, {
     roomId: targetRoomId,
     roomNumber: targetRoomNumber,
     ...(targetRoom?.roomType ? { requestedRoomType: targetRoom.roomType } : {}),
+    ...(cleanGuestAddr ? { guestAddress: cleanGuestAddr } : {}),
     nightlyRateNgn: nextNightlyRate,
     roomChargesNgn: nextRoomCharges,
     status: 'checked_in',
@@ -899,6 +955,7 @@ export async function completeCheckInWorkflow(params: {
     idVerified: true,
     idType: params.idType,
     idNumber: cleanIdNumber,
+    ...(cleanIdExpiry ? { idExpiryDate: cleanIdExpiry } : {}),
     keyIssued: true,
     checkedInAtIso: new Date().toISOString(),
     updatedAt: now,
@@ -927,8 +984,10 @@ export async function completeCheckInWorkflow(params: {
 
   if (params.guest) {
     batch.update(doc(db, 'properties', params.property.id, 'guests', params.guest.id), {
+      ...(cleanGuestAddr ? { address: cleanGuestAddr } : {}),
       idType: params.idType,
       idNumber: cleanIdNumber,
+      ...(cleanIdExpiry ? { idExpiryDate: cleanIdExpiry } : {}),
       totalStays: params.guest.totalStays + 1,
       lifetimeSpendNgn: params.guest.lifetimeSpendNgn + extraPayment,
       updatedAt: now,
@@ -1081,6 +1140,11 @@ export async function updateReservationDetailsWorkflow(params: {
   guestCity?: string;
   guestState?: string;
   guestCountry?: string;
+  idType?: GuestRecord['idType'];
+  idNumber?: string;
+  idExpiryDate?: string;
+  ratePlan?: string;
+  specialRequests?: string;
   checkInDate: string;
   checkOutDate: string;
   nights: number;
@@ -1127,9 +1191,38 @@ export async function updateReservationDetailsWorkflow(params: {
     params.newRoom?.roomType ||
     params.reservation.requestedRoomType ||
     'Studio';
-  const isOta = isOtaBookingChannel(params.channel);
+  const isOta = isOtaBookingChannel(params.channel) || isOtaReservation(params.reservation);
   const roomChanged = targetRoomId !== params.reservation.roomId;
   const nextStatusCheck = params.status ?? params.reservation.status;
+
+  if (nextStatusCheck === 'checked_in' && params.reservation.status !== 'checked_in') {
+    const checkInGuard = getCheckInDateRestriction(
+      {
+        channel: isOtaReservation(params.reservation) ? params.reservation.channel : params.channel,
+        checkInDate: params.checkInDate,
+        externalUid: params.reservation.externalUid,
+        paymentCollectionMode:
+          params.paymentCollectionMode ?? params.reservation.paymentCollectionMode,
+      },
+      getLocalIsoDate()
+    );
+    if (checkInGuard.restricted) {
+      throw new Error(checkInGuard.message);
+    }
+  }
+
+  if (nextStatusCheck === 'cancelled' && params.reservation.status !== 'cancelled') {
+    const otaCancelGuard = getOtaCancellationRestriction({
+      channel: isOtaReservation(params.reservation) ? params.reservation.channel : params.channel,
+      externalUid: params.reservation.externalUid,
+      paymentCollectionMode:
+        params.paymentCollectionMode ?? params.reservation.paymentCollectionMode,
+    });
+    if (otaCancelGuard.restricted) {
+      throw new Error(otaCancelGuard.message);
+    }
+  }
+
   const willBlockInventory =
     nextStatusCheck === 'confirmed' ||
     nextStatusCheck === 'checked_in' ||
@@ -1355,6 +1448,15 @@ export async function updateReservationDetailsWorkflow(params: {
     ...(params.guestCity !== undefined ? { guestCity: params.guestCity.trim().slice(0, 80) } : {}),
     ...(params.guestState !== undefined ? { guestState: params.guestState.trim().slice(0, 80) } : {}),
     ...(params.guestCountry !== undefined ? { guestCountry: params.guestCountry.trim().slice(0, 80) } : {}),
+    ...(params.idType !== undefined ? { idType: params.idType } : {}),
+    ...(params.idNumber !== undefined ? { idNumber: params.idNumber.trim().slice(0, 64) } : {}),
+    ...(params.idExpiryDate !== undefined
+      ? { idExpiryDate: params.idExpiryDate.trim().slice(0, 24) }
+      : {}),
+    ...(params.ratePlan !== undefined ? { ratePlan: params.ratePlan.trim().slice(0, 64) } : {}),
+    ...(params.specialRequests !== undefined
+      ? { specialRequests: params.specialRequests.trim().slice(0, 500) }
+      : {}),
     checkInDate: params.checkInDate,
     checkOutDate: params.checkOutDate,
     nights: safeNights,
@@ -2333,6 +2435,9 @@ export async function createGuestRecord(params: {
     nationality: (params.guest.nationality || params.guest.country || 'Nigeria').trim().slice(0, 64),
     idType: params.guest.idType || 'NIN',
     idNumber: (params.guest.idNumber || '').trim().slice(0, 64),
+    ...(params.guest.idExpiryDate?.trim()
+      ? { idExpiryDate: params.guest.idExpiryDate.trim().slice(0, 24) }
+      : {}),
     vipTier: params.guest.vipTier || 'Standard',
     totalStays: Math.max(0, Math.round(Number(params.guest.totalStays) || 0)),
     lifetimeSpendNgn: Math.max(0, Math.round(Number(params.guest.lifetimeSpendNgn) || 0)),
@@ -2364,7 +2469,19 @@ export async function updateGuestRecord(params: {
   updates: Partial<
     Pick<
       GuestRecord,
-      'fullName' | 'email' | 'phone' | 'address' | 'city' | 'state' | 'country' | 'nationality' | 'idType' | 'idNumber' | 'vipTier' | 'notes'
+      | 'fullName'
+      | 'email'
+      | 'phone'
+      | 'address'
+      | 'city'
+      | 'state'
+      | 'country'
+      | 'nationality'
+      | 'idType'
+      | 'idNumber'
+      | 'idExpiryDate'
+      | 'vipTier'
+      | 'notes'
     >
   >;
   actorRole: string;
@@ -2385,6 +2502,7 @@ export async function updateGuestRecord(params: {
   if (params.updates.nationality !== undefined) sanitized.nationality = params.updates.nationality.trim().slice(0, 64);
   if (params.updates.idType !== undefined) sanitized.idType = params.updates.idType;
   if (params.updates.idNumber !== undefined) sanitized.idNumber = params.updates.idNumber.trim().slice(0, 64);
+  if (params.updates.idExpiryDate !== undefined) sanitized.idExpiryDate = params.updates.idExpiryDate.trim().slice(0, 24);
   if (params.updates.vipTier !== undefined) sanitized.vipTier = params.updates.vipTier;
   if (params.updates.notes !== undefined) sanitized.notes = params.updates.notes.trim().slice(0, 400);
 
@@ -2550,6 +2668,7 @@ export async function syncDefaultPosMenuIfNeeded(_property: PropertyRecord): Pro
 export async function createPosMenuItemWorkflow(params: {
   property: PropertyRecord;
   name: string;
+  section?: PosSection;
   category: string;
   priceNgn: number;
   costNgn: number;
@@ -2560,11 +2679,14 @@ export async function createPosMenuItemWorkflow(params: {
   const { uid } = getActorContext();
   const id = cleanId('menu');
   const ref = doc(db, 'properties', params.property.id, 'pos_menu_items', id);
+  const resolvedSection: PosSection =
+    params.section === 'Food & Beverage' ? 'Food & Beverage' : 'Kitchen';
   try {
     await setDoc(ref, {
       propertyId: params.property.id,
       name: params.name.trim().slice(0, 120),
-      category: params.category.trim().slice(0, 48) || 'Nigerian Kitchen',
+      section: resolvedSection,
+      category: params.category.trim().slice(0, 48) || 'Lunch',
       priceNgn: Math.max(0, Math.round(params.priceNgn)),
       costNgn: Math.max(0, Math.round(params.costNgn)),
       prepMinutes: Math.max(0, Math.min(240, Math.round(params.prepMinutes))),
@@ -2579,7 +2701,7 @@ export async function createPosMenuItemWorkflow(params: {
       actorRole: params.actorRole,
       module: 'Restaurant POS',
       action: `Added POS Menu Item: ${params.name.trim()}`,
-      details: `${params.category} · ₦${Math.round(params.priceNgn).toLocaleString('en-NG')}`,
+      details: `${resolvedSection} / ${params.category} · ₦${Math.round(params.priceNgn).toLocaleString('en-NG')}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -2592,6 +2714,7 @@ export async function updatePosMenuItemWorkflow(params: {
   item: PosMenuItemRecord;
   updates: {
     name: string;
+    section?: PosSection;
     category: string;
     priceNgn: number;
     costNgn: number;
@@ -2601,10 +2724,17 @@ export async function updatePosMenuItemWorkflow(params: {
   actorRole: string;
 }) {
   const ref = doc(db, 'properties', params.property.id, 'pos_menu_items', params.item.id);
+  const resolvedSection: PosSection =
+    params.updates.section === 'Food & Beverage'
+      ? 'Food & Beverage'
+      : params.updates.section === 'Kitchen'
+        ? 'Kitchen'
+        : params.item.section || 'Kitchen';
   try {
     await updateDoc(ref, {
       name: params.updates.name.trim().slice(0, 120),
-      category: params.updates.category.trim().slice(0, 48) || 'Nigerian Kitchen',
+      section: resolvedSection,
+      category: params.updates.category.trim().slice(0, 48) || 'Lunch',
       priceNgn: Math.max(0, Math.round(params.updates.priceNgn)),
       costNgn: Math.max(0, Math.round(params.updates.costNgn)),
       prepMinutes: Math.max(0, Math.min(240, Math.round(params.updates.prepMinutes))),
@@ -2616,7 +2746,7 @@ export async function updatePosMenuItemWorkflow(params: {
       actorRole: params.actorRole,
       module: 'Restaurant POS',
       action: `Updated POS Menu Item: ${params.updates.name.trim()}`,
-      details: `${params.updates.category} · ₦${Math.round(params.updates.priceNgn).toLocaleString('en-NG')} · ${params.updates.available ? 'Available' : 'Unavailable'}`,
+      details: `${resolvedSection} / ${params.updates.category} · ₦${Math.round(params.updates.priceNgn).toLocaleString('en-NG')} · ${params.updates.available ? 'Available' : 'Unavailable'}`,
       authorizedEmails: params.property.authorizedEmails,
     });
   } catch (error) {
@@ -2642,6 +2772,104 @@ export async function deletePosMenuItemWorkflow(params: {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, ref.path);
+  }
+}
+
+export async function seedStandardPosMenuWorkflow(params: {
+  property: PropertyRecord;
+  existingItems: PosMenuItemRecord[];
+  actorRole: string;
+}): Promise<number> {
+  const { uid } = getActorContext();
+  const existingNames = new Set(
+    params.existingItems.map((i) => i.name.trim().toLowerCase())
+  );
+  const toCreate = STANDARD_POS_MENU_TEMPLATE.filter(
+    (tpl) => !existingNames.has(tpl.name.trim().toLowerCase())
+  );
+  if (toCreate.length === 0) return 0;
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+  toCreate.forEach((tpl, idx) => {
+    const id = cleanId(`menu${idx}`);
+    batch.set(doc(db, 'properties', params.property.id, 'pos_menu_items', id), {
+      propertyId: params.property.id,
+      name: tpl.name,
+      section: tpl.section,
+      category: tpl.category,
+      priceNgn: tpl.priceNgn,
+      costNgn: tpl.costNgn,
+      prepMinutes: tpl.prepMinutes,
+      available: true,
+      authorizedEmails: params.property.authorizedEmails,
+      ownerUid: uid,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+
+  try {
+    await batch.commit();
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Restaurant POS',
+      action: `Loaded Standard Hotel POS Menu (${toCreate.length} items)`,
+      details: `Added ${toCreate.length} Kitchen and Food & Beverage items to property catalogue.`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+    return toCreate.length;
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      OperationType.CREATE,
+      `properties/${params.property.id}/pos_menu_items`
+    );
+    return 0;
+  }
+}
+
+export async function updatePropertyPosSettingsWorkflow(params: {
+  property: PropertyRecord;
+  posServiceChargeRate: number;
+  posTaxRate: number;
+  posReceiptHeader: string;
+  posReceiptFooter: string;
+  posCategories?: string[];
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id);
+  const cleanServiceRate = Math.max(0, Math.min(50, Number(params.posServiceChargeRate) || 0));
+  const cleanTaxRate = Math.max(0, Math.min(50, Number(params.posTaxRate) || 0));
+  const cleanHeader = (params.posReceiptHeader || '').trim().slice(0, 200);
+  const cleanFooter = (params.posReceiptFooter || '').trim().slice(0, 240);
+  const cleanCategories = (params.posCategories || [])
+    .map((c) => c.trim().slice(0, 48))
+    .filter(Boolean)
+    .slice(0, 30);
+
+  const payload: Record<string, unknown> = {
+    posServiceChargeRate: cleanServiceRate,
+    posTaxRate: cleanTaxRate,
+    posReceiptHeader: cleanHeader,
+    posReceiptFooter: cleanFooter,
+    ...(params.posCategories !== undefined ? { posCategories: cleanCategories } : {}),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    await updateDoc(ref, payload);
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'POS Settings',
+      action: 'Updated Property POS Configuration',
+      details: `Service Charge: ${cleanServiceRate}% · Tax/VAT: ${cleanTaxRate}% · Categories: ${cleanCategories.length || 'default'}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
 }
 
@@ -2727,15 +2955,35 @@ export async function submitPosOrderWorkflow(params: {
   itemsSummary: string;
   itemCount: number;
   subtotalNgn: number;
+  discountNgn?: number;
+  serviceChargeNgn?: number;
+  vatNgn?: number;
   paymentMethod: PosOrderRecord['paymentMethod'];
   actorRole: string;
 }): Promise<PosOrderRecord | undefined> {
   const { uid } = getActorContext();
   const id = cleanId('pos');
-  const orderNumber = `POS-${Math.floor(100 + Math.random() * 899)}`;
-  const orderDate = new Date().toISOString().slice(0, 10);
-  const vatNgn = Math.round(params.subtotalNgn * 0.075);
-  const totalNgn = params.subtotalNgn + vatNgn;
+  const orderDate = getLocalIsoDate();
+  const dateCompact = orderDate.replace(/-/g, '');
+  const orderNumber = `POS-${dateCompact}-${String(Math.floor(100 + Math.random() * 899))}`;
+  const cleanSubtotal = Math.max(0, Math.round(params.subtotalNgn));
+  const cleanDiscount = Math.max(0, Math.min(cleanSubtotal, Math.round(params.discountNgn || 0)));
+  const discountedSubtotal = Math.max(0, cleanSubtotal - cleanDiscount);
+  const defaultServicePct =
+    typeof params.property.posServiceChargeRate === 'number'
+      ? params.property.posServiceChargeRate
+      : 10;
+  const defaultTaxPct =
+    typeof params.property.posTaxRate === 'number' ? params.property.posTaxRate : 0;
+  const serviceChargeNgn =
+    params.serviceChargeNgn !== undefined
+      ? Math.max(0, Math.round(params.serviceChargeNgn))
+      : Math.round((discountedSubtotal * defaultServicePct) / 100);
+  const vatNgn =
+    params.vatNgn !== undefined
+      ? Math.max(0, Math.round(params.vatNgn))
+      : Math.round((discountedSubtotal * defaultTaxPct) / 100);
+  const totalNgn = Math.max(0, discountedSubtotal + serviceChargeNgn + vatNgn);
   const isRoomFolio = Boolean(params.paymentMethod === 'Room Folio' && params.linkedReservation);
   const paymentStatus: PosOrderRecord['paymentStatus'] = isRoomFolio ? 'room_folio' : 'paid';
   const cleanGuestName =
@@ -2749,12 +2997,14 @@ export async function submitPosOrderWorkflow(params: {
     orderNumber,
     orderDate,
     serviceType: params.serviceType,
-    tableOrRoom: params.tableOrRoom.trim().slice(0, 64) || 'Lounge',
+    tableOrRoom: params.tableOrRoom.trim().slice(0, 64) || 'Walk-in',
     guestName: cleanGuestName.slice(0, 120),
     reservationId: params.linkedReservation?.id || '',
     itemsSummary: params.itemsSummary.slice(0, 395),
     itemCount: params.itemCount,
-    subtotalNgn: params.subtotalNgn,
+    subtotalNgn: cleanSubtotal,
+    serviceChargeNgn,
+    discountNgn: cleanDiscount,
     vatNgn,
     totalNgn,
     paymentStatus,
@@ -2808,8 +3058,8 @@ export async function submitPosOrderWorkflow(params: {
       propertyId: params.property.id,
       actorRole: params.actorRole,
       module: 'Restaurant POS',
-      action: `Fired ${orderNumber} to Kitchen (${params.paymentMethod})`,
-      details: `${params.tableOrRoom} · Total ₦${totalNgn.toLocaleString('en-NG')}`,
+      action: `Completed POS Sale ${orderNumber} (${params.paymentMethod})`,
+      details: `${params.tableOrRoom} · ${cleanGuestName} · Total ₦${totalNgn.toLocaleString('en-NG')}${cleanDiscount > 0 ? ` (Discount ₦${cleanDiscount.toLocaleString('en-NG')})` : ''}`,
       authorizedEmails: params.property.authorizedEmails,
     });
     return {
@@ -2818,12 +3068,14 @@ export async function submitPosOrderWorkflow(params: {
       orderNumber,
       orderDate,
       serviceType: params.serviceType,
-      tableOrRoom: params.tableOrRoom.trim().slice(0, 64) || 'Lounge',
+      tableOrRoom: params.tableOrRoom.trim().slice(0, 64) || 'Walk-in',
       guestName: cleanGuestName,
       reservationId: params.linkedReservation?.id || '',
       itemsSummary: params.itemsSummary.slice(0, 395),
       itemCount: params.itemCount,
-      subtotalNgn: params.subtotalNgn,
+      subtotalNgn: cleanSubtotal,
+      serviceChargeNgn,
+      discountNgn: cleanDiscount,
       vatNgn,
       totalNgn,
       paymentStatus,
@@ -2835,6 +3087,109 @@ export async function submitPosOrderWorkflow(params: {
     };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `properties/${params.property.id}/pos_orders/${id}`);
+  }
+}
+
+export async function updatePosOrderWorkflow(params: {
+  property: PropertyRecord;
+  order: PosOrderRecord;
+  linkedReservation?: ReservationRecord;
+  updates: {
+    tableOrRoom?: string;
+    guestName?: string;
+    paymentMethod?: PosOrderRecord['paymentMethod'];
+    paymentStatus?: PosOrderRecord['paymentStatus'];
+    kitchenStatus?: PosOrderRecord['kitchenStatus'];
+    discountNgn?: number;
+    serviceChargeNgn?: number;
+    vatNgn?: number;
+    notes?: string;
+  };
+  actorRole: string;
+}) {
+  const ref = doc(db, 'properties', params.property.id, 'pos_orders', params.order.id);
+  const nextDiscount =
+    params.updates.discountNgn !== undefined
+      ? Math.max(0, Math.min(params.order.subtotalNgn, Math.round(params.updates.discountNgn)))
+      : Math.max(0, Math.round(params.order.discountNgn || 0));
+  const nextService =
+    params.updates.serviceChargeNgn !== undefined
+      ? Math.max(0, Math.round(params.updates.serviceChargeNgn))
+      : Math.max(0, Math.round(params.order.serviceChargeNgn || 0));
+  const nextVat =
+    params.updates.vatNgn !== undefined
+      ? Math.max(0, Math.round(params.updates.vatNgn))
+      : Math.max(0, Math.round(params.order.vatNgn || 0));
+  const nextTotal = Math.max(0, params.order.subtotalNgn - nextDiscount + nextService + nextVat);
+  const totalDelta = nextTotal - params.order.totalNgn;
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  batch.update(ref, {
+    ...(params.updates.tableOrRoom !== undefined
+      ? { tableOrRoom: params.updates.tableOrRoom.trim().slice(0, 64) || params.order.tableOrRoom }
+      : {}),
+    ...(params.updates.guestName !== undefined
+      ? { guestName: params.updates.guestName.trim().slice(0, 120) }
+      : {}),
+    ...(params.updates.paymentMethod !== undefined
+      ? { paymentMethod: params.updates.paymentMethod }
+      : {}),
+    ...(params.updates.paymentStatus !== undefined
+      ? { paymentStatus: params.updates.paymentStatus }
+      : {}),
+    ...(params.updates.kitchenStatus !== undefined
+      ? { kitchenStatus: params.updates.kitchenStatus }
+      : {}),
+    discountNgn: nextDiscount,
+    serviceChargeNgn: nextService,
+    vatNgn: nextVat,
+    totalNgn: nextTotal,
+    ...(params.updates.notes !== undefined
+      ? { notes: params.updates.notes.trim().slice(0, 300) }
+      : {}),
+    updatedAt: now,
+  });
+
+  if (
+    totalDelta !== 0 &&
+    params.order.paymentStatus === 'room_folio' &&
+    params.linkedReservation &&
+    params.linkedReservation.id === params.order.reservationId
+  ) {
+    const resRef = doc(
+      db,
+      'properties',
+      params.property.id,
+      'reservations',
+      params.linkedReservation.id
+    );
+    const resPatch: Record<string, unknown> = {
+      posChargesNgn: Math.max(0, (params.linkedReservation.posChargesNgn || 0) + totalDelta),
+      updatedAt: now,
+    };
+    if (typeof params.linkedReservation.amountDueAtPropertyNgn === 'number') {
+      resPatch.amountDueAtPropertyNgn = Math.max(
+        0,
+        params.linkedReservation.amountDueAtPropertyNgn + totalDelta
+      );
+    }
+    batch.update(resRef, resPatch);
+  }
+
+  try {
+    await batch.commit();
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Restaurant POS',
+      action: `Edited POS Order ${params.order.orderNumber}`,
+      details: `${params.updates.tableOrRoom || params.order.tableOrRoom} · ${params.updates.paymentMethod || params.order.paymentMethod} (${params.updates.paymentStatus || params.order.paymentStatus}) · Total ₦${nextTotal.toLocaleString('en-NG')}`,
+      authorizedEmails: params.property.authorizedEmails,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, ref.path);
   }
 }
 
@@ -4393,10 +4748,10 @@ export async function syncOtaChannelWorkflow(params: {
         continue;
       }
 
-      const assignedRoom =
-        existing.status === 'checked_in'
-          ? roomList.find((r) => r.id === existing.roomId) || pickRoomForEvent(ev, existing.id)
-          : pickRoomForEvent(ev, existing.id);
+      const existingAssignedRoom = existing.roomId
+        ? roomList.find((r) => r.id === existing.roomId)
+        : undefined;
+      const assignedRoom = existingAssignedRoom || pickRoomForEvent(ev, existing.id);
       const pricing = resolveChannelRoomPricing(ev, assignedRoom);
       const linkedGuestId = existing.guestId || ensureGuestForEvent(ev, pricing.roomChargesNgn);
       const nextAdults = Math.max(
@@ -7153,5 +7508,90 @@ export async function migrateLegacyMediaUrlsInFirestore(params: {
     return 0;
   }
 }
+
+export async function fixGideonIdenyiRoomAssignmentIfNeeded(params: {
+  property: PropertyRecord;
+  rooms: RoomRecord[];
+  reservations: ReservationRecord[];
+  actorRole: string;
+}): Promise<boolean> {
+  const rm1 = params.rooms.find(
+    (r) => r.roomNumber.trim().toUpperCase() === 'RM-1'
+  );
+  if (!rm1) return false;
+
+  const targetRes = params.reservations.find((res) => {
+    if (res.status === 'cancelled' || res.status === 'checked_out' || res.status === 'no_show') {
+      return false;
+    }
+    const nameLower = String(res.guestName || '').trim().toLowerCase();
+    const checkInIso = normalizeIsoDate(res.checkInDate);
+    const checkOutIso = normalizeIsoDate(res.checkOutDate);
+    return (
+      nameLower.includes('gideon') &&
+      nameLower.includes('idenyi') &&
+      checkInIso.endsWith('-12-07') &&
+      checkOutIso.endsWith('-12-11')
+    );
+  });
+
+  if (!targetRes) return false;
+  if (
+    targetRes.roomId === rm1.id &&
+    targetRes.roomNumber.trim().toUpperCase() === 'RM-1'
+  ) {
+    return false;
+  }
+
+  const { uid } = getActorContext();
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  batch.update(
+    doc(db, 'properties', params.property.id, 'reservations', targetRes.id),
+    {
+      roomId: rm1.id,
+      roomNumber: rm1.roomNumber,
+      requestedRoomType: rm1.roomType.slice(0, 64),
+      updatedAt: now,
+    }
+  );
+
+  // Release any stale 'reserved' pointer on the previous room (e.g., RM-4)
+  if (targetRes.roomId && targetRes.roomId !== rm1.id) {
+    const prevRoom = params.rooms.find((r) => r.id === targetRes.roomId);
+    if (
+      prevRoom &&
+      prevRoom.currentReservationId === targetRes.id &&
+      prevRoom.occupancyStatus === 'reserved'
+    ) {
+      batch.update(
+        doc(db, 'properties', params.property.id, 'rooms', prevRoom.id),
+        {
+          occupancyStatus: 'vacant',
+          currentGuestName: '',
+          currentReservationId: '',
+          updatedAt: now,
+        }
+      );
+    }
+  }
+
+  try {
+    await withFirestoreRetry(() => batch.commit());
+    await writeAuditLog({
+      propertyId: params.property.id,
+      actorRole: params.actorRole,
+      module: 'Reservations',
+      action: `Reassigned ${targetRes.bookingRef} to ${rm1.roomNumber}`,
+      details: `Moved ${targetRes.bookingRef} (${targetRes.guestName}, ${targetRes.checkInDate} → ${targetRes.checkOutDate}) from ${targetRes.roomNumber} to ${rm1.roomNumber}`,
+      authorizedEmails: params.property.authorizedEmails,
+    }).catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 
 

@@ -1,37 +1,55 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
+  AlertTriangle,
+  Banknote,
   BedDouble,
+  Building2,
   Check,
+  CheckCircle2,
   ChefHat,
+  CreditCard,
   Download,
+  FileText,
   LayoutDashboard,
   Minus,
   Pencil,
   Plus,
   Printer,
   Receipt,
+  Search,
+  Settings,
   ShoppingBag,
-  ShoppingCart,
+  Sparkles,
+  StickyNote,
+  Tag,
   Trash2,
   UtensilsCrossed,
   X,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   advanceKitchenOrder,
   createPosMenuItemWorkflow,
   deletePosMenuItemWorkflow,
   recordPosPurchaseWorkflow,
+  seedStandardPosMenuWorkflow,
   submitPosOrderWorkflow,
   updatePosMenuItemWorkflow,
+  updatePosOrderWorkflow,
+  updatePropertyPosSettingsWorkflow,
 } from '../services/pmsService';
 import {
   formatNgn,
+  inferPosItemSection,
   InventoryItemRecord,
   LedgerEntryRecord,
   POS_DEFAULT_CATEGORIES,
+  POS_SECTIONS,
   PosMenuItemRecord,
   PosOrderRecord,
+  PosSection,
   PropertyRecord,
   ReservationRecord,
 } from '../types/pms';
@@ -57,8 +75,104 @@ interface CartLine {
   qty: number;
 }
 
-function formatReceiptPdfNgn(amount: number): string {
+interface PrintableOrderItem {
+  name: string;
+  qty: number;
+  unitPriceNgn: number;
+  lineTotalNgn: number;
+}
+
+interface PrintablePosDocument {
+  orderNumber: string;
+  orderDate: string;
+  serviceType: PosOrderRecord['serviceType'];
+  tableOrRoom: string;
+  guestName: string;
+  itemsSummary: string;
+  itemCount: number;
+  lineItems: PrintableOrderItem[];
+  subtotalNgn: number;
+  discountNgn: number;
+  serviceChargeNgn: number;
+  serviceChargeRatePct: number;
+  vatNgn: number;
+  taxRatePct: number;
+  totalNgn: number;
+  paymentMethod: PosOrderRecord['paymentMethod'];
+  paymentStatus: PosOrderRecord['paymentStatus'];
+  notes?: string;
+  isPreview?: boolean;
+}
+
+function formatPdfNgn(amount: number): string {
   return `NGN ${Math.round(amount).toLocaleString('en-US')}`;
+}
+
+function formatPaymentMethodLabel(method: PosOrderRecord['paymentMethod']): string {
+  switch (method) {
+    case 'Card POS':
+      return 'Card';
+    case 'Cash NGN':
+      return 'Cash';
+    case 'Bank Transfer':
+      return 'Bank Transfer';
+    case 'Room Folio':
+      return 'Room Charge';
+    default:
+      return method;
+  }
+}
+
+function parseSummaryToLineItems(
+  itemsSummary: string,
+  fallbackSubtotal: number
+): PrintableOrderItem[] {
+  const parts = (itemsSummary || '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) {
+    return [
+      {
+        name: 'POS Order',
+        qty: 1,
+        unitPriceNgn: fallbackSubtotal,
+        lineTotalNgn: fallbackSubtotal,
+      },
+    ];
+  }
+  const parsed = parts.map((chunk) => {
+    const match = chunk.match(/^(\d+)\s*x\s*(.+)$/i);
+    const qty = match ? Math.max(1, Number(match[1])) : 1;
+    const name = match ? match[2].trim() : chunk;
+    return { name, qty };
+  });
+  const totalQty = parsed.reduce((sum, item) => sum + item.qty, 0) || 1;
+  const approxUnit = Math.round(fallbackSubtotal / totalQty);
+  return parsed.map((item, idx) => {
+    const lineTotal =
+      idx === parsed.length - 1
+        ? Math.max(
+            0,
+            fallbackSubtotal -
+              parsed.slice(0, -1).reduce((s, prev) => s + prev.qty * approxUnit, 0)
+          )
+        : item.qty * approxUnit;
+    return {
+      name: item.name,
+      qty: item.qty,
+      unitPriceNgn: Math.round(lineTotal / Math.max(1, item.qty)),
+      lineTotalNgn: lineTotal,
+    };
+  });
+}
+
+function getLocalTodayIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
@@ -73,76 +187,131 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   onNotify,
 }) => {
   const { cms } = useCms();
+  const todayIso = getLocalTodayIso();
 
-  // Live menu items from Firestore (no hardcoded demo dishes)
-  const effectiveMenu: PosMenuItemRecord[] = useMemo(() => {
-    return [...posMenuItems].sort((a, b) => a.name.localeCompare(b.name));
-  }, [posMenuItems]);
+  // Property POS configurable rates & settings
+  const serviceChargeRatePct =
+    typeof property.posServiceChargeRate === 'number' ? property.posServiceChargeRate : 10;
+  const taxRatePct = typeof property.posTaxRate === 'number' ? property.posTaxRate : 0;
+  const receiptHeaderNote = (property.posReceiptHeader || '').trim();
+  const receiptFooterNote =
+    (property.posReceiptFooter || '').trim() ||
+    cms.brand.folioFooterNote ||
+    `Thank you for dining with ${property.name}.`;
 
-  const categories = useMemo(() => {
-    const present = Array.from(new Set(effectiveMenu.map((m) => m.category))).filter(Boolean);
-    const defaults = present.length === 0 ? ['Beverage', 'Food'] : [];
-    return ['All', ...present, ...defaults];
-  }, [effectiveMenu]);
+  // Top-level POS tabs: POS Terminal | Orders & KDS | POS Dashboard
+  const [posModuleTab, setPosModuleTab] = useState<'terminal' | 'orders' | 'dashboard'>('terminal');
+  const [ordersSubTab, setOrdersSubTab] = useState<'kds' | 'purchases'>('kds');
 
-  // Cart & Order Builder state
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  // Primary section tab (Kitchen vs Food & Beverage) + category filter + search
+  const [activeSectionTab, setActiveSectionTab] = useState<PosSection>('Kitchen');
+  const [categoryFilter, setCategoryFilter] = useState<string>('All Food');
   const [searchMenu, setSearchMenu] = useState('');
+
+  // Current Sale Cart & Controls
+  const [cart, setCart] = useState<CartLine[]>([]);
   const [chargeTarget, setChargeTarget] = useState<'walkin' | string>('walkin');
   const [serviceType, setServiceType] = useState<PosOrderRecord['serviceType']>('Dine-In');
   const [tableOrRoom, setTableOrRoom] = useState('Table 01');
-  const [guestFirstName, setGuestFirstName] = useState('');
-  const [guestLastName, setGuestLastName] = useState('');
+  const [walkinGuestName, setWalkinGuestName] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
   const [paymentMethod, setPaymentMethod] =
-    useState<PosOrderRecord['paymentMethod']>('Cash NGN');
+    useState<PosOrderRecord['paymentMethod']>('Card POS');
   const [submitting, setSubmitting] = useState(false);
+  const [posError, setPosError] = useState<string | null>(null);
 
-  // Quick custom / misc item line
+  // Quick Actions inline drawers (Apply Discount, Add Note, Custom Item)
+  const [showDiscountEditor, setShowDiscountEditor] = useState(false);
+  const [discountType, setDiscountType] = useState<'percent' | 'fixed'>('percent');
+  const [discountValue, setDiscountValue] = useState<number>(0);
+  const [showNoteEditor, setShowNoteEditor] = useState(false);
   const [showCustomLine, setShowCustomLine] = useState(false);
   const [customLineName, setCustomLineName] = useState('');
   const [customLinePrice, setCustomLinePrice] = useState(2500);
   const [customLineQty, setCustomLineQty] = useState(1);
 
-  // Add / Edit Menu Item modal state (Property Admin & PCH Super Admin)
+  // Last created order line items cache (for rich itemized receipt right after sale)
+  const [orderLineCache, setOrderLineCache] = useState<Record<string, PrintableOrderItem[]>>({});
+
+  // Print Receipt / Print Invoice modal state
+  const [printDoc, setPrintDoc] = useState<PrintablePosDocument | null>(null);
+  const [printFormat, setPrintFormat] = useState<'receipt' | 'invoice'>('receipt');
+  const [purchaseInvoice, setPurchaseInvoice] = useState<PurchaseInvoiceData | null>(null);
+
+  // Property Admin: Add / Edit Product Modal
   const [menuModalOpen, setMenuModalOpen] = useState(false);
   const [editingMenuItem, setEditingMenuItem] = useState<PosMenuItemRecord | null>(null);
   const [menuName, setMenuName] = useState('');
-  const [menuCategory, setMenuCategory] = useState<string>('Beverage');
-  const [menuPrice, setMenuPrice] = useState(5000);
-  const [menuCost, setMenuCost] = useState(2500);
+  const [menuSection, setMenuSection] = useState<PosSection>('Kitchen');
+  const [menuCategory, setMenuCategory] = useState<string>('Lunch');
+  const [menuPrice, setMenuPrice] = useState(3000);
+  const [menuCost, setMenuCost] = useState(1400);
   const [menuPrep, setMenuPrep] = useState(15);
   const [menuAvailable, setMenuAvailable] = useState(true);
   const [savingMenu, setSavingMenu] = useState(false);
+  const [seedingMenu, setSeedingMenu] = useState(false);
 
-  // Record POS Purchase Expense modal state
+  // Property Admin: Edit Order / Transaction Modal
+  const [editingOrder, setEditingOrder] = useState<PosOrderRecord | null>(null);
+  const [editOrdTableOrRoom, setEditOrdTableOrRoom] = useState('');
+  const [editOrdGuestName, setEditOrdGuestName] = useState('');
+  const [editOrdPaymentMethod, setEditOrdPaymentMethod] =
+    useState<PosOrderRecord['paymentMethod']>('Card POS');
+  const [editOrdPaymentStatus, setEditOrdPaymentStatus] =
+    useState<PosOrderRecord['paymentStatus']>('paid');
+  const [editOrdKitchenStatus, setEditOrdKitchenStatus] =
+    useState<PosOrderRecord['kitchenStatus']>('queued');
+  const [editOrdDiscountNgn, setEditOrdDiscountNgn] = useState(0);
+  const [editOrdServiceChargeNgn, setEditOrdServiceChargeNgn] = useState(0);
+  const [editOrdVatNgn, setEditOrdVatNgn] = useState(0);
+  const [editOrdNotes, setEditOrdNotes] = useState('');
+  const [savingOrderEdit, setSavingOrderEdit] = useState(false);
+
+  // Property Admin: Property POS Settings Modal
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [setServiceRate, setSetServiceRate] = useState(serviceChargeRatePct);
+  const [setTaxRate, setSetTaxRate] = useState(taxRatePct);
+  const [setReceiptHeader, setSetReceiptHeader] = useState(receiptHeaderNote);
+  const [setReceiptFooter, setSetReceiptFooter] = useState(property.posReceiptFooter || '');
+  const [setCustomCategoriesText, setSetCustomCategoriesText] = useState(
+    (property.posCategories || []).join(', ')
+  );
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  // Record POS Purchase Expense Modal
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
   const [purItemDesc, setPurItemDesc] = useState('');
   const [purSupplier, setPurSupplier] = useState('');
-  const [purCategory, setPurCategory] = useState<'Restaurant & Bar' | 'Procurement'>('Restaurant & Bar');
+  const [purCategory, setPurCategory] = useState<'Restaurant & Bar' | 'Procurement'>(
+    'Restaurant & Bar'
+  );
   const [purAmount, setPurAmount] = useState(15000);
   const [purMethod, setPurMethod] = useState('Cash NGN');
-  const [purDate, setPurDate] = useState(new Date().toISOString().slice(0, 10));
+  const [purDate, setPurDate] = useState(todayIso);
   const [purInvId, setPurInvId] = useState('');
   const [purRestockQty, setPurRestockQty] = useState(0);
   const [savingPurchase, setSavingPurchase] = useState(false);
 
-  // Receipt & Purchase Invoice modal state
-  const [receiptOrder, setReceiptOrder] = useState<PosOrderRecord | null>(null);
-  const [purchaseInvoice, setPurchaseInvoice] = useState<PurchaseInvoiceData | null>(null);
+  // Cleanup print class after browser print completes
+  useEffect(() => {
+    const handleAfterPrint = () => {
+      document.body.classList.remove('pos-printing');
+    };
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => {
+      window.removeEventListener('afterprint', handleAfterPrint);
+      document.body.classList.remove('pos-printing');
+    };
+  }, []);
 
-  // Top-level independent POS module tabs: Terminal & Menu vs POS Dashboard
-  const [posModuleTab, setPosModuleTab] = useState<'terminal' | 'dashboard'>('terminal');
-
-  // View toggle between Menu + KDS and Purchases Log
-  const [activeSubTab, setActiveSubTab] = useState<'kds' | 'purchases'>('kds');
-
+  // In-house guests synced live from PMS reservations
   const inHouseGuests = useMemo(
     () =>
       reservations
         .filter((r) => r.status === 'checked_in')
-        .sort((a, b) => (a.roomNumber || '').localeCompare(b.roomNumber || '', undefined, { numeric: true })),
+        .sort((a, b) =>
+          (a.roomNumber || '').localeCompare(b.roomNumber || '', undefined, { numeric: true })
+        ),
     [reservations]
   );
 
@@ -151,8 +320,93 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     [chargeTarget, inHouseGuests]
   );
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // Menu items sorted alphabetically
+  const effectiveMenu: PosMenuItemRecord[] = useMemo(() => {
+    return [...posMenuItems].sort((a, b) => a.name.localeCompare(b.name));
+  }, [posMenuItems]);
 
+  // All sub-categories for chips (matching PureCrest design + custom property categories)
+  const categoryChips = useMemo(() => {
+    const baseChips = ['All Food', 'Breakfast', 'Lunch', 'Dinner', 'Snacks', 'Drinks'];
+    const customFromSettings = (property.posCategories || []).filter(
+      (c) => !baseChips.some((b) => b.toLowerCase() === c.toLowerCase())
+    );
+    const dynamicFromItems = Array.from(new Set(effectiveMenu.map((m) => m.category)))
+      .filter(Boolean)
+      .filter(
+        (c) =>
+          !baseChips.some((b) => b.toLowerCase() === c.toLowerCase()) &&
+          !customFromSettings.some((s) => s.toLowerCase() === c.toLowerCase())
+      );
+    return [...baseChips, ...customFromSettings, ...dynamicFromItems];
+  }, [effectiveMenu, property.posCategories]);
+
+  // Available categories for Add/Edit Product dropdown
+  const productCategoryOptions = useMemo(() => {
+    const set = new Set<string>([
+      ...POS_DEFAULT_CATEGORIES,
+      ...(property.posCategories || []),
+      ...effectiveMenu.map((m) => m.category).filter(Boolean),
+    ]);
+    return Array.from(set);
+  }, [effectiveMenu, property.posCategories]);
+
+  // Visible menu items filtered by section tab (Kitchen vs Food & Beverage), sub-category chip & search
+  const visibleMenu = useMemo(() => {
+    const q = searchMenu.trim().toLowerCase();
+    return effectiveMenu.filter((m) => {
+      if (!canManageMenu && m.available === false) return false;
+      const itemSection = inferPosItemSection(m);
+      if (activeSectionTab === 'Kitchen') {
+        // Kitchen shows Kitchen items + Drinks when "Drinks" or "All Food" is selected so staff can build full orders seamlessly
+        if (categoryFilter === 'Drinks') {
+          if (m.category.toLowerCase() !== 'drinks' && m.category.toLowerCase() !== 'beverage') {
+            return false;
+          }
+        } else if (categoryFilter !== 'All Food') {
+          if (m.category.toLowerCase() !== categoryFilter.toLowerCase()) return false;
+        }
+      } else {
+        // Food & Beverage tab focuses on Food & Beverage section items (or Drinks/Snacks/Beverage)
+        if (categoryFilter !== 'All Food') {
+          if (m.category.toLowerCase() !== categoryFilter.toLowerCase()) return false;
+        } else if (itemSection !== 'Food & Beverage') {
+          return false;
+        }
+      }
+      if (q && !m.name.toLowerCase().includes(q) && !m.category.toLowerCase().includes(q)) {
+        return false;
+      }
+      return true;
+    });
+  }, [effectiveMenu, activeSectionTab, categoryFilter, searchMenu, canManageMenu]);
+
+  // Cart totals with configurable Service Charge & Tax/VAT
+  const subtotalNgn = useMemo(
+    () => cart.reduce((sum, c) => sum + c.priceNgn * c.qty, 0),
+    [cart]
+  );
+  const discountNgn = useMemo(() => {
+    if (discountValue <= 0 || subtotalNgn <= 0) return 0;
+    if (discountType === 'percent') {
+      return Math.min(subtotalNgn, Math.round(subtotalNgn * (Math.min(100, discountValue) / 100)));
+    }
+    return Math.min(subtotalNgn, Math.round(discountValue));
+  }, [discountType, discountValue, subtotalNgn]);
+  const discountedSubtotalNgn = Math.max(0, subtotalNgn - discountNgn);
+  const serviceChargeNgn = Math.round(discountedSubtotalNgn * (serviceChargeRatePct / 100));
+  const vatNgn = Math.round(discountedSubtotalNgn * (taxRatePct / 100));
+  const totalNgn = discountedSubtotalNgn + serviceChargeNgn + vatNgn;
+  const itemCount = cart.reduce((sum, c) => sum + c.qty, 0);
+
+  // Preview order number for Current Sale header (matching #POS-YYYYMMDD-XXX)
+  const previewOrderNumber = useMemo(() => {
+    const compact = todayIso.replace(/-/g, '');
+    const todayCount = posOrders.filter((o) => o.orderDate === todayIso).length + 1;
+    return `POS-${compact}-${String(todayCount).padStart(3, '0')}`;
+  }, [todayIso, posOrders]);
+
+  // Dashboard metrics
   const posDashboardMetrics = useMemo(() => {
     const todayOrders = posOrders.filter((o) => (o.orderDate || '') === todayIso);
     const todayRevenue = todayOrders.reduce((s, o) => s + (o.totalNgn || 0), 0);
@@ -164,6 +418,15 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     const directPaidTotal = posOrders
       .filter((o) => o.paymentStatus !== 'room_folio' && o.paymentMethod !== 'Room Folio')
       .reduce((s, o) => s + (o.totalNgn || 0), 0);
+    const cardTotal = posOrders
+      .filter((o) => o.paymentMethod === 'Card POS')
+      .reduce((s, o) => s + (o.totalNgn || 0), 0);
+    const cashTotal = posOrders
+      .filter((o) => o.paymentMethod === 'Cash NGN')
+      .reduce((s, o) => s + (o.totalNgn || 0), 0);
+    const transferTotal = posOrders
+      .filter((o) => o.paymentMethod === 'Bank Transfer')
+      .reduce((s, o) => s + (o.totalNgn || 0), 0);
     return {
       todayOrdersCount: todayOrders.length,
       todayRevenue,
@@ -171,20 +434,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       billedToRoomsTotal,
       activeKitchenCount,
       directPaidTotal,
+      cardTotal,
+      cashTotal,
+      transferTotal,
+      avgTicketNgn: posOrders.length > 0 ? Math.round(allTimeRevenue / posOrders.length) : 0,
     };
   }, [posOrders, todayIso]);
-
-  const visibleMenu = useMemo(() => {
-    const q = searchMenu.trim().toLowerCase();
-    return effectiveMenu.filter((m) => {
-      if (categoryFilter !== 'All' && m.category !== categoryFilter) return false;
-      if (!canManageMenu && m.available === false) return false;
-      if (q && !m.name.toLowerCase().includes(q) && !m.category.toLowerCase().includes(q)) {
-        return false;
-      }
-      return true;
-    });
-  }, [effectiveMenu, categoryFilter, searchMenu, canManageMenu]);
 
   const posPurchasesLedger = useMemo(
     () =>
@@ -200,8 +455,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     [ledgerEntries]
   );
 
+  // Cart helpers
   const addToCart = (item: PosMenuItemRecord) => {
     if (item.available === false) return;
+    setPosError(null);
     setCart((prev) => {
       const existing = prev.find((c) => c.id === item.id);
       if (existing) {
@@ -209,6 +466,28 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       }
       return [...prev, { id: item.id, name: item.name, priceNgn: item.priceNgn, qty: 1 }];
     });
+  };
+
+  const updateQty = (lineId: string, delta: number) => {
+    setCart((prev) =>
+      prev
+        .map((c) => (c.id === lineId ? { ...c, qty: c.qty + delta } : c))
+        .filter((c) => c.qty > 0)
+    );
+  };
+
+  const removeCartLine = (lineId: string) => {
+    setCart((prev) => prev.filter((c) => c.id !== lineId));
+  };
+
+  const clearSale = () => {
+    setCart([]);
+    setDiscountValue(0);
+    setOrderNotes('');
+    setWalkinGuestName('');
+    setShowDiscountEditor(false);
+    setShowNoteEditor(false);
+    setPosError(null);
   };
 
   const handleAddCustomLine = () => {
@@ -229,43 +508,31 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     setShowCustomLine(false);
   };
 
-  const updateQty = (lineId: string, delta: number) => {
-    setCart((prev) =>
-      prev
-        .map((c) => (c.id === lineId ? { ...c, qty: c.qty + delta } : c))
-        .filter((c) => c.qty > 0)
-    );
-  };
-
-  const clearCart = () => {
-    setCart([]);
-    setOrderNotes('');
-  };
-
-  const subtotalNgn = cart.reduce((sum, c) => sum + c.priceNgn * c.qty, 0);
-  const vatNgn = Math.round(subtotalNgn * 0.075);
-  const totalNgn = subtotalNgn + vatNgn;
-  const itemCount = cart.reduce((sum, c) => sum + c.qty, 0);
-
   const handleChargeTargetChange = (val: string) => {
     setChargeTarget(val);
+    setPosError(null);
     if (val === 'walkin') {
-      if (paymentMethod === 'Room Folio') setPaymentMethod('Cash NGN');
+      if (paymentMethod === 'Room Folio') setPaymentMethod('Card POS');
+      setServiceType('Dine-In');
     } else {
-      setPaymentMethod('Room Folio');
       setServiceType('Room Service');
     }
   };
 
-  const handlePaymentMethodChange = (nextMethod: PosOrderRecord['paymentMethod']) => {
+  const handleSelectPaymentMethod = (nextMethod: PosOrderRecord['paymentMethod']) => {
+    setPosError(null);
     setPaymentMethod(nextMethod);
     if (nextMethod === 'Room Folio') {
-      if (chargeTarget === 'walkin' && inHouseGuests.length > 0) {
-        setChargeTarget(inHouseGuests[0].id);
-        setServiceType('Room Service');
+      if (chargeTarget === 'walkin') {
+        if (inHouseGuests.length > 0) {
+          setChargeTarget(inHouseGuests[0].id);
+          setServiceType('Room Service');
+        } else {
+          setPosError(
+            'No checked-in guests are currently in-house. Select Card, Cash, or Bank Transfer for walk-in sales.'
+          );
+        }
       }
-    } else if (chargeTarget !== 'walkin') {
-      // Allow settled walk-in / direct payment even if an in-house guest orders and pays immediately
     }
   };
 
@@ -274,78 +541,445 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     setPaymentMethod('Room Folio');
     setServiceType('Room Service');
     setPosModuleTab('terminal');
+    setPosError(null);
   };
 
-  const handlePlaceOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (cart.length === 0) return;
+  // Build printable document from a persisted PosOrderRecord
+  const buildPrintableFromOrder = (ord: PosOrderRecord): PrintablePosDocument => {
+    const cachedLines = orderLineCache[ord.id];
+    const lineItems =
+      cachedLines && cachedLines.length > 0
+        ? cachedLines
+        : parseSummaryToLineItems(ord.itemsSummary, ord.subtotalNgn);
+    const disc = Math.max(0, ord.discountNgn || 0);
+    const svc = Math.max(0, ord.serviceChargeNgn || 0);
+    const tax = Math.max(0, ord.vatNgn || 0);
+    const netSub = Math.max(1, ord.subtotalNgn - disc);
+    return {
+      orderNumber: ord.orderNumber,
+      orderDate: ord.orderDate || todayIso,
+      serviceType: ord.serviceType,
+      tableOrRoom: ord.tableOrRoom,
+      guestName: ord.guestName || 'Walk-in Guest',
+      itemsSummary: ord.itemsSummary,
+      itemCount: ord.itemCount,
+      lineItems,
+      subtotalNgn: ord.subtotalNgn,
+      discountNgn: disc,
+      serviceChargeNgn: svc,
+      serviceChargeRatePct: svc > 0 ? Math.round((svc / netSub) * 1000) / 10 : 0,
+      vatNgn: tax,
+      taxRatePct: tax > 0 ? Math.round((tax / netSub) * 1000) / 10 : 0,
+      totalNgn: ord.totalNgn,
+      paymentMethod: ord.paymentMethod,
+      paymentStatus: ord.paymentStatus,
+      notes: ord.notes,
+      isPreview: false,
+    };
+  };
+
+  const openOrderDocumentModal = (ord: PosOrderRecord, format: 'receipt' | 'invoice') => {
+    setPrintFormat(format);
+    setPrintDoc(buildPrintableFromOrder(ord));
+  };
+
+  const handlePreviewOrLastReceipt = () => {
+    if (cart.length > 0) {
+      const targetLabel = selectedInHouseGuest
+        ? `Room ${selectedInHouseGuest.roomNumber} (${selectedInHouseGuest.guestName})`
+        : tableOrRoom.trim() || 'Walk-in';
+      setPrintFormat('receipt');
+      setPrintDoc({
+        orderNumber: previewOrderNumber,
+        orderDate: todayIso,
+        serviceType,
+        tableOrRoom: targetLabel,
+        guestName: walkinGuestName.trim() || selectedInHouseGuest?.guestName || 'Walk-in Guest',
+        itemsSummary: cart.map((c) => `${c.qty}x ${c.name}`).join(', '),
+        itemCount,
+        lineItems: cart.map((c) => ({
+          name: c.name,
+          qty: c.qty,
+          unitPriceNgn: c.priceNgn,
+          lineTotalNgn: c.priceNgn * c.qty,
+        })),
+        subtotalNgn,
+        discountNgn,
+        serviceChargeNgn,
+        serviceChargeRatePct,
+        vatNgn,
+        taxRatePct,
+        totalNgn,
+        paymentMethod,
+        paymentStatus: paymentMethod === 'Room Folio' ? 'room_folio' : 'unpaid',
+        notes: orderNotes.trim() || undefined,
+        isPreview: true,
+      });
+      return;
+    }
+    if (posOrders.length > 0) {
+      openOrderDocumentModal(posOrders[0], 'receipt');
+      return;
+    }
+    setPosError('Add items to the current sale or complete an order before printing a receipt.');
+  };
+
+  const handleProcessPayment = async () => {
+    if (cart.length === 0) {
+      setPosError('Add at least one item to the current sale before processing payment.');
+      return;
+    }
+    setPosError(null);
 
     const linkedRes =
       chargeTarget !== 'walkin'
         ? inHouseGuests.find((r) => r.id === chargeTarget)
-        : paymentMethod === 'Room Folio'
-          ? inHouseGuests[0]
-          : undefined;
+        : undefined;
 
     if (paymentMethod === 'Room Folio' && !linkedRes) {
-      onNotify('No checked-in guest selected for Bill to Room. Select an active in-house guest.');
+      setPosError(
+        'Room Charge requires selecting a checked-in guest from the top Room selector.'
+      );
       return;
     }
-
-    const effectiveMethod: PosOrderRecord['paymentMethod'] =
-      paymentMethod === 'Room Folio' && linkedRes
-        ? 'Room Folio'
-        : paymentMethod === 'Room Folio'
-          ? 'Cash NGN'
-          : paymentMethod;
 
     const targetLabel = linkedRes
       ? `Room ${linkedRes.roomNumber} (${linkedRes.guestName})`
       : tableOrRoom.trim() || 'Walk-in';
-
     const itemsSummary = cart.map((c) => `${c.qty}x ${c.name}`).join(', ');
-
-    const combinedGuestName = `${guestFirstName.trim()} ${guestLastName.trim()}`.trim();
+    const snapshotLines: PrintableOrderItem[] = cart.map((c) => ({
+      name: c.name,
+      qty: c.qty,
+      unitPriceNgn: c.priceNgn,
+      lineTotalNgn: c.priceNgn * c.qty,
+    }));
 
     setSubmitting(true);
     try {
       const created = await submitPosOrderWorkflow({
         property,
-        serviceType,
+        serviceType: linkedRes ? 'Room Service' : serviceType,
         tableOrRoom: targetLabel,
-        guestName: combinedGuestName || linkedRes?.guestName || 'Walk-in Guest',
+        guestName: walkinGuestName.trim() || linkedRes?.guestName || 'Walk-in Guest',
         notes: orderNotes.trim(),
-        linkedReservation: linkedRes,
+        linkedReservation: paymentMethod === 'Room Folio' ? linkedRes : undefined,
         itemsSummary,
         itemCount,
         subtotalNgn,
-        paymentMethod: effectiveMethod,
+        discountNgn,
+        serviceChargeNgn,
+        vatNgn,
+        paymentMethod,
         actorRole,
       });
 
-      onNotify(
-        effectiveMethod === 'Room Folio' && linkedRes
-          ? `Billed ${formatNgn(totalNgn)} to Room ${linkedRes.roomNumber} (${linkedRes.guestName}) & sent to Kitchen`
-          : `Settled ${formatNgn(totalNgn)} (${effectiveMethod}) & placed order`
-      );
-      setCart([]);
-      setGuestFirstName('');
-      setGuestLastName('');
-      setOrderNotes('');
       if (created) {
-        setReceiptOrder(created);
+        setOrderLineCache((prev) => ({ ...prev, [created.id]: snapshotLines }));
+        setPrintFormat('receipt');
+        setPrintDoc({
+          orderNumber: created.orderNumber,
+          orderDate: created.orderDate || todayIso,
+          serviceType: created.serviceType,
+          tableOrRoom: created.tableOrRoom,
+          guestName: created.guestName || 'Walk-in Guest',
+          itemsSummary: created.itemsSummary,
+          itemCount: created.itemCount,
+          lineItems: snapshotLines,
+          subtotalNgn: created.subtotalNgn,
+          discountNgn: created.discountNgn || 0,
+          serviceChargeNgn: created.serviceChargeNgn || 0,
+          serviceChargeRatePct,
+          vatNgn: created.vatNgn || 0,
+          taxRatePct,
+          totalNgn: created.totalNgn,
+          paymentMethod: created.paymentMethod,
+          paymentStatus: created.paymentStatus,
+          notes: created.notes,
+          isPreview: false,
+        });
       }
+
+      onNotify(
+        paymentMethod === 'Room Folio' && linkedRes
+          ? `Charged ${formatNgn(totalNgn)} to Room ${linkedRes.roomNumber} (${linkedRes.guestName})`
+          : `Payment processed (${formatPaymentMethodLabel(paymentMethod)}): ${formatNgn(totalNgn)}`
+      );
+      clearSale();
+    } catch (err) {
+      setPosError(
+        err instanceof Error ? err.message : 'Unable to process POS order. Please try again.'
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
+  // Trigger native print using dedicated #pos-print-portal
+  const handleTriggerBrowserPrint = () => {
+    document.body.classList.add('pos-printing');
+    window.setTimeout(() => {
+      window.print();
+    }, 60);
+  };
+
+  // Download crisp PDF (80mm Thermal Receipt OR A4 Formal Invoice)
+  const handleDownloadPdf = (docData: PrintablePosDocument, mode: 'receipt' | 'invoice') => {
+    if (mode === 'receipt') {
+      const estimatedHeight = Math.max(150, 115 + docData.lineItems.length * 7);
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: [80, estimatedHeight],
+      });
+      let y = 9;
+      pdf.setFontSize(11);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(property.name, 40, y, { align: 'center', maxWidth: 72 });
+      y += 5;
+
+      pdf.setFontSize(7.5);
+      pdf.setFont('helvetica', 'normal');
+      if (property.address) {
+        const addrLines = pdf.splitTextToSize(property.address, 70);
+        pdf.text(addrLines, 40, y, { align: 'center' });
+        y += addrLines.length * 3.2;
+      }
+      if (property.phone || property.email) {
+        pdf.text(
+          [property.phone, property.email].filter(Boolean).join(' | '),
+          40,
+          y + 1,
+          { align: 'center', maxWidth: 72 }
+        );
+        y += 4.5;
+      }
+      if (receiptHeaderNote) {
+        const hdr = pdf.splitTextToSize(receiptHeaderNote, 70);
+        pdf.text(hdr, 40, y, { align: 'center' });
+        y += hdr.length * 3.2 + 1;
+      }
+
+      pdf.line(5, y, 75, y);
+      y += 4;
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(
+        `${docData.isPreview ? 'PROFORMA RECEIPT' : 'POS RECEIPT'}: #${docData.orderNumber}`,
+        5,
+        y
+      );
+      y += 4.5;
+
+      pdf.setFontSize(7.5);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Date: ${docData.orderDate}`, 5, y);
+      y += 3.6;
+      pdf.text(`Account: ${docData.tableOrRoom}`, 5, y, { maxWidth: 70 });
+      y += 3.6;
+      pdf.text(`Guest: ${docData.guestName}`, 5, y, { maxWidth: 70 });
+      y += 4;
+
+      pdf.line(5, y, 75, y);
+      y += 4;
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Item', 5, y);
+      pdf.text('Qty', 46, y, { align: 'right' });
+      pdf.text('Total', 75, y, { align: 'right' });
+      y += 3.8;
+      pdf.setFont('helvetica', 'normal');
+      for (const item of docData.lineItems) {
+        const label = item.name.length > 26 ? `${item.name.slice(0, 25)}…` : item.name;
+        pdf.text(label, 5, y);
+        pdf.text(String(item.qty), 46, y, { align: 'right' });
+        pdf.text(formatPdfNgn(item.lineTotalNgn), 75, y, { align: 'right' });
+        y += 4;
+      }
+
+      y += 1;
+      pdf.line(5, y, 75, y);
+      y += 4.2;
+
+      pdf.text('Subtotal:', 5, y);
+      pdf.text(formatPdfNgn(docData.subtotalNgn), 75, y, { align: 'right' });
+      y += 3.8;
+      if (docData.discountNgn > 0) {
+        pdf.text('Discount:', 5, y);
+        pdf.text(`-${formatPdfNgn(docData.discountNgn)}`, 75, y, { align: 'right' });
+        y += 3.8;
+      }
+      if (docData.serviceChargeNgn > 0) {
+        pdf.text(
+          `Service Charge${docData.serviceChargeRatePct ? ` (${docData.serviceChargeRatePct}%)` : ''}:`,
+          5,
+          y
+        );
+        pdf.text(formatPdfNgn(docData.serviceChargeNgn), 75, y, { align: 'right' });
+        y += 3.8;
+      }
+      if (docData.vatNgn > 0) {
+        pdf.text(`Tax / VAT${docData.taxRatePct ? ` (${docData.taxRatePct}%)` : ''}:`, 5, y);
+        pdf.text(formatPdfNgn(docData.vatNgn), 75, y, { align: 'right' });
+        y += 3.8;
+      }
+
+      y += 1.5;
+      pdf.setFontSize(9.5);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('TOTAL:', 5, y);
+      pdf.text(formatPdfNgn(docData.totalNgn), 75, y, { align: 'right' });
+      y += 5;
+
+      pdf.setFontSize(7.5);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Payment: ${formatPaymentMethodLabel(docData.paymentMethod)}`, 5, y);
+      y += 3.6;
+      pdf.text(
+        `Status: ${
+          docData.paymentStatus === 'room_folio'
+            ? 'Charged to Room Folio'
+            : docData.paymentStatus.toUpperCase()
+        }`,
+        5,
+        y
+      );
+      y += 5;
+      if (docData.notes) {
+        const noteLines = pdf.splitTextToSize(`Note: ${docData.notes}`, 70);
+        pdf.text(noteLines, 5, y);
+        y += noteLines.length * 3.4 + 2;
+      }
+
+      const footerLines = pdf.splitTextToSize(receiptFooterNote, 70);
+      pdf.text(footerLines, 40, y, { align: 'center' });
+      pdf.save(`${docData.orderNumber}-receipt.pdf`);
+      onNotify(`Downloaded ${docData.orderNumber}-receipt.pdf`);
+      return;
+    }
+
+    // A4 Formal Invoice PDF
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    pdf.setFillColor(11, 107, 58);
+    pdf.rect(0, 0, 210, 34, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(17);
+    pdf.text(property.name, 15, 16);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.text(
+      [property.address, property.phone, property.email].filter(Boolean).join(' · '),
+      15,
+      23,
+      { maxWidth: 120 }
+    );
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(15);
+    pdf.text(docData.isPreview ? 'PROFORMA INVOICE' : 'POS TAX INVOICE', 195, 16, {
+      align: 'right',
+    });
+    pdf.setFontSize(9.5);
+    pdf.text(`#${docData.orderNumber}`, 195, 23, { align: 'right' });
+
+    pdf.setTextColor(15, 23, 42);
+    pdf.setFontSize(9.5);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Billed To:', 15, 45);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(docData.guestName, 15, 51);
+    pdf.text(docData.tableOrRoom, 15, 56);
+    pdf.text(`Service Type: ${docData.serviceType}`, 15, 61);
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Invoice Details:', 135, 45);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(`Date: ${docData.orderDate}`, 135, 51);
+    pdf.text(`Payment Method: ${formatPaymentMethodLabel(docData.paymentMethod)}`, 135, 56);
+    pdf.text(
+      `Status: ${
+        docData.paymentStatus === 'room_folio'
+          ? 'Charged to Room Folio'
+          : docData.paymentStatus.toUpperCase()
+      }`,
+      135,
+      61
+    );
+
+    autoTable(pdf, {
+      startY: 70,
+      head: [['Item Description', 'Qty', 'Unit Price', 'Line Total']],
+      body: docData.lineItems.map((it) => [
+        it.name,
+        String(it.qty),
+        formatPdfNgn(it.unitPriceNgn),
+        formatPdfNgn(it.lineTotalNgn),
+      ]),
+      headStyles: { fillColor: [11, 107, 58], textColor: 255, fontSize: 9 },
+      bodyStyles: { fontSize: 9, textColor: [15, 23, 42] },
+      columnStyles: {
+        1: { halign: 'right', cellWidth: 20 },
+        2: { halign: 'right', cellWidth: 38 },
+        3: { halign: 'right', cellWidth: 38 },
+      },
+    });
+
+    const finalY =
+      (pdf as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 120;
+    let sy = finalY + 10;
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text('Subtotal:', 135, sy);
+    pdf.text(formatPdfNgn(docData.subtotalNgn), 195, sy, { align: 'right' });
+    sy += 6;
+    if (docData.discountNgn > 0) {
+      pdf.text('Discount:', 135, sy);
+      pdf.text(`-${formatPdfNgn(docData.discountNgn)}`, 195, sy, { align: 'right' });
+      sy += 6;
+    }
+    if (docData.serviceChargeNgn > 0) {
+      pdf.text(
+        `Service Charge${docData.serviceChargeRatePct ? ` (${docData.serviceChargeRatePct}%)` : ''}:`,
+        135,
+        sy
+      );
+      pdf.text(formatPdfNgn(docData.serviceChargeNgn), 195, sy, { align: 'right' });
+      sy += 6;
+    }
+    if (docData.vatNgn > 0) {
+      pdf.text(`Tax / VAT${docData.taxRatePct ? ` (${docData.taxRatePct}%)` : ''}:`, 135, sy);
+      pdf.text(formatPdfNgn(docData.vatNgn), 195, sy, { align: 'right' });
+      sy += 6;
+    }
+
+    pdf.setFillColor(236, 253, 245);
+    pdf.rect(130, sy - 4, 68, 10, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(11.5);
+    pdf.setTextColor(11, 107, 58);
+    pdf.text('TOTAL DUE / PAID:', 133, sy + 2.5);
+    pdf.text(formatPdfNgn(docData.totalNgn), 195, sy + 2.5, { align: 'right' });
+
+    if (docData.notes) {
+      pdf.setTextColor(71, 85, 105);
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Notes: ${docData.notes}`, 15, sy + 16, { maxWidth: 180 });
+    }
+
+    pdf.setTextColor(100, 116, 139);
+    pdf.setFontSize(8.5);
+    pdf.text(receiptFooterNote, 105, 282, { align: 'center', maxWidth: 180 });
+    pdf.save(`${docData.orderNumber}-invoice.pdf`);
+    onNotify(`Downloaded ${docData.orderNumber}-invoice.pdf`);
+  };
+
+  // Property Admin: Menu Item CRUD
   const openAddMenuModal = () => {
     setEditingMenuItem(null);
     setMenuName('');
-    setMenuCategory('Beverage');
-    setMenuPrice(5000);
-    setMenuCost(2500);
+    setMenuSection(activeSectionTab);
+    setMenuCategory(activeSectionTab === 'Food & Beverage' ? 'Drinks' : 'Lunch');
+    setMenuPrice(3000);
+    setMenuCost(1400);
     setMenuPrep(15);
     setMenuAvailable(true);
     setMenuModalOpen(true);
@@ -354,6 +988,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
   const openEditMenuModal = (item: PosMenuItemRecord) => {
     setEditingMenuItem(item);
     setMenuName(item.name);
+    setMenuSection(inferPosItemSection(item));
     setMenuCategory(item.category);
     setMenuPrice(item.priceNgn);
     setMenuCost(item.costNgn ?? 0);
@@ -375,6 +1010,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           item: editingMenuItem,
           updates: {
             name: menuName,
+            section: menuSection,
             category: menuCategory,
             priceNgn: menuPrice,
             costNgn: menuCost,
@@ -383,11 +1019,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           },
           actorRole,
         });
-        onNotify(`Updated menu item: ${menuName.trim()}`);
+        onNotify(`Updated POS product: ${menuName.trim()}`);
       } else {
         await createPosMenuItemWorkflow({
           property,
           name: menuName,
+          section: menuSection,
           category: menuCategory,
           priceNgn: menuPrice,
           costNgn: menuCost,
@@ -395,12 +1032,12 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           available: menuAvailable,
           actorRole,
         });
-        onNotify(`Added menu item: ${menuName.trim()}`);
+        onNotify(`Added POS product: ${menuName.trim()}`);
       }
       setMenuModalOpen(false);
     } catch (err) {
       onNotify(
-        `Unable to save menu item: ${err instanceof Error ? err.message : 'Please try again.'}`
+        `Unable to save POS product: ${err instanceof Error ? err.message : 'Please try again.'}`
       );
     } finally {
       setSavingMenu(false);
@@ -416,17 +1053,131 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
         item: editingMenuItem,
         actorRole,
       });
-      onNotify(`Removed menu item: ${editingMenuItem.name}`);
+      onNotify(`Removed POS product: ${editingMenuItem.name}`);
       setMenuModalOpen(false);
     } catch (err) {
       onNotify(
-        `Unable to remove menu item: ${err instanceof Error ? err.message : 'Please try again.'}`
+        `Unable to remove POS product: ${err instanceof Error ? err.message : 'Please try again.'}`
       );
     } finally {
       setSavingMenu(false);
     }
   };
 
+  const handleSeedStandardMenu = async () => {
+    if (!canManageMenu) return;
+    setSeedingMenu(true);
+    try {
+      const added = await seedStandardPosMenuWorkflow({
+        property,
+        existingItems: posMenuItems,
+        actorRole,
+      });
+      onNotify(
+        added > 0
+          ? `Loaded ${added} standard Kitchen & Food & Beverage items into ${property.name} POS.`
+          : 'Standard POS menu items are already loaded.'
+      );
+    } catch (err) {
+      onNotify(
+        `Unable to load standard menu: ${err instanceof Error ? err.message : 'Please try again.'}`
+      );
+    } finally {
+      setSeedingMenu(false);
+    }
+  };
+
+  // Property Admin: Edit Order / Transaction
+  const openEditOrderModal = (ord: PosOrderRecord) => {
+    if (!canManageMenu) return;
+    setEditingOrder(ord);
+    setEditOrdTableOrRoom(ord.tableOrRoom || '');
+    setEditOrdGuestName(ord.guestName || '');
+    setEditOrdPaymentMethod(ord.paymentMethod);
+    setEditOrdPaymentStatus(ord.paymentStatus);
+    setEditOrdKitchenStatus(ord.kitchenStatus);
+    setEditOrdDiscountNgn(ord.discountNgn || 0);
+    setEditOrdServiceChargeNgn(ord.serviceChargeNgn || 0);
+    setEditOrdVatNgn(ord.vatNgn || 0);
+    setEditOrdNotes(ord.notes || '');
+  };
+
+  const handleSaveOrderEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageMenu || !editingOrder) return;
+    setSavingOrderEdit(true);
+    try {
+      const linkedRes = editingOrder.reservationId
+        ? reservations.find((r) => r.id === editingOrder.reservationId)
+        : undefined;
+      await updatePosOrderWorkflow({
+        property,
+        order: editingOrder,
+        linkedReservation: linkedRes,
+        updates: {
+          tableOrRoom: editOrdTableOrRoom.trim(),
+          guestName: editOrdGuestName.trim(),
+          paymentMethod: editOrdPaymentMethod,
+          paymentStatus: editOrdPaymentStatus,
+          kitchenStatus: editOrdKitchenStatus,
+          discountNgn: Math.max(0, Math.round(editOrdDiscountNgn)),
+          serviceChargeNgn: Math.max(0, Math.round(editOrdServiceChargeNgn)),
+          vatNgn: Math.max(0, Math.round(editOrdVatNgn)),
+          notes: editOrdNotes.trim(),
+        },
+        actorRole,
+      });
+      onNotify(`Updated POS order #${editingOrder.orderNumber} (recorded in audit log).`);
+      setEditingOrder(null);
+    } catch (err) {
+      onNotify(
+        `Unable to update order: ${err instanceof Error ? err.message : 'Please try again.'}`
+      );
+    } finally {
+      setSavingOrderEdit(false);
+    }
+  };
+
+  // Property Admin: Property POS Settings
+  const openSettingsModal = () => {
+    setSetServiceRate(serviceChargeRatePct);
+    setSetTaxRate(taxRatePct);
+    setSetReceiptHeader(property.posReceiptHeader || '');
+    setSetReceiptFooter(property.posReceiptFooter || '');
+    setSetCustomCategoriesText((property.posCategories || []).join(', '));
+    setSettingsModalOpen(true);
+  };
+
+  const handleSavePosSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageMenu) return;
+    setSavingSettings(true);
+    try {
+      const parsedCategories = setCustomCategoriesText
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      await updatePropertyPosSettingsWorkflow({
+        property,
+        posServiceChargeRate: setServiceRate,
+        posTaxRate: setTaxRate,
+        posReceiptHeader: setReceiptHeader,
+        posReceiptFooter: setReceiptFooter,
+        posCategories: parsedCategories,
+        actorRole,
+      });
+      onNotify(`Saved POS settings for ${property.name} (recorded in audit log).`);
+      setSettingsModalOpen(false);
+    } catch (err) {
+      onNotify(
+        `Unable to save POS settings: ${err instanceof Error ? err.message : 'Please try again.'}`
+      );
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // Record POS Purchase Expense + immediate Purchase Invoice
   const handleRecordPurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!purItemDesc.trim() || !purSupplier.trim() || purAmount <= 0) return;
@@ -491,237 +1242,1341 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
     }
   };
 
-  const handleDownloadReceiptPdf = (ord: PosOrderRecord) => {
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [80, 175] });
-    const propAddress = property.address || '';
-    const propPhone = property.phone || '';
-    const propEmail = property.email || '';
-    const dateStr = ord.orderDate || new Date().toISOString().slice(0, 10);
+  // Dedicated Print Document Content (used both in modal preview AND in #pos-print-portal)
+  const renderPrintableDocument = (docData: PrintablePosDocument, mode: 'receipt' | 'invoice') => {
+    if (mode === 'receipt') {
+      return (
+        <div className="mx-auto w-[302px] bg-white text-slate-900 border border-slate-200 rounded-lg p-5 font-mono text-[11px] leading-relaxed print:border-0 print:rounded-none print:p-2 print:w-[76mm]">
+          <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-300">
+            <p className="font-display text-sm font-extrabold text-[#0b6b3a] tracking-tight">
+              {property.name}
+            </p>
+            {property.address && <p className="text-[10px] text-slate-600">{property.address}</p>}
+            {(property.phone || property.email) && (
+              <p className="text-[10px] text-slate-600">
+                {[property.phone, property.email].filter(Boolean).join(' · ')}
+              </p>
+            )}
+            {receiptHeaderNote && (
+              <p className="text-[10px] font-semibold text-slate-700 pt-0.5">{receiptHeaderNote}</p>
+            )}
+          </div>
 
-    let y = 10;
-    if (property.logoUrl && property.logoUrl.startsWith('data:image/')) {
-      try {
-        const format = property.logoUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-        doc.addImage(property.logoUrl, format, 32, y, 16, 12);
-        y += 15;
-      } catch {
-        // ignore logo errors
-      }
+          <div className="py-2.5 border-b border-dashed border-slate-300 space-y-0.5 text-[10px]">
+            <div className="flex justify-between font-bold text-slate-900">
+              <span>{docData.isPreview ? 'PROFORMA RECEIPT' : 'POS RECEIPT'}</span>
+              <span>#{docData.orderNumber}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Date:</span>
+              <span>{docData.orderDate}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Account:</span>
+              <span className="text-right max-w-[180px] truncate">{docData.tableOrRoom}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Guest:</span>
+              <span className="text-right max-w-[180px] truncate">{docData.guestName}</span>
+            </div>
+          </div>
+
+          <div className="py-2.5 border-b border-dashed border-slate-300">
+            <div className="grid grid-cols-12 font-bold text-[10px] text-slate-600 pb-1">
+              <span className="col-span-6">Item</span>
+              <span className="col-span-2 text-right">Qty</span>
+              <span className="col-span-4 text-right">Total</span>
+            </div>
+            <div className="space-y-1">
+              {docData.lineItems.map((line, i) => (
+                <div key={`${line.name}-${i}`} className="grid grid-cols-12 text-[10.5px]">
+                  <span className="col-span-6 pr-1 break-words">{line.name}</span>
+                  <span className="col-span-2 text-right">{line.qty}</span>
+                  <span className="col-span-4 text-right font-semibold">
+                    {formatNgn(line.lineTotalNgn)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="py-2.5 border-b border-dashed border-slate-300 space-y-1 text-[10.5px]">
+            <div className="flex justify-between">
+              <span className="text-slate-600">Subtotal</span>
+              <span>{formatNgn(docData.subtotalNgn)}</span>
+            </div>
+            {docData.discountNgn > 0 && (
+              <div className="flex justify-between text-rose-700">
+                <span>Discount</span>
+                <span>-{formatNgn(docData.discountNgn)}</span>
+              </div>
+            )}
+            {docData.serviceChargeNgn > 0 && (
+              <div className="flex justify-between">
+                <span className="text-slate-600">
+                  Service Charge{docData.serviceChargeRatePct ? ` (${docData.serviceChargeRatePct}%)` : ''}
+                </span>
+                <span>{formatNgn(docData.serviceChargeNgn)}</span>
+              </div>
+            )}
+            {docData.vatNgn > 0 && (
+              <div className="flex justify-between">
+                <span className="text-slate-600">
+                  Tax / VAT{docData.taxRatePct ? ` (${docData.taxRatePct}%)` : ''}
+                </span>
+                <span>{formatNgn(docData.vatNgn)}</span>
+              </div>
+            )}
+            <div className="flex justify-between pt-1.5 border-t border-slate-200 text-xs font-extrabold text-[#0b6b3a]">
+              <span>TOTAL</span>
+              <span>{formatNgn(docData.totalNgn)}</span>
+            </div>
+          </div>
+
+          <div className="py-2.5 space-y-0.5 text-[10px]">
+            <div className="flex justify-between">
+              <span className="text-slate-500">Payment Method:</span>
+              <span className="font-bold">{formatPaymentMethodLabel(docData.paymentMethod)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Status:</span>
+              <span className="font-bold uppercase">
+                {docData.paymentStatus === 'room_folio'
+                  ? 'Charged to Room Folio'
+                  : docData.paymentStatus}
+              </span>
+            </div>
+            {docData.notes && (
+              <p className="pt-1 text-[10px] text-slate-600">Note: {docData.notes}</p>
+            )}
+          </div>
+
+          <p className="pt-2.5 border-t border-dashed border-slate-300 text-center text-[10px] text-slate-600">
+            {receiptFooterNote}
+          </p>
+        </div>
+      );
     }
 
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text(property.name, 40, y, { align: 'center', maxWidth: 72 });
-    y += 5;
+    // Formal A4 Invoice Layout
+    return (
+      <div className="bg-white text-slate-900 border border-slate-200 rounded-xl overflow-hidden print:border-0 print:rounded-none">
+        <div className="bg-[#0b6b3a] text-white px-6 py-5 flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h3 className="font-display text-lg font-extrabold tracking-tight">{property.name}</h3>
+            {property.address && <p className="text-xs text-emerald-100">{property.address}</p>}
+            <p className="text-[11px] text-emerald-100">
+              {[property.phone, property.email].filter(Boolean).join(' · ')}
+            </p>
+            {receiptHeaderNote && (
+              <p className="text-[11px] text-emerald-50 font-medium pt-0.5">{receiptHeaderNote}</p>
+            )}
+          </div>
+          <div className="text-right">
+            <p className="font-display text-base font-extrabold uppercase tracking-wide">
+              {docData.isPreview ? 'Proforma Invoice' : 'Tax Invoice'}
+            </p>
+            <p className="font-mono-tabular text-xs text-emerald-100 mt-0.5">
+              #{docData.orderNumber}
+            </p>
+            <p className="font-mono-tabular text-[11px] text-emerald-100">
+              Date: {docData.orderDate}
+            </p>
+          </div>
+        </div>
 
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    const addrLines = doc.splitTextToSize(propAddress, 70);
-    doc.text(addrLines, 40, y, { align: 'center' });
-    y += addrLines.length * 3.2 + 1;
-    doc.text(`${propPhone} | ${propEmail}`, 40, y, { align: 'center', maxWidth: 72 });
-    y += 4;
+        <div className="p-6 space-y-5 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 border-b border-slate-200">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Billed To
+              </p>
+              <p className="font-bold text-slate-900 text-sm mt-0.5">{docData.guestName}</p>
+              <p className="text-slate-600">{docData.tableOrRoom}</p>
+              <p className="text-slate-500">Service: {docData.serviceType}</p>
+            </div>
+            <div className="sm:text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Payment Details
+              </p>
+              <p className="font-bold text-slate-900 mt-0.5">
+                {formatPaymentMethodLabel(docData.paymentMethod)}
+              </p>
+              <p className="text-[#0b6b3a] font-semibold uppercase">
+                {docData.paymentStatus === 'room_folio'
+                  ? 'Charged to Room Folio'
+                  : docData.paymentStatus}
+              </p>
+            </div>
+          </div>
 
-    doc.line(5, y, 75, y);
-    y += 4;
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-y border-slate-200 text-[11px] font-bold text-slate-600">
+                  <th className="py-2.5 px-3">Item Description</th>
+                  <th className="py-2.5 px-3 text-right">Qty</th>
+                  <th className="py-2.5 px-3 text-right">Unit Price</th>
+                  <th className="py-2.5 px-3 text-right">Line Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {docData.lineItems.map((line, i) => (
+                  <tr key={`${line.name}-${i}`}>
+                    <td className="py-2.5 px-3 font-medium text-slate-900">{line.name}</td>
+                    <td className="py-2.5 px-3 text-right font-mono-tabular">{line.qty}</td>
+                    <td className="py-2.5 px-3 text-right font-mono-tabular">
+                      {formatNgn(line.unitPriceNgn)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono-tabular font-bold text-slate-900">
+                      {formatNgn(line.lineTotalNgn)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`POS RECEIPT: ${ord.orderNumber}`, 5, y);
-    y += 4.5;
+          <div className="flex justify-end">
+            <div className="w-full sm:w-72 space-y-1.5 text-xs">
+              <div className="flex justify-between text-slate-600">
+                <span>Subtotal</span>
+                <span className="font-mono-tabular font-semibold text-slate-900">
+                  {formatNgn(docData.subtotalNgn)}
+                </span>
+              </div>
+              {docData.discountNgn > 0 && (
+                <div className="flex justify-between text-rose-700">
+                  <span>Discount</span>
+                  <span className="font-mono-tabular font-semibold">
+                    -{formatNgn(docData.discountNgn)}
+                  </span>
+                </div>
+              )}
+              {docData.serviceChargeNgn > 0 && (
+                <div className="flex justify-between text-slate-600">
+                  <span>
+                    Service Charge
+                    {docData.serviceChargeRatePct ? ` (${docData.serviceChargeRatePct}%)` : ''}
+                  </span>
+                  <span className="font-mono-tabular font-semibold text-slate-900">
+                    {formatNgn(docData.serviceChargeNgn)}
+                  </span>
+                </div>
+              )}
+              {docData.vatNgn > 0 && (
+                <div className="flex justify-between text-slate-600">
+                  <span>Tax / VAT{docData.taxRatePct ? ` (${docData.taxRatePct}%)` : ''}</span>
+                  <span className="font-mono-tabular font-semibold text-slate-900">
+                    {formatNgn(docData.vatNgn)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 font-display text-sm font-extrabold text-[#0b6b3a]">
+                <span>Total</span>
+                <span className="font-mono-tabular">{formatNgn(docData.totalNgn)}</span>
+              </div>
+            </div>
+          </div>
 
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Date: ${dateStr}`, 5, y);
-    y += 4;
-    doc.text(`Service: ${ord.serviceType}`, 5, y);
-    y += 4;
-    doc.text(`Target: ${ord.tableOrRoom}`, 5, y, { maxWidth: 70 });
-    y += 4;
-    if (ord.guestName) {
-      doc.text(`Guest: ${ord.guestName}`, 5, y, { maxWidth: 70 });
-      y += 4;
-    }
+          {docData.notes && (
+            <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-700">
+              <span className="font-semibold">Order Notes:</span> {docData.notes}
+            </div>
+          )}
 
-    doc.line(5, y, 75, y);
-    y += 4;
-
-    doc.setFont('helvetica', 'bold');
-    doc.text(`Items (${ord.itemCount})`, 5, y);
-    y += 4;
-    doc.setFont('helvetica', 'normal');
-    const itemLines = doc.splitTextToSize(ord.itemsSummary, 70);
-    doc.text(itemLines, 5, y);
-    y += itemLines.length * 3.8 + 3;
-
-    doc.line(5, y, 75, y);
-    y += 4.5;
-
-    doc.text('Subtotal:', 5, y);
-    doc.text(formatReceiptPdfNgn(ord.subtotalNgn), 75, y, { align: 'right' });
-    y += 4;
-    doc.text('VAT (7.5%):', 5, y);
-    doc.text(formatReceiptPdfNgn(ord.vatNgn), 75, y, { align: 'right' });
-    y += 5;
-
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('TOTAL:', 5, y);
-    doc.text(formatReceiptPdfNgn(ord.totalNgn), 75, y, { align: 'right' });
-    y += 5.5;
-
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    doc.text(
-      `Payment Method: ${ord.paymentMethod === 'Room Folio' ? 'Bill to Room' : ord.paymentMethod}`,
-      5,
-      y
+          <p className="pt-3 border-t border-slate-200 text-center text-[11px] text-slate-500">
+            {receiptFooterNote}
+          </p>
+        </div>
+      </div>
     );
-    y += 4;
-    doc.text(
-      `Status: ${ord.paymentStatus === 'room_folio' ? 'Billed to Room Account' : ord.paymentStatus.toUpperCase()}`,
-      5,
-      y
-    );
-    y += 6;
-
-    doc.setFontSize(7.5);
-    const footerLines = doc.splitTextToSize(
-      cms.brand.folioFooterNote || `Thank you for dining with ${property.name}.`,
-      70
-    );
-    doc.text(footerLines, 40, y, { align: 'center' });
-
-    doc.save(`${ord.orderNumber}-receipt.pdf`);
-    onNotify(`Downloaded receipt ${ord.orderNumber}-receipt.pdf`);
   };
 
   return (
     <>
-      <div className="no-print space-y-6">
-        {/* Clean Header Row with Independent Restaurant POS Module Navigation */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="font-display text-2xl font-bold text-slate-900">
-              {cms.pages.pos_kitchen.title || 'Restaurant POS'}
+      <div className="no-print space-y-5">
+        {/* Top Bar: POS – Point of Sale + Room Selector + Module Tabs + Property Admin Controls */}
+        <div className="bg-white border border-slate-200 rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="font-display text-xl font-extrabold text-[#0b6b3a] tracking-tight">
+              POS – Point of Sale
             </h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {cms.pages.pos_kitchen.subtitle || 'Independent Restaurant Point of Sale, Menu, Dashboard & Room Billing'}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
               <button
                 type="button"
                 onClick={() => setPosModuleTab('terminal')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   posModuleTab === 'terminal'
-                    ? 'bg-[#0b5d34] text-white shadow-xs'
+                    ? 'bg-[#0b6b3a] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <UtensilsCrossed className="w-3.5 h-3.5" />
-                <span>POS Menu &amp; Terminal</span>
+                <span>POS Terminal</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPosModuleTab('orders')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  posModuleTab === 'orders'
+                    ? 'bg-[#0b6b3a] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ChefHat className="w-3.5 h-3.5" />
+                <span>Orders &amp; KDS ({posOrders.length})</span>
               </button>
               <button
                 type="button"
                 onClick={() => setPosModuleTab('dashboard')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   posModuleTab === 'dashboard'
-                    ? 'bg-[#0b5d34] text-white shadow-xs'
+                    ? 'bg-[#0b6b3a] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <LayoutDashboard className="w-3.5 h-3.5" />
-                <span>POS Dashboard</span>
+                <span>Dashboard</span>
               </button>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Live In-House Room Selector (matching PureCrest design top-right Room dropdown) */}
+            <div className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-emerald-200 bg-emerald-50/70 text-xs">
+              <BedDouble className="w-4 h-4 text-[#0b6b3a] shrink-0" />
+              <select
+                aria-label="Select Room or Walk-in Guest"
+                value={chargeTarget}
+                onChange={(e) => handleChargeTargetChange(e.target.value)}
+                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
+              >
+                <option value="walkin">Walk-in / Table Guest</option>
+                {inHouseGuests.map((guestRes) => (
+                  <option key={guestRes.id} value={guestRes.id}>
+                    Room: {guestRes.roomNumber} — {guestRes.guestName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button
               type="button"
               onClick={() => setPurchaseModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold whitespace-nowrap cursor-pointer"
             >
-              <ShoppingBag className="w-3.5 h-3.5 text-emerald-700" />
-              <span>+ Record Purchase</span>
+              <ShoppingBag className="w-3.5 h-3.5 text-[#0b6b3a]" />
+              <span>Record Purchase</span>
             </button>
+
             {canManageMenu && (
-              <button
-                type="button"
-                onClick={openAddMenuModal}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 hover:border-blue-600 hover:text-blue-700 text-slate-900 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Menu Item</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={openAddMenuModal}
+                  className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Product</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={openSettingsModal}
+                  title="Property POS Settings"
+                  className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold whitespace-nowrap cursor-pointer"
+                >
+                  <Settings className="w-3.5 h-3.5 text-slate-600" />
+                  <span>POS Settings</span>
+                </button>
+              </>
             )}
           </div>
         </div>
 
-        {/* POS DASHBOARD VIEW (Independent Restaurant POS Analytics & In-House Room Accounts) */}
-        {posModuleTab === 'dashboard' ? (
-          <div className="space-y-6">
+        {posError && (
+          <div
+            role="alert"
+            className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-start justify-between gap-3"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span className="font-medium">{posError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPosError(null)}
+              className="text-rose-700 hover:text-rose-950 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 1: POS TERMINAL (Matches Attached PureCrest POS Reference Design)    */}
+        {/* ========================================================================= */}
+        {posModuleTab === 'terminal' && (
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+            {/* LEFT COLUMN (7/12): Kitchen & F&B Tabs, Search, Sub-category Chips, Text-Only Product Grid, Quick Actions */}
+            <div className="xl:col-span-7 space-y-4">
+              {/* Primary Section Tabs: Kitchen | Food & Beverage */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                {POS_SECTIONS.map((sec) => {
+                  const isActive = activeSectionTab === sec;
+                  return (
+                    <button
+                      key={sec}
+                      type="button"
+                      onClick={() => {
+                        setActiveSectionTab(sec);
+                        setCategoryFilter('All Food');
+                      }}
+                      className={`h-12 px-6 rounded-xl font-display text-sm font-bold inline-flex items-center gap-2 transition-colors cursor-pointer ${
+                        isActive
+                          ? 'bg-[#0b6b3a] text-white shadow-xs'
+                          : 'bg-white border border-slate-200 text-slate-800 hover:border-[#0b6b3a]'
+                      }`}
+                    >
+                      {sec === 'Kitchen' ? (
+                        <UtensilsCrossed className="w-4 h-4" />
+                      ) : (
+                        <ChefHat className="w-4 h-4" />
+                      )}
+                      <span>{sec}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Full-Width Search Menu Items Input */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchMenu}
+                  onChange={(e) => setSearchMenu(e.target.value)}
+                  placeholder="Search menu items..."
+                  className="w-full h-11 bg-white border border-slate-200 rounded-xl pl-10 pr-9 text-xs text-slate-800 focus:outline-none focus:border-[#0b6b3a]"
+                />
+                {searchMenu && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchMenu('')}
+                    aria-label="Clear search"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Sub-Category Filter Chips */}
+              <div className="flex flex-wrap items-center gap-2">
+                {categoryChips.map((chip) => {
+                  const active = categoryFilter === chip;
+                  return (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setCategoryFilter(chip)}
+                      className={`h-9 px-4 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                        active
+                          ? 'bg-[#0b6b3a] text-white shadow-xs'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:border-[#0b6b3a] hover:text-[#0b6b3a]'
+                      }`}
+                    >
+                      {chip}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Clean Text-Based Product Catalogue (Strictly NO product images) */}
+              {effectiveMenu.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-3">
+                  <p className="font-display text-sm font-bold text-slate-900">
+                    No POS products added for {property.name} yet
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    {canManageMenu
+                      ? 'Load the standard hotel Kitchen & Food & Beverage catalogue in one click, or add your custom property menu items.'
+                      : 'Ask your Property Admin to add POS products, or use "+ Custom Item" in Quick Actions below.'}
+                  </p>
+                  {canManageMenu && (
+                    <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                      <button
+                        type="button"
+                        disabled={seedingMenu}
+                        onClick={handleSeedStandardMenu}
+                        className="h-10 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>
+                          {seedingMenu ? 'Loading Menu...' : 'Load Standard Hotel Menu (20 Items)'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={openAddMenuModal}
+                        className="h-10 inline-flex items-center gap-1.5 px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Custom Product</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : visibleMenu.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-2">
+                  <p className="text-xs text-slate-600 font-medium">
+                    No items found in {activeSectionTab} · {categoryFilter}.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchMenu('');
+                      setCategoryFilter('All Food');
+                    }}
+                    className="text-xs font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+                  >
+                    Show all items
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                  {visibleMenu.map((item) => {
+                    const isDisabled = item.available === false;
+                    const inCartQty = cart.find((c) => c.id === item.id)?.qty || 0;
+                    return (
+                      <div
+                        key={item.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => !isDisabled && addToCart(item)}
+                        onKeyDown={(e) => {
+                          if ((e.key === 'Enter' || e.key === ' ') && !isDisabled) {
+                            e.preventDefault();
+                            addToCart(item);
+                          }
+                        }}
+                        className={`group relative rounded-xl border bg-white px-3 py-3.5 text-center flex flex-col items-center justify-center gap-1 transition-all select-none ${
+                          isDisabled
+                            ? 'border-slate-200 opacity-50 cursor-not-allowed'
+                            : inCartQty > 0
+                              ? 'border-[#0b6b3a] bg-emerald-50/40 ring-1 ring-[#0b6b3a]/30 cursor-pointer'
+                              : 'border-slate-200 hover:border-[#0b6b3a] hover:bg-emerald-50/20 cursor-pointer'
+                        }`}
+                      >
+                        {inCartQty > 0 && (
+                          <span className="absolute top-1.5 left-1.5 min-w-[20px] h-5 px-1.5 rounded-full bg-[#0b6b3a] text-white font-mono-tabular text-[10px] font-bold inline-flex items-center justify-center">
+                            {inCartQty}
+                          </span>
+                        )}
+                        {canManageMenu && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditMenuModal(item);
+                            }}
+                            title={`Edit ${item.name}`}
+                            className="absolute top-1.5 right-1.5 p-1 rounded-md text-slate-400 hover:text-[#0b6b3a] hover:bg-emerald-50 opacity-75 group-hover:opacity-100 cursor-pointer"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        )}
+                        <p className="text-xs font-semibold text-slate-900 leading-snug line-clamp-2 px-1">
+                          {item.name}
+                        </p>
+                        <p className="font-mono-tabular text-sm font-extrabold text-[#0b6b3a]">
+                          {formatNgn(item.priceNgn)}
+                        </p>
+                        {isDisabled && (
+                          <span className="text-[10px] font-semibold text-rose-600">
+                            Unavailable
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Quick Actions Bar (Mint Panel matching PureCrest POS design) */}
+              <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-display text-xs font-bold text-[#0b6b3a]">Quick Actions</p>
+                  {canManageMenu && effectiveMenu.length > 0 && effectiveMenu.length < 10 && (
+                    <button
+                      type="button"
+                      disabled={seedingMenu}
+                      onClick={handleSeedStandardMenu}
+                      className="text-[11px] font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+                    >
+                      + Load Standard Menu Items
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={clearSale}
+                    className="h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl bg-white border border-slate-200 hover:border-rose-300 hover:text-rose-700 text-xs font-semibold text-slate-800 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4 text-[#0b6b3a]" />
+                    <span>Clear Sale</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDiscountEditor((v) => !v);
+                      setShowNoteEditor(false);
+                      setShowCustomLine(false);
+                    }}
+                    className={`h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold cursor-pointer ${
+                      showDiscountEditor || discountNgn > 0
+                        ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white'
+                        : 'bg-white border-slate-200 hover:border-[#0b6b3a] text-slate-800'
+                    }`}
+                  >
+                    <Tag className="w-4 h-4" />
+                    <span>
+                      {discountNgn > 0 ? `Discount (-${formatNgn(discountNgn)})` : 'Apply Discount'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowNoteEditor((v) => !v);
+                      setShowDiscountEditor(false);
+                      setShowCustomLine(false);
+                    }}
+                    className={`h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold cursor-pointer ${
+                      showNoteEditor || orderNotes.trim()
+                        ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white'
+                        : 'bg-white border-slate-200 hover:border-[#0b6b3a] text-slate-800'
+                    }`}
+                  >
+                    <StickyNote className="w-4 h-4" />
+                    <span>{orderNotes.trim() ? 'Note Added' : 'Add Note'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCustomLine((v) => !v);
+                      setShowDiscountEditor(false);
+                      setShowNoteEditor(false);
+                    }}
+                    className={`h-11 inline-flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold cursor-pointer ${
+                      showCustomLine
+                        ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white'
+                        : 'bg-white border-slate-200 hover:border-[#0b6b3a] text-slate-800'
+                    }`}
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Custom Item</span>
+                  </button>
+                </div>
+
+                {/* Inline Apply Discount Editor */}
+                {showDiscountEditor && (
+                  <div className="bg-white border border-emerald-200 rounded-xl p-3 flex flex-wrap items-end gap-2.5 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Type
+                      </label>
+                      <select
+                        value={discountType}
+                        onChange={(e) =>
+                          setDiscountType(e.target.value as 'percent' | 'fixed')
+                        }
+                        className="h-9 border border-slate-200 rounded-lg px-2.5 bg-white text-xs font-semibold"
+                      >
+                        <option value="percent">Percentage (%)</option>
+                        <option value="fixed">Fixed Amount (₦)</option>
+                      </select>
+                    </div>
+                    <div className="flex-1 min-w-[120px]">
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        {discountType === 'percent' ? 'Discount %' : 'Discount Amount (₦)'}
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={discountType === 'percent' ? 100 : undefined}
+                        value={discountValue}
+                        onChange={(e) => setDiscountValue(Math.max(0, Number(e.target.value)))}
+                        className="w-full h-9 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDiscountValue(0);
+                        setShowDiscountEditor(false);
+                      }}
+                      className="h-9 px-3 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDiscountEditor(false)}
+                      className="h-9 px-4 rounded-lg bg-[#0b6b3a] text-white font-semibold cursor-pointer"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+
+                {/* Inline Order Note Editor */}
+                {showNoteEditor && (
+                  <div className="bg-white border border-emerald-200 rounded-xl p-3 space-y-2 text-xs">
+                    <label className="block text-[11px] font-semibold text-slate-700">
+                      Kitchen / Service Note
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={orderNotes}
+                        onChange={(e) => setOrderNotes(e.target.value)}
+                        placeholder="e.g. Less pepper, extra cutlery, deliver to Room 101..."
+                        className="flex-1 h-9 border border-slate-200 rounded-lg px-3 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNoteEditor(false)}
+                        className="h-9 px-4 rounded-lg bg-[#0b6b3a] text-white font-semibold cursor-pointer"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline Custom / Misc Item Adder */}
+                {showCustomLine && (
+                  <div className="bg-white border border-emerald-200 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-end text-xs">
+                    <div className="sm:col-span-5">
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Item Name
+                      </label>
+                      <input
+                        type="text"
+                        value={customLineName}
+                        onChange={(e) => setCustomLineName(e.target.value)}
+                        placeholder="e.g. Special Platter"
+                        className="w-full h-9 border border-slate-200 rounded-lg px-2.5 text-xs"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Unit Price (₦)
+                      </label>
+                      <input
+                        type="number"
+                        min={100}
+                        step={100}
+                        value={customLinePrice}
+                        onChange={(e) => setCustomLinePrice(Math.max(0, Number(e.target.value)))}
+                        className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular text-xs"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Qty
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={customLineQty}
+                        onChange={(e) => setCustomLineQty(Math.max(1, Number(e.target.value)))}
+                        className="w-full h-9 border border-slate-200 rounded-lg px-2.5 font-mono-tabular text-xs"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddCustomLine}
+                      className="sm:col-span-2 h-9 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold cursor-pointer"
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN (5/12): Current Sale Panel (Matches PureCrest POS Reference) */}
+            <div className="xl:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs xl:sticky xl:top-4">
+              {/* Deep Forest Green Header */}
+              <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+                <h2 className="font-display text-base font-bold tracking-tight">Current Sale</h2>
+                <span className="font-mono-tabular text-xs font-semibold text-emerald-100">
+                  #{previewOrderNumber}
+                </span>
+              </div>
+
+              {/* Linked Room / Walk-in Context Strip */}
+              <div className="px-4 py-2.5 bg-emerald-50/50 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                {selectedInHouseGuest ? (
+                  <div className="flex items-center gap-2 min-w-0">
+                    <BedDouble className="w-4 h-4 text-[#0b6b3a] shrink-0" />
+                    <span className="font-bold text-slate-900">
+                      Room {selectedInHouseGuest.roomNumber}
+                    </span>
+                    <span className="text-slate-600 truncate">
+                      · {selectedInHouseGuest.guestName}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                    <input
+                      type="text"
+                      value={tableOrRoom}
+                      onChange={(e) => setTableOrRoom(e.target.value)}
+                      placeholder="Table 01 / Bar"
+                      className="h-8 w-28 border border-slate-200 bg-white rounded-md px-2 text-xs"
+                    />
+                    <input
+                      type="text"
+                      value={walkinGuestName}
+                      onChange={(e) => setWalkinGuestName(e.target.value)}
+                      placeholder="Guest name (optional)"
+                      className="h-8 flex-1 border border-slate-200 bg-white rounded-md px-2 text-xs"
+                    />
+                  </div>
+                )}
+                <select
+                  value={serviceType}
+                  onChange={(e) =>
+                    setServiceType(e.target.value as PosOrderRecord['serviceType'])
+                  }
+                  className="h-8 border border-slate-200 bg-white rounded-md px-2 text-[11px] font-semibold text-slate-700"
+                >
+                  <option value="Dine-In">Dine-In</option>
+                  <option value="Room Service">Room Service</option>
+                  <option value="Bar Lounge">Bar Lounge</option>
+                  <option value="Takeaway">Takeaway</option>
+                </select>
+              </div>
+
+              {/* Itemized Cart Table */}
+              <div className="px-4 pt-3 pb-2">
+                <div className="grid grid-cols-12 text-[11px] font-bold text-slate-600 pb-2 border-b border-slate-200">
+                  <span className="col-span-4">Item</span>
+                  <span className="col-span-3 text-center">Qty</span>
+                  <span className="col-span-2 text-right">Unit</span>
+                  <span className="col-span-2 text-right">Total</span>
+                  <span className="col-span-1" />
+                </div>
+
+                {cart.length === 0 ? (
+                  <div className="py-10 text-center space-y-1">
+                    <p className="text-xs font-semibold text-slate-500">No items in current sale</p>
+                    <p className="text-[11px] text-slate-400">
+                      Click any product on the left to add it to the order.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 max-h-[260px] overflow-y-auto">
+                    {cart.map((line) => (
+                      <div
+                        key={line.id}
+                        className="grid grid-cols-12 items-center py-2.5 text-xs gap-1"
+                      >
+                        <span className="col-span-4 font-semibold text-slate-900 truncate pr-1">
+                          {line.name}
+                        </span>
+                        <div className="col-span-3 flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => updateQty(line.id, -1)}
+                            className="w-6 h-6 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 inline-flex items-center justify-center text-slate-700 cursor-pointer"
+                            aria-label={`Decrease ${line.name}`}
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                          <span className="w-6 text-center font-mono-tabular font-bold text-slate-900">
+                            {line.qty}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => updateQty(line.id, 1)}
+                            className="w-6 h-6 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 inline-flex items-center justify-center text-slate-700 cursor-pointer"
+                            aria-label={`Increase ${line.name}`}
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <span className="col-span-2 text-right font-mono-tabular text-slate-600 text-[11px]">
+                          {formatNgn(line.priceNgn)}
+                        </span>
+                        <span className="col-span-2 text-right font-mono-tabular font-bold text-slate-900 text-[11px]">
+                          {formatNgn(line.priceNgn * line.qty)}
+                        </span>
+                        <div className="col-span-1 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => removeCartLine(line.id)}
+                            aria-label={`Remove ${line.name}`}
+                            className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Order Summary (Subtotal, Discount, Service Charge, Tax, Mint Total) */}
+              <div className="px-4 py-3 border-t border-slate-200 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between text-slate-700">
+                  <span>Subtotal</span>
+                  <span className="font-mono-tabular font-semibold text-slate-900">
+                    {formatNgn(subtotalNgn)}
+                  </span>
+                </div>
+                {discountNgn > 0 && (
+                  <div className="flex items-center justify-between text-rose-700">
+                    <span>Discount</span>
+                    <span className="font-mono-tabular font-semibold">
+                      -{formatNgn(discountNgn)}
+                    </span>
+                  </div>
+                )}
+                {serviceChargeRatePct > 0 && (
+                  <div className="flex items-center justify-between text-slate-700">
+                    <span>Service Charge ({serviceChargeRatePct}%)</span>
+                    <span className="font-mono-tabular font-semibold text-slate-900">
+                      {formatNgn(serviceChargeNgn)}
+                    </span>
+                  </div>
+                )}
+                {taxRatePct > 0 && (
+                  <div className="flex items-center justify-between text-slate-700">
+                    <span>Tax / VAT ({taxRatePct}%)</span>
+                    <span className="font-mono-tabular font-semibold text-slate-900">
+                      {formatNgn(vatNgn)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="px-4 py-3 bg-emerald-50 border-y border-emerald-200 flex items-center justify-between">
+                <span className="font-display text-base font-extrabold text-[#0b6b3a]">Total</span>
+                <span className="font-mono-tabular text-xl font-extrabold text-slate-900">
+                  {formatNgn(totalNgn)}
+                </span>
+              </div>
+
+              {/* Payment Method 4-Tile Selector (Card | Cash | Bank Transfer | Room Charge) */}
+              <div className="p-4 space-y-3">
+                <p className="font-display text-xs font-bold text-slate-900">Payment Method</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(
+                    [
+                      { id: 'Card POS', label: 'Card', icon: CreditCard },
+                      { id: 'Cash NGN', label: 'Cash', icon: Banknote },
+                      { id: 'Bank Transfer', label: 'Bank Transfer', icon: Building2 },
+                      { id: 'Room Folio', label: 'Room Charge', icon: BedDouble },
+                    ] as const
+                  ).map((opt) => {
+                    const Icon = opt.icon;
+                    const selected = paymentMethod === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => handleSelectPaymentMethod(opt.id)}
+                        className={`py-2.5 px-2 rounded-xl border flex flex-col items-center justify-center gap-1 text-[11px] font-semibold transition-colors cursor-pointer ${
+                          selected
+                            ? 'bg-[#0b6b3a] border-[#0b6b3a] text-white shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:border-[#0b6b3a]'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4" />
+                        <span className="leading-tight text-center">{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {paymentMethod === 'Room Folio' && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-2.5 text-[11px] text-emerald-950 flex items-center justify-between gap-2">
+                    {selectedInHouseGuest ? (
+                      <>
+                        <span>
+                          Posting to{' '}
+                          <strong>
+                            Room {selectedInHouseGuest.roomNumber} ({selectedInHouseGuest.guestName})
+                          </strong>
+                        </span>
+                        <span className="font-mono-tabular font-bold text-[#0b6b3a]">
+                          Active Folio
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-rose-700 font-semibold">
+                        Select a checked-in guest in the top Room dropdown to charge to room.
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {orderNotes.trim() && (
+                  <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+                    <strong>Note:</strong> {orderNotes}
+                  </p>
+                )}
+
+                {/* Bottom Action Buttons: Print Receipt | Process Payment */}
+                <div className="grid grid-cols-12 gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={handlePreviewOrLastReceipt}
+                    className="col-span-5 h-11 inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-800 cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Receipt</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting || cart.length === 0}
+                    onClick={handleProcessPayment}
+                    className="col-span-7 h-11 inline-flex items-center justify-center gap-2 rounded-xl bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-bold disabled:opacity-50 cursor-pointer shadow-xs"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{submitting ? 'Processing...' : 'Process Payment'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 2: ORDERS, KITCHEN DISPLAY (KDS) & F&B PURCHASES                     */}
+        {/* ========================================================================= */}
+        {posModuleTab === 'orders' && (
+          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOrdersSubTab('kds')}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer ${
+                    ordersSubTab === 'kds'
+                      ? 'bg-[#0b6b3a] text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <ChefHat className="w-3.5 h-3.5" />
+                  <span>Orders &amp; KDS ({posOrders.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrdersSubTab('purchases')}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer ${
+                    ordersSubTab === 'purchases'
+                      ? 'bg-[#0b6b3a] text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>F&amp;B Purchases ({posPurchasesLedger.length})</span>
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPosModuleTab('terminal')}
+                className="text-xs font-semibold text-[#0b6b3a] hover:underline cursor-pointer"
+              >
+                + New POS Sale
+              </button>
+            </div>
+
+            {ordersSubTab === 'kds' ? (
+              posOrders.length === 0 ? (
+                <p className="text-xs text-slate-500 py-8 text-center">
+                  No POS orders recorded yet. Complete a sale from the POS Terminal to see it here.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                        <th className="py-3 px-3">Order #</th>
+                        <th className="py-3 px-3">Date</th>
+                        <th className="py-3 px-3">Room / Table</th>
+                        <th className="py-3 px-3">Items</th>
+                        <th className="py-3 px-3">Payment</th>
+                        <th className="py-3 px-3">Kitchen</th>
+                        <th className="py-3 px-3 text-right">Total</th>
+                        <th className="py-3 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {posOrders.map((ord) => (
+                        <tr key={ord.id} className="hover:bg-slate-50/70">
+                          <td className="py-3 px-3 font-mono-tabular font-bold text-slate-900 whitespace-nowrap">
+                            #{ord.orderNumber}
+                          </td>
+                          <td className="py-3 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                            {ord.orderDate}
+                          </td>
+                          <td className="py-3 px-3">
+                            <p className="font-semibold text-slate-900">{ord.tableOrRoom}</p>
+                            {ord.guestName && (
+                              <p className="text-[11px] text-slate-500">{ord.guestName}</p>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-slate-700 max-w-xs">
+                            <p className="truncate">{ord.itemsSummary}</p>
+                            {ord.notes && (
+                              <p className="text-[10px] text-amber-800 truncate">
+                                Note: {ord.notes}
+                              </p>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                ord.paymentMethod === 'Room Folio' ||
+                                ord.paymentStatus === 'room_folio'
+                                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              {formatPaymentMethodLabel(ord.paymentMethod)}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`text-[11px] font-semibold capitalize ${
+                                  ord.kitchenStatus === 'served'
+                                    ? 'text-emerald-700'
+                                    : ord.kitchenStatus === 'ready'
+                                      ? 'text-blue-700'
+                                      : 'text-amber-700'
+                                }`}
+                              >
+                                {ord.kitchenStatus}
+                              </span>
+                              {ord.kitchenStatus !== 'served' && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const nextStatus: PosOrderRecord['kitchenStatus'] =
+                                      ord.kitchenStatus === 'queued'
+                                        ? 'preparing'
+                                        : ord.kitchenStatus === 'preparing'
+                                          ? 'ready'
+                                          : 'served';
+                                    await advanceKitchenOrder({
+                                      property,
+                                      order: ord,
+                                      nextKitchenStatus: nextStatus,
+                                    });
+                                    onNotify(
+                                      `Updated #${ord.orderNumber} kitchen status to ${nextStatus}`
+                                    );
+                                  }}
+                                  className="px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-100 text-[10px] font-semibold text-slate-700 cursor-pointer"
+                                >
+                                  Advance
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono-tabular font-bold text-slate-900 whitespace-nowrap">
+                            {formatNgn(ord.totalNgn)}
+                          </td>
+                          <td className="py-3 px-3 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openOrderDocumentModal(ord, 'receipt')}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold cursor-pointer"
+                              >
+                                <Printer className="w-3 h-3" />
+                                <span>Receipt</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openOrderDocumentModal(ord, 'invoice')}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#0b6b3a] font-semibold cursor-pointer"
+                              >
+                                <FileText className="w-3 h-3" />
+                                <span>Invoice</span>
+                              </button>
+                              {canManageMenu && (
+                                <button
+                                  type="button"
+                                  onClick={() => openEditOrderModal(ord)}
+                                  title="Edit order & transaction details (Property Admin)"
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 bg-white hover:border-[#0b6b3a] text-slate-700 hover:text-[#0b6b3a] font-semibold cursor-pointer"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                  <span>Edit</span>
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            ) : posPurchasesLedger.length === 0 ? (
+              <p className="text-xs text-slate-500 py-8 text-center">
+                No kitchen or bar supply purchases recorded yet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                      <th className="py-3 px-3">Date</th>
+                      <th className="py-3 px-3">Ref</th>
+                      <th className="py-3 px-3">Description</th>
+                      <th className="py-3 px-3">Method</th>
+                      <th className="py-3 px-3 text-right">Amount</th>
+                      <th className="py-3 px-3 text-right">Invoice</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {posPurchasesLedger.map((entry) => (
+                      <tr key={entry.id} className="hover:bg-slate-50">
+                        <td className="py-3 px-3 font-mono-tabular text-slate-600">
+                          {entry.entryDate}
+                        </td>
+                        <td className="py-3 px-3 font-mono-tabular font-semibold text-slate-800">
+                          {entry.reference}
+                        </td>
+                        <td className="py-3 px-3 text-slate-800">{entry.description}</td>
+                        <td className="py-3 px-3 text-slate-600">{entry.paymentMethod}</td>
+                        <td className="py-3 px-3 text-right font-mono-tabular font-bold text-rose-700">
+                          {formatNgn(entry.amountNgn)}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPurchaseInvoice({
+                                invoiceNumber: entry.reference || entry.id,
+                                date: entry.entryDate,
+                                title: 'Purchase Invoice',
+                                subtitle: 'Recorded F&B purchase invoice',
+                                partyLabel: 'Category',
+                                partyName: entry.category,
+                                category: entry.category,
+                                paymentMethod: entry.paymentMethod,
+                                status: 'Paid',
+                                items: [
+                                  {
+                                    description: entry.description,
+                                    quantity: 1,
+                                    unitCostNgn: entry.amountNgn,
+                                    totalNgn: entry.amountNgn,
+                                  },
+                                ],
+                                subtotalNgn: entry.amountNgn,
+                                vatNgn: 0,
+                                totalNgn: entry.amountNgn,
+                              })
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold cursor-pointer"
+                          >
+                            <Printer className="w-3 h-3" />
+                            <span>Print Invoice</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 3: POS DASHBOARD & IN-HOUSE GUEST ROOM BILLING                       */}
+        {/* ========================================================================= */}
+        {posModuleTab === 'dashboard' && (
+          <div className="space-y-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   Today&apos;s POS Sales
                 </p>
-                <p className="font-mono-tabular text-2xl font-bold text-[#0b5d34]">
+                <p className="font-mono-tabular text-2xl font-bold text-[#0b6b3a]">
                   {formatNgn(posDashboardMetrics.todayRevenue)}
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  {posDashboardMetrics.todayOrdersCount} order{posDashboardMetrics.todayOrdersCount === 1 ? '' : 's'} today
+                  {posDashboardMetrics.todayOrdersCount} order
+                  {posDashboardMetrics.todayOrdersCount === 1 ? '' : 's'} today
                 </p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Billed to Guest Rooms
+                  Charged to Guest Rooms
                 </p>
                 <p className="font-mono-tabular text-2xl font-bold text-[#1c46be]">
                   {formatNgn(posDashboardMetrics.billedToRoomsTotal)}
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  {inHouseGuests.length} current in-house guest{inHouseGuests.length === 1 ? '' : 's'}
+                  {inHouseGuests.length} in-house guest{inHouseGuests.length === 1 ? '' : 's'}
                 </p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Direct POS Payments
+                  Direct Settlements
                 </p>
                 <p className="font-mono-tabular text-2xl font-bold text-slate-900">
                   {formatNgn(posDashboardMetrics.directPaidTotal)}
                 </p>
-                <p className="text-[11px] text-slate-500">Cash, Card POS &amp; Transfer</p>
+                <p className="text-[11px] text-slate-500 font-mono-tabular">
+                  Card {formatNgn(posDashboardMetrics.cardTotal)} · Cash{' '}
+                  {formatNgn(posDashboardMetrics.cashTotal)}
+                </p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Active Kitchen Tickets
+                  Average Ticket
                 </p>
-                <p className="font-mono-tabular text-2xl font-bold text-amber-700">
-                  {posDashboardMetrics.activeKitchenCount}
+                <p className="font-mono-tabular text-2xl font-bold text-slate-900">
+                  {formatNgn(posDashboardMetrics.avgTicketNgn)}
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  {posOrders.length} total POS orders · {effectiveMenu.length} menu items
+                  {posOrders.length} orders · {effectiveMenu.length} products
                 </p>
               </div>
             </div>
 
-            {/* Live In-House Guests linked with PMS */}
+            {/* In-House Guests Table for 1-Click Room Charging */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <BedDouble className="w-4 h-4 text-[#0b5d34]" />
+                  <BedDouble className="w-4 h-4 text-[#0b6b3a]" />
                   <h2 className="font-display text-sm font-bold text-slate-900">
                     Current In-House Guests (Bill to Room)
                   </h2>
                 </div>
-                <span className="font-mono-tabular text-xs font-semibold text-emerald-700">
+                <span className="font-mono-tabular text-xs font-semibold text-[#0b6b3a]">
                   {inHouseGuests.length} checked-in
                 </span>
               </div>
               {inHouseGuests.length === 0 ? (
                 <p className="text-xs text-slate-500 p-6 text-center">
-                  No guests are currently checked in. Checked-in guests appear here automatically for room billing.
+                  No guests are currently checked in. Checked-in guests appear here automatically
+                  for Room Charge billing.
                 </p>
               ) : (
                 <div className="overflow-x-auto">
@@ -758,10 +2613,10 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                             <button
                               type="button"
                               onClick={() => handleSelectInHouseGuestForBilling(guestRes)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b5d34] hover:bg-[#094a29] text-white font-semibold cursor-pointer whitespace-nowrap"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold cursor-pointer whitespace-nowrap"
                             >
                               <Receipt className="w-3.5 h-3.5" />
-                              <span>Bill to Room</span>
+                              <span>Charge to Room</span>
                             </button>
                           </td>
                         </tr>
@@ -771,1204 +2626,684 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                 </div>
               )}
             </div>
-
-            {/* Recent POS Orders & Print Invoices */}
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
-                <h2 className="font-display text-sm font-bold text-slate-900">
-                  Recent Restaurant POS Orders
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setPosModuleTab('terminal')}
-                  className="text-xs font-semibold text-[#0b5d34] hover:underline cursor-pointer"
-                >
-                  Open POS Terminal →
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-600">
-                      <th className="py-3 px-4">Order #</th>
-                      <th className="py-3 px-4">Date</th>
-                      <th className="py-3 px-4">Room / Table</th>
-                      <th className="py-3 px-4">Items</th>
-                      <th className="py-3 px-4">Payment</th>
-                      <th className="py-3 px-4 text-right">Total</th>
-                      <th className="py-3 px-4 text-right">Invoice</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {posOrders.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-500">
-                          No restaurant POS transactions recorded yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      posOrders.slice(0, 20).map((ord) => (
-                        <tr key={ord.id} className="hover:bg-slate-50">
-                          <td className="py-3 px-4 font-mono-tabular font-bold text-slate-900">
-                            {ord.orderNumber}
-                          </td>
-                          <td className="py-3 px-4 font-mono-tabular text-slate-600">
-                            {ord.orderDate}
-                          </td>
-                          <td className="py-3 px-4 font-medium text-slate-800">
-                            {ord.tableOrRoom}
-                          </td>
-                          <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
-                            {ord.itemsSummary}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-                                ord.paymentMethod === 'Room Folio' || ord.paymentStatus === 'room_folio'
-                                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                              }`}
-                            >
-                              {ord.paymentMethod === 'Room Folio' ? 'Bill to Room' : ord.paymentMethod}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono-tabular font-bold text-slate-900">
-                            {formatNgn(ord.totalNgn)}
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => setReceiptOrder(ord)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-100 text-slate-800 font-semibold cursor-pointer whitespace-nowrap"
-                            >
-                              <Printer className="w-3 h-3" />
-                              <span>Print Invoice</span>
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
-        ) : (
-        /* Main Two-Column POS Layout: Left Menu + In-House Guests + History (7 cols), Right Order Ticket (5 cols) */
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-          {/* Left Column: Current In-House Guests Bar, Category Tabs, Search & Interactive Menu Grid */}
-          <div className="xl:col-span-7 space-y-5">
-            {/* Automatic PMS In-House Guests Quick-Select Strip */}
-            <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
-                  <BedDouble className="w-4 h-4 text-[#0b5d34]" />
-                  <span>Current In-House Guests ({inHouseGuests.length})</span>
-                </div>
-                <span className="text-[11px] text-slate-500">
-                  Click any guest to Bill to Room
-                </span>
-              </div>
-              {inHouseGuests.length === 0 ? (
-                <p className="text-[11px] text-slate-500">
-                  No checked-in guests at the moment — orders default to Walk-in settlement.
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {inHouseGuests.map((guestRes) => {
-                    const isSelected = chargeTarget === guestRes.id;
-                    return (
-                      <button
-                        key={guestRes.id}
-                        type="button"
-                        onClick={() => handleSelectInHouseGuestForBilling(guestRes)}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
-                          isSelected
-                            ? 'bg-[#0b5d34] border-[#0b5d34] text-white font-semibold'
-                            : 'bg-slate-50 border-slate-200 text-slate-800 hover:border-[#0b5d34] hover:bg-emerald-50/60'
-                        }`}
-                      >
-                        <span className="font-mono-tabular font-bold">Rm {guestRes.roomNumber}</span>
-                        <span>·</span>
-                        <span className="max-w-[130px] truncate">{guestRes.guestName}</span>
-                        {(guestRes.posChargesNgn || 0) > 0 && (
-                          <span
-                            className={`font-mono-tabular text-[10px] px-1.5 py-0.5 rounded ${
-                              isSelected ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-800'
-                            }`}
-                          >
-                            {formatNgn(guestRes.posChargesNgn)}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-1.5">
-                {categories.map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setCategoryFilter(cat)}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-                      categoryFilter === cat
-                        ? 'bg-[#1c46be] text-white'
-                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="text"
-                value={searchMenu}
-                onChange={(e) => setSearchMenu(e.target.value)}
-                placeholder="Search menu..."
-                className="border border-slate-200 bg-white rounded-lg px-3 py-1.5 text-xs w-full sm:w-48 focus:outline-none focus:border-blue-600"
-              />
-            </div>
+        )}
+      </div>
 
-            {effectiveMenu.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-2.5">
-                <p className="font-display text-sm font-bold text-slate-900">
-                  No restaurant menu items created yet
-                </p>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  {canManageMenu
-                    ? 'Add your actual kitchen dishes, grill plates, or bar drinks using "+ Menu Item", or use "Custom / Misc Item" on the right ticket to ring up an order.'
-                    : 'Your administrator has not published restaurant menu items yet. Use "Custom / Misc Item" on the right ticket to ring up an item.'}
-                </p>
-                {canManageMenu && (
-                  <button
-                    type="button"
-                    onClick={openAddMenuModal}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#1c46be] hover:bg-blue-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add First Menu Item</span>
-                  </button>
-                )}
-              </div>
-            ) : visibleMenu.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-xs text-slate-500">
-                No menu items match your current search or category filter.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {visibleMenu.map((item) => {
-                  const isDisabled = item.available === false;
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => !isDisabled && addToCart(item)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if ((e.key === 'Enter' || e.key === ' ') && !isDisabled) {
-                          e.preventDefault();
-                          addToCart(item);
-                        }
-                      }}
-                      className={`group relative text-left p-4 bg-white border rounded-xl transition-colors flex flex-col justify-between gap-2.5 ${
-                        isDisabled
-                          ? 'border-slate-200 opacity-55 cursor-not-allowed'
-                          : 'border-slate-200 hover:border-[#1c46be] cursor-pointer'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-display text-sm font-semibold text-slate-900 leading-snug">
-                            {item.name}
-                          </p>
-                          <p className="text-[11px] text-slate-500 mt-0.5">{item.category}</p>
-                        </div>
-                        {canManageMenu && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditMenuModal(item);
-                            }}
-                            title={`Edit ${item.name}`}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-[#1c46be] hover:bg-blue-50 transition-colors shrink-0 cursor-pointer"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                        <span className="font-mono-tabular font-bold text-[#1c46be]">
-                          {formatNgn(item.priceNgn)}
-                        </span>
-                        <span className="text-[11px] text-slate-500">
-                          {isDisabled ? 'Unavailable' : `${item.prepMinutes} mins`}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* KDS Queue + Purchases Log */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveSubTab('kds')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                      activeSubTab === 'kds'
-                        ? 'bg-slate-900 text-white'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <ChefHat className="w-3.5 h-3.5" />
-                    <span>Orders &amp; KDS ({posOrders.length})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSubTab('purchases')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                      activeSubTab === 'purchases'
-                        ? 'bg-slate-900 text-white'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <ShoppingBag className="w-3.5 h-3.5" />
-                    <span>F&amp;B Purchases ({posPurchasesLedger.length})</span>
-                  </button>
-                </div>
-
-                {activeSubTab === 'kds' && (
-                  <span className="font-mono-tabular text-xs text-slate-500">
-                    {posOrders.filter((o) => o.kitchenStatus !== 'served').length} active in kitchen
-                  </span>
-                )}
-              </div>
-
-              {activeSubTab === 'kds' ? (
-                <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
-                  {posOrders.length === 0 ? (
-                    <p className="text-xs text-slate-500 py-6 text-center">
-                      No POS orders recorded yet.
-                    </p>
-                  ) : (
-                    posOrders.map((ord) => (
-                      <div
-                        key={ord.id}
-                        className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2.5"
-                      >
-                        <div className="flex items-center justify-between text-xs gap-2">
-                          <span className="font-mono-tabular font-bold text-slate-900">
-                            {ord.orderNumber} · {ord.serviceType}
-                            {ord.orderDate ? ` · ${ord.orderDate}` : ''}
-                          </span>
-                          <span
-                            className={`font-semibold capitalize ${
-                              ord.kitchenStatus === 'queued'
-                                ? 'text-amber-700'
-                                : ord.kitchenStatus === 'preparing'
-                                  ? 'text-blue-700'
-                                  : ord.kitchenStatus === 'ready'
-                                    ? 'text-emerald-700'
-                                    : 'text-slate-500'
-                            }`}
-                          >
-                            {ord.kitchenStatus}
-                          </span>
-                        </div>
-
-                        <p className="text-xs font-semibold text-slate-900">
-                          {ord.tableOrRoom}
-                          {ord.guestName && !ord.tableOrRoom.includes(ord.guestName)
-                            ? ` · ${ord.guestName}`
-                            : ''}
-                        </p>
-                        <p className="text-xs text-slate-600">{ord.itemsSummary}</p>
-
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 text-xs">
-                          <span className="font-mono-tabular font-semibold text-slate-900">
-                            {formatNgn(ord.totalNgn)} ·{' '}
-                            {ord.paymentMethod === 'Room Folio' ? 'Bill to Room' : ord.paymentMethod}
-                          </span>
-
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setReceiptOrder(ord)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 text-slate-800 rounded font-medium cursor-pointer"
-                            >
-                              <Printer className="w-3 h-3" />
-                              <span>Receipt</span>
-                            </button>
-                            {ord.kitchenStatus === 'queued' && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  advanceKitchenOrder({
-                                    property,
-                                    order: ord,
-                                    nextKitchenStatus: 'preparing',
-                                  })
-                                }
-                                className="px-2.5 py-1 bg-slate-900 text-white rounded font-medium cursor-pointer"
-                              >
-                                Start Prep
-                              </button>
-                            )}
-                            {ord.kitchenStatus === 'preparing' && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  advanceKitchenOrder({
-                                    property,
-                                    order: ord,
-                                    nextKitchenStatus: 'ready',
-                                  })
-                                }
-                                className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium cursor-pointer"
-                              >
-                                Mark Ready
-                              </button>
-                            )}
-                            {ord.kitchenStatus === 'ready' && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  advanceKitchenOrder({
-                                    property,
-                                    order: ord,
-                                    nextKitchenStatus: 'served',
-                                  })
-                                }
-                                className="px-2.5 py-1 bg-slate-700 text-white rounded font-medium cursor-pointer"
-                              >
-                                Served
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
-                  {posPurchasesLedger.length === 0 ? (
-                    <p className="text-xs text-slate-500 py-6 text-center">
-                      No POS or kitchen purchases logged yet. Click &ldquo;+ Record Purchase&rdquo; to log supplies.
-                    </p>
-                  ) : (
-                    posPurchasesLedger.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 flex items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-900 truncate">
-                            {entry.description}
-                          </p>
-                          <p className="text-[11px] text-slate-500 font-mono-tabular mt-0.5">
-                            {entry.entryDate} · {entry.category} · {entry.paymentMethod}
-                            {entry.reference ? ` · ${entry.reference}` : ''}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="font-mono-tabular font-bold text-rose-700">
-                            -{formatNgn(entry.amountNgn)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const [descPart, supplierPart] = entry.description.split(' — ');
-                              setPurchaseInvoice({
-                                invoiceNumber: entry.reference || entry.id,
-                                date: entry.entryDate,
-                                title: 'Purchase Invoice',
-                                subtitle: 'Recorded F&B / Supply Purchase Invoice',
-                                partyLabel: 'Supplier / Vendor',
-                                partyName: supplierPart || entry.category,
-                                category: entry.category,
-                                paymentMethod: entry.paymentMethod,
-                                status: 'Paid',
-                                items: [
-                                  {
-                                    description: descPart || entry.description,
-                                    quantity: 1,
-                                    unitCostNgn: entry.amountNgn,
-                                    totalNgn: entry.amountNgn,
-                                  },
-                                ],
-                                subtotalNgn: entry.amountNgn,
-                                vatNgn: entry.vatNgn || 0,
-                                totalNgn: entry.amountNgn,
-                              });
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-semibold cursor-pointer whitespace-nowrap"
-                          >
-                            <Printer className="w-3 h-3" />
-                            <span>Print Invoice</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Column: Sticky Order Card (Inspired by IMG_2077.png) */}
-          <form
-            onSubmit={handlePlaceOrder}
-            className="xl:col-span-5 xl:sticky xl:top-20 bg-white border border-slate-200 rounded-2xl p-5 space-y-4"
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+      {/* ========================================================================= */}
+      {/* MODAL: PRINT RECEIPT (80MM) & PRINT INVOICE (A4) + PDF DOWNLOAD           */}
+      {/* ========================================================================= */}
+      {printDoc && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden my-auto">
+            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4 text-[#1c46be]" />
-                <h2 className="font-display text-base font-bold text-slate-900">Order</h2>
-              </div>
-              <span className="font-mono-tabular text-xs text-slate-500">
-                {itemCount} {itemCount === 1 ? 'item' : 'items'}
-              </span>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  Charge to (In-House Guest / Walk-in)
-                </label>
-                <select
-                  value={chargeTarget}
-                  onChange={(e) => handleChargeTargetChange(e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 bg-white font-medium text-slate-900"
-                >
-                  <option value="walkin">Walk-in / Direct Settlement</option>
-                  {inHouseGuests.map((res) => (
-                    <option key={res.id} value={res.id}>
-                      Rm {res.roomNumber} · {res.guestName} ({res.bookingRef})
-                    </option>
-                  ))}
-                </select>
-                {selectedInHouseGuest && (
-                  <p className="mt-1.5 text-[11px] font-medium text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1.5">
-                    Linked to active reservation{' '}
-                    <span className="font-mono-tabular font-bold">
-                      {selectedInHouseGuest.bookingRef}
-                    </span>{' '}
-                    · Room {selectedInHouseGuest.roomNumber} ({selectedInHouseGuest.guestName})
+                <Receipt className="w-5 h-5 text-emerald-200" />
+                <div>
+                  <h3 className="font-display text-sm font-bold">
+                    {printDoc.isPreview ? 'Sale Preview' : 'Transaction Completed'} · #
+                    {printDoc.orderNumber}
+                  </h3>
+                  <p className="text-[11px] text-emerald-100">
+                    Print formatted receipt or tax invoice, or download as PDF
                   </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Service Type</label>
-                  <select
-                    value={serviceType}
-                    onChange={(e) =>
-                      setServiceType(e.target.value as PosOrderRecord['serviceType'])
-                    }
-                    className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
-                  >
-                    <option value="Dine-In">Dine-In</option>
-                    <option value="Room Service">Room Service</option>
-                    <option value="Bar Lounge">Bar Lounge</option>
-                    <option value="Takeaway">Takeaway</option>
-                  </select>
-                </div>
-                {chargeTarget === 'walkin' ? (
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Table / Ref</label>
-                    <input
-                      type="text"
-                      value={tableOrRoom}
-                      onChange={(e) => setTableOrRoom(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2"
-                    />
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Room Guest</label>
-                    <input
-                      type="text"
-                      readOnly
-                      value={inHouseGuests.find((r) => r.id === chargeTarget)?.guestName || ''}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-slate-50 text-slate-700"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Guest First Name (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={guestFirstName}
-                    onChange={(e) => setGuestFirstName(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
-                  />
-                </div>
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Guest Last Name (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={guestLastName}
-                    onChange={(e) => setGuestLastName(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5"
-                  />
                 </div>
               </div>
-            </div>
-
-            {/* Cart Items List */}
-            <div className="border-t border-b border-slate-100 py-3 space-y-2 max-h-[240px] overflow-y-auto">
-              {cart.length === 0 ? (
-                <p className="text-xs text-slate-400 py-4 text-center">
-                  Tap menu items on the left or add a custom item below.
-                </p>
-              ) : (
-                cart.map((c) => (
-                  <div
-                    key={c.id}
-                    className="flex items-center justify-between gap-2 text-xs py-1"
-                  >
-                    <span className="font-medium text-slate-900 truncate flex-1">{c.name}</span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => updateQty(c.id, -1)}
-                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 cursor-pointer"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <span className="font-mono-tabular w-5 text-center">{c.qty}</span>
-                      <button
-                        type="button"
-                        onClick={() => updateQty(c.id, 1)}
-                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 cursor-pointer"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
-                      <span className="font-mono-tabular font-semibold text-slate-900 w-20 text-right">
-                        {formatNgn(c.priceNgn * c.qty)}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
-
-              {/* Quick Custom Line Input */}
-              {showCustomLine ? (
-                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2 text-xs">
-                  <input
-                    type="text"
-                    value={customLineName}
-                    onChange={(e) => setCustomLineName(e.target.value)}
-                    placeholder="Custom item or drink name..."
-                    className="w-full border border-slate-200 rounded px-2.5 py-1.5 bg-white"
-                  />
-                  <div className="grid grid-cols-3 gap-2">
-                    <input
-                      type="number"
-                      min={1}
-                      value={customLineQty}
-                      onChange={(e) => setCustomLineQty(Number(e.target.value) || 1)}
-                      placeholder="Qty"
-                      className="border border-slate-200 rounded px-2 py-1 bg-white font-mono-tabular"
-                    />
-                    <input
-                      type="number"
-                      min={100}
-                      step={100}
-                      value={customLinePrice}
-                      onChange={(e) => setCustomLinePrice(Number(e.target.value) || 0)}
-                      placeholder="Price ₦"
-                      className="col-span-2 border border-slate-200 rounded px-2 py-1 bg-white font-mono-tabular"
-                    />
-                  </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowCustomLine(false)}
-                      className="px-2 py-1 text-slate-600 hover:text-slate-900 cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAddCustomLine}
-                      className="px-2.5 py-1 bg-slate-900 text-white rounded font-semibold cursor-pointer"
-                    >
-                      Add Line
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowCustomLine(true)}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1c46be] hover:underline cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>Add Custom / Ad-hoc Item</span>
-                </button>
-              )}
-            </div>
-
-            {/* Totals Breakdown */}
-            <div className="space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Subtotal</span>
-                <span className="font-mono-tabular">{formatNgn(subtotalNgn)}</span>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Tax (VAT 7.5%)</span>
-                <span className="font-mono-tabular">{formatNgn(vatNgn)}</span>
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                <span className="font-display text-sm font-bold text-slate-900">Total</span>
-                <span className="font-mono-tabular text-lg font-bold text-[#1c46be]">
-                  {formatNgn(totalNgn)}
-                </span>
-              </div>
-            </div>
-
-            {/* Payment Method + Place / Clear Buttons (Matches IMG_2077.png) */}
-            <div className="space-y-2.5 pt-1">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <select
-                  value={paymentMethod}
-                  onChange={(e) =>
-                    handlePaymentMethodChange(e.target.value as PosOrderRecord['paymentMethod'])
-                  }
-                  className="border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-medium bg-white"
-                >
-                  <option value="Cash NGN">Cash NGN</option>
-                  <option value="Card POS">Card POS</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
-                  <option value="Room Folio" disabled={inHouseGuests.length === 0}>
-                    Bill to Room {inHouseGuests.length === 0 ? '(No In-House)' : ''}
-                  </option>
-                </select>
-
-                <button
-                  type="submit"
-                  disabled={cart.length === 0 || submitting}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>
-                    {submitting
-                      ? 'Placing...'
-                      : paymentMethod === 'Room Folio'
-                        ? 'Bill to Room'
-                        : 'Place Order'}
-                  </span>
-                </button>
-              </div>
-
               <button
                 type="button"
-                onClick={clearCart}
-                disabled={cart.length === 0}
-                className="w-full py-2 border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                onClick={() => setPrintDoc(null)}
+                className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-white/15 cursor-pointer"
               >
-                Clear
+                <X className="w-5 h-5" />
               </button>
             </div>
-          </form>
-        </div>
-        )}
 
-        {/* Add / Edit POS Menu Item Modal */}
-        {menuModalOpen && canManageMenu && (
-          <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-4">
-            <form
-              onSubmit={handleSaveMenuItem}
-              className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4"
-            >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="font-display text-base font-bold text-slate-900">
-                  {editingMenuItem ? 'Edit POS Menu Item' : 'Add POS Menu Item'}
-                </h3>
+            {/* Format Switcher + Action Buttons */}
+            <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
                 <button
                   type="button"
-                  onClick={() => setMenuModalOpen(false)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
+                  onClick={() => setPrintFormat('receipt')}
+                  className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
+                    printFormat === 'receipt'
+                      ? 'bg-[#0b6b3a] text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  <X className="w-4 h-4" />
+                  Thermal Receipt (80mm)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintFormat('invoice')}
+                  className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
+                    printFormat === 'invoice'
+                      ? 'bg-[#0b6b3a] text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Formal Invoice (A4)
                 </button>
               </div>
 
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Item Name</label>
-                  <input
-                    required
-                    type="text"
-                    value={menuName}
-                    onChange={(e) => setMenuName(e.target.value)}
-                    placeholder="e.g., Bottled Water, Grilled Catfish & Chips"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">Category</label>
-                  <input
-                    required
-                    type="text"
-                    list="pos-cat-options"
-                    value={menuCategory}
-                    onChange={(e) => setMenuCategory(e.target.value)}
-                    placeholder="e.g., Beverage, Food, Nigerian Kitchen"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                  <datalist id="pos-cat-options">
-                    {POS_DEFAULT_CATEGORIES.map((c) => (
-                      <option key={c} value={c} />
-                    ))}
-                  </datalist>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Price (₦)</label>
-                    <input
-                      required
-                      type="number"
-                      min={0}
-                      step={50}
-                      value={menuPrice}
-                      onChange={(e) => setMenuPrice(Number(e.target.value) || 0)}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Unit Cost (₦)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={50}
-                      value={menuCost}
-                      onChange={(e) => setMenuCost(Number(e.target.value) || 0)}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Prep (mins)</label>
-                    <input
-                      required
-                      type="number"
-                      min={0}
-                      max={240}
-                      value={menuPrep}
-                      onChange={(e) => setMenuPrep(Number(e.target.value) || 0)}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
-                    />
-                  </div>
-                </div>
-
-                <label className="flex items-center gap-2 pt-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={menuAvailable}
-                    onChange={(e) => setMenuAvailable(e.target.checked)}
-                    className="rounded border-slate-300 text-emerald-600"
-                  />
-                  <span className="font-medium text-slate-800">
-                    Item is currently available for sale
-                  </span>
-                </label>
-              </div>
-
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
-                {editingMenuItem && posMenuItems.some((m) => m.id === editingMenuItem.id) ? (
-                  <button
-                    type="button"
-                    disabled={savingMenu}
-                    onClick={handleDeleteMenuItem}
-                    className="inline-flex items-center gap-1 px-3 py-2 border border-rose-200 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete</span>
-                  </button>
-                ) : (
-                  <span />
-                )}
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setMenuModalOpen(false)}
-                    className="px-3.5 py-2 border border-slate-200 rounded-lg font-medium text-slate-700 cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={savingMenu}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#1c46be] hover:bg-blue-800 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
-                  >
-                    <UtensilsCrossed className="w-3.5 h-3.5" />
-                    <span>{savingMenu ? 'Saving...' : editingMenuItem ? 'Save Changes' : 'Add Item'}</span>
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* Record POS / Kitchen Purchase Input Modal */}
-        {purchaseModalOpen && (
-          <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-4">
-            <form
-              onSubmit={handleRecordPurchase}
-              className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4"
-            >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="font-display text-base font-bold text-slate-900">
-                  Record POS / Kitchen Purchase
-                </h3>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setPurchaseModalOpen(false)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    Purchase Description
-                  </label>
-                  <input
-                    required
-                    type="text"
-                    value={purItemDesc}
-                    onChange={(e) => setPurItemDesc(e.target.value)}
-                    placeholder="e.g., Fresh Croaker Fish, Bottled Water Pack, Cooking Gas"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Supplier / Vendor</label>
-                    <input
-                      required
-                      type="text"
-                      value={purSupplier}
-                      onChange={(e) => setPurSupplier(e.target.value)}
-                      placeholder="Ogbete Market / Vendor"
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Ledger Category</label>
-                    <select
-                      value={purCategory}
-                      onChange={(e) =>
-                        setPurCategory(e.target.value as 'Restaurant & Bar' | 'Procurement')
-                      }
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 bg-white"
-                    >
-                      <option value="Restaurant & Bar">Restaurant &amp; Bar</option>
-                      <option value="Procurement">Procurement</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Total Cost (₦)</label>
-                    <input
-                      required
-                      type="number"
-                      min={100}
-                      step={100}
-                      value={purAmount}
-                      onChange={(e) => setPurAmount(Number(e.target.value) || 0)}
-                      className="w-full border border-slate-200 rounded-lg px-2.5 py-2 font-mono-tabular"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Method</label>
-                    <select
-                      value={purMethod}
-                      onChange={(e) => setPurMethod(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-2 py-2 bg-white"
-                    >
-                      <option value="Cash NGN">Cash NGN</option>
-                      <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="Card POS">Card POS</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-medium text-slate-700 mb-1">Purchase Date</label>
-                    <input
-                      required
-                      type="date"
-                      value={purDate}
-                      onChange={(e) => setPurDate(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-2 py-2 font-mono-tabular"
-                    />
-                  </div>
-                </div>
-
-                {inventoryItems.length > 0 && (
-                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
-                    <p className="font-semibold text-slate-800">
-                      Optional: Restock Store Inventory Item
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      <select
-                        value={purInvId}
-                        onChange={(e) => setPurInvId(e.target.value)}
-                        className="col-span-2 border border-slate-200 rounded px-2.5 py-1.5 bg-white"
-                      >
-                        <option value="">Do not adjust inventory</option>
-                        {inventoryItems.map((inv) => (
-                          <option key={inv.id} value={inv.id}>
-                            {inv.name} ({inv.quantityOnHand} {inv.unit})
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        min={0}
-                        disabled={!purInvId}
-                        value={purRestockQty}
-                        onChange={(e) => setPurRestockQty(Number(e.target.value) || 0)}
-                        placeholder="+Qty"
-                        className="border border-slate-200 rounded px-2.5 py-1.5 bg-white font-mono-tabular disabled:bg-slate-100"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setPurchaseModalOpen(false)}
-                  className="px-3.5 py-2 border border-slate-200 rounded-lg font-medium text-slate-700 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingPurchase}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg cursor-pointer"
-                >
-                  <ShoppingBag className="w-3.5 h-3.5" />
-                  <span>{savingPurchase ? 'Recording...' : 'Save Purchase'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* POS Receipt Preview Modal (Screen View) */}
-        {receiptOrder && (
-          <div className="fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4">
-            <div className="bg-white border border-slate-200 rounded-2xl max-w-sm w-full p-6 space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="font-display text-sm font-bold text-slate-900">
-                  POS Order Receipt
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setReceiptOrder(null)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
-                <div className="text-center space-y-1 border-b border-dashed border-slate-300 pb-3">
-                  {property.logoUrl && (
-                    <img
-                      src={property.logoUrl}
-                      alt={property.name}
-                      referrerPolicy="no-referrer"
-                      className="w-10 h-10 object-contain mx-auto rounded"
-                    />
-                  )}
-                  <p className="font-display font-bold text-sm text-slate-900">{property.name}</p>
-                  {property.address && (
-                    <p className="text-[11px] text-slate-600">{property.address}</p>
-                  )}
-                  {property.phone && (
-                    <p className="text-[11px] font-mono-tabular text-slate-500">{property.phone}</p>
-                  )}
-                </div>
-
-                <div className="space-y-1 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Receipt No:</span>
-                    <span className="font-mono-tabular font-bold text-slate-900">
-                      {receiptOrder.orderNumber}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Date:</span>
-                    <span className="font-mono-tabular">
-                      {receiptOrder.orderDate || new Date().toISOString().slice(0, 10)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Service:</span>
-                    <span>{receiptOrder.serviceType}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Charge / Ref:</span>
-                    <span className="font-medium text-right">{receiptOrder.tableOrRoom}</span>
-                  </div>
-                  {receiptOrder.guestName && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Guest:</span>
-                      <span>{receiptOrder.guestName}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="border-t border-b border-dashed border-slate-300 py-2.5 space-y-1">
-                  <p className="font-semibold text-slate-800">Items ({receiptOrder.itemCount})</p>
-                  <p className="text-slate-700 leading-relaxed">{receiptOrder.itemsSummary}</p>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex justify-between text-slate-600">
-                    <span>Subtotal</span>
-                    <span className="font-mono-tabular">{formatNgn(receiptOrder.subtotalNgn)}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-600">
-                    <span>VAT (7.5%)</span>
-                    <span className="font-mono-tabular">{formatNgn(receiptOrder.vatNgn)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-sm text-slate-900 pt-1 border-t border-slate-200">
-                    <span>
-                      {receiptOrder.paymentStatus === 'room_folio' ? 'Total Billed to Room' : 'Total Paid'}
-                    </span>
-                    <span className="font-mono-tabular">{formatNgn(receiptOrder.totalNgn)}</span>
-                  </div>
-                  <div className="flex justify-between text-[11px] text-slate-500 pt-1">
-                    <span>Payment Method</span>
-                    <span className="font-semibold text-slate-800">
-                      {receiptOrder.paymentMethod === 'Room Folio'
-                        ? 'Bill to Room'
-                        : receiptOrder.paymentMethod}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer"
+                  onClick={handleTriggerBrowserPrint}
+                  className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white text-xs font-semibold cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Print Invoice</span>
+                  <span>{printFormat === 'receipt' ? 'Print Receipt' : 'Print Invoice'}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDownloadReceiptPdf(receiptOrder)}
-                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                  onClick={() => handleDownloadPdf(printDoc, printFormat)}
+                  className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-xs font-semibold cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Download PDF</span>
                 </button>
               </div>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Dedicated Printable Thermal Receipt Section */}
-      {receiptOrder && (
-        <div className="hidden print-only max-w-[80mm] mx-auto p-4 text-xs text-slate-900 font-sans">
-          <div className="text-center space-y-1 border-b border-dashed border-slate-400 pb-2 mb-2">
-            {property.logoUrl && (
-              <img
-                src={property.logoUrl}
-                alt={property.name}
-                className="w-12 h-12 object-contain mx-auto"
-              />
-            )}
-            <p className="font-bold text-sm">{property.name}</p>
-            {property.address && <p className="text-[10px]">{property.address}</p>}
-            {(property.phone || property.email) && (
-              <p className="text-[10px] font-mono">
-                {[property.phone, property.email].filter(Boolean).join(' · ')}
-              </p>
-            )}
-          </div>
-          <div className="space-y-1 text-[11px] mb-2">
-            <p>
-              <strong>Receipt:</strong> {receiptOrder.orderNumber}
-            </p>
-            <p>
-              <strong>Date:</strong>{' '}
-              {receiptOrder.orderDate || new Date().toISOString().slice(0, 10)}
-            </p>
-            <p>
-              <strong>Service:</strong> {receiptOrder.serviceType}
-            </p>
-            <p>
-              <strong>Ref:</strong> {receiptOrder.tableOrRoom}
-            </p>
-            {receiptOrder.guestName && (
-              <p>
-                <strong>Guest:</strong> {receiptOrder.guestName}
-              </p>
-            )}
-          </div>
-          <div className="border-t border-b border-dashed border-slate-400 py-2 my-2">
-            <p className="font-bold mb-1">Items ({receiptOrder.itemCount})</p>
-            <p>{receiptOrder.itemsSummary}</p>
-          </div>
-          <div className="space-y-1 text-[11px]">
-            <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span>{formatNgn(receiptOrder.subtotalNgn)}</span>
+            <div className="p-5 max-h-[70vh] overflow-y-auto bg-slate-100/70">
+              {renderPrintableDocument(printDoc, printFormat)}
             </div>
-            <div className="flex justify-between">
-              <span>VAT (7.5%)</span>
-              <span>{formatNgn(receiptOrder.vatNgn)}</span>
-            </div>
-            <div className="flex justify-between font-bold text-sm border-t border-slate-400 pt-1 mt-1">
-              <span>TOTAL</span>
-              <span>{formatNgn(receiptOrder.totalNgn)}</span>
-            </div>
-            <p className="pt-1">
-              <strong>Method:</strong>{' '}
-              {receiptOrder.paymentMethod === 'Room Folio'
-                ? 'Bill to Room'
-                : receiptOrder.paymentMethod}{' '}
-              ({receiptOrder.paymentStatus === 'room_folio' ? 'Billed to Room Account' : 'Paid'})
-            </p>
           </div>
-          <p className="text-center text-[10px] mt-4">
-            {cms.brand.folioFooterNote || `Thank you for choosing ${property.name}.`}
-          </p>
+        </div>
+      )}
+
+      {/* Dedicated Print Portal rendered directly under <body> for clean window.print() */}
+      {printDoc &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div id="pos-print-portal">{renderPrintableDocument(printDoc, printFormat)}</div>,
+          document.body
+        )}
+
+      {/* ========================================================================= */}
+      {/* PROPERTY ADMIN MODAL: ADD / EDIT / DELETE POS PRODUCT                     */}
+      {/* ========================================================================= */}
+      {menuModalOpen && canManageMenu && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveMenuItem}
+            className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden text-xs"
+          >
+            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+              <h3 className="font-display text-sm font-bold">
+                {editingMenuItem ? 'Edit POS Product' : 'Add POS Product'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setMenuModalOpen(false)}
+                className="text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3.5">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Product Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={menuName}
+                  onChange={(e) => setMenuName(e.target.value)}
+                  placeholder="e.g. Grilled Chicken"
+                  className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs focus:outline-none focus:border-[#0b6b3a]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">POS Section</label>
+                  <select
+                    value={menuSection}
+                    onChange={(e) => setMenuSection(e.target.value as PosSection)}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                  >
+                    {POS_SECTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Category</label>
+                  <select
+                    value={menuCategory}
+                    onChange={(e) => setMenuCategory(e.target.value)}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                  >
+                    {productCategoryOptions.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Price (₦) *</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={menuPrice}
+                    onChange={(e) => setMenuPrice(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Cost (₦)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={menuCost}
+                    onChange={(e) => setMenuCost(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Prep (mins)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={240}
+                    value={menuPrep}
+                    onChange={(e) => setMenuPrep(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+              </div>
+
+              <label className="inline-flex items-center gap-2 font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={menuAvailable}
+                  onChange={(e) => setMenuAvailable(e.target.checked)}
+                  className="rounded border-slate-300 text-[#0b6b3a]"
+                />
+                <span>Available for sale on POS</span>
+              </label>
+
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                {editingMenuItem ? (
+                  <button
+                    type="button"
+                    disabled={savingMenu}
+                    onClick={handleDeleteMenuItem}
+                    className="h-9 px-3 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold cursor-pointer"
+                  >
+                    Delete Product
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMenuModalOpen(false)}
+                    className="h-9 px-3.5 rounded-lg border border-slate-200 text-slate-600 font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingMenu}
+                    className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{savingMenu ? 'Saving...' : 'Save Product'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* PROPERTY ADMIN MODAL: EDIT POS ORDER & TRANSACTION DETAILS                */}
+      {/* ========================================================================= */}
+      {editingOrder && canManageMenu && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveOrderEdit}
+            className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-lg overflow-hidden text-xs"
+          >
+            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+              <h3 className="font-display text-sm font-bold">
+                Edit Transaction · #{editingOrder.orderNumber}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingOrder(null)}
+                className="text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3.5">
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <p className="text-[11px] font-semibold text-slate-500">Order Items</p>
+                <p className="text-slate-900 font-medium mt-0.5">{editingOrder.itemsSummary}</p>
+                <p className="text-[11px] font-mono-tabular text-slate-600 mt-1">
+                  Subtotal: {formatNgn(editingOrder.subtotalNgn)} · Recorded Total:{' '}
+                  <strong>{formatNgn(editingOrder.totalNgn)}</strong>
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Room / Table</label>
+                  <input
+                    type="text"
+                    required
+                    value={editOrdTableOrRoom}
+                    onChange={(e) => setEditOrdTableOrRoom(e.target.value)}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Guest Name</label>
+                  <input
+                    type="text"
+                    value={editOrdGuestName}
+                    onChange={(e) => setEditOrdGuestName(e.target.value)}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Payment Method</label>
+                  <select
+                    value={editOrdPaymentMethod}
+                    onChange={(e) =>
+                      setEditOrdPaymentMethod(e.target.value as PosOrderRecord['paymentMethod'])
+                    }
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                  >
+                    <option value="Card POS">Card</option>
+                    <option value="Cash NGN">Cash</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Room Folio">Room Charge</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Payment Status</label>
+                  <select
+                    value={editOrdPaymentStatus}
+                    onChange={(e) =>
+                      setEditOrdPaymentStatus(e.target.value as PosOrderRecord['paymentStatus'])
+                    }
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                  >
+                    <option value="paid">Paid</option>
+                    <option value="room_folio">Charged to Room Folio</option>
+                    <option value="unpaid">Unpaid</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Kitchen Status</label>
+                  <select
+                    value={editOrdKitchenStatus}
+                    onChange={(e) =>
+                      setEditOrdKitchenStatus(e.target.value as PosOrderRecord['kitchenStatus'])
+                    }
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                  >
+                    <option value="queued">Queued</option>
+                    <option value="preparing">Preparing</option>
+                    <option value="ready">Ready</option>
+                    <option value="served">Served</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Discount (₦)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={editingOrder.subtotalNgn}
+                    value={editOrdDiscountNgn}
+                    onChange={(e) => setEditOrdDiscountNgn(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Service Charge (₦)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editOrdServiceChargeNgn}
+                    onChange={(e) =>
+                      setEditOrdServiceChargeNgn(Math.max(0, Number(e.target.value)))
+                    }
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Tax / VAT (₦)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editOrdVatNgn}
+                    onChange={(e) => setEditOrdVatNgn(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Order / Adjustment Notes
+                </label>
+                <input
+                  type="text"
+                  value={editOrdNotes}
+                  onChange={(e) => setEditOrdNotes(e.target.value)}
+                  placeholder="Reason for adjustment or kitchen note..."
+                  className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs"
+                />
+              </div>
+
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between font-bold text-[#0b6b3a]">
+                <span>Updated Order Total</span>
+                <span className="font-mono-tabular text-sm">
+                  {formatNgn(
+                    Math.max(0, editingOrder.subtotalNgn - editOrdDiscountNgn) +
+                      editOrdServiceChargeNgn +
+                      editOrdVatNgn
+                  )}
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingOrder(null)}
+                  className="h-9 px-3.5 rounded-lg border border-slate-200 text-slate-600 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingOrderEdit}
+                  className="h-9 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                >
+                  {savingOrderEdit ? 'Saving...' : 'Save Order Changes'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* PROPERTY ADMIN MODAL: PROPERTY-SPECIFIC POS SETTINGS                      */}
+      {/* ========================================================================= */}
+      {settingsModalOpen && canManageMenu && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSavePosSettings}
+            className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden text-xs"
+          >
+            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Settings className="w-4 h-4 text-emerald-200" />
+                <h3 className="font-display text-sm font-bold">
+                  POS Settings · {property.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsModalOpen(false)}
+                className="text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3.5">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Service Charge (%)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={50}
+                    step={0.5}
+                    value={setServiceRate}
+                    onChange={(e) => setSetServiceRate(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Tax / VAT (%)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={50}
+                    step={0.5}
+                    value={setTaxRate}
+                    onChange={(e) => setSetTaxRate(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Receipt Header Note
+                </label>
+                <input
+                  type="text"
+                  value={setReceiptHeader}
+                  onChange={(e) => setSetReceiptHeader(e.target.value)}
+                  placeholder="e.g. Restaurant & Lounge · Open 7AM - 11PM"
+                  className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Receipt &amp; Invoice Footer Message
+                </label>
+                <textarea
+                  rows={2}
+                  value={setReceiptFooter}
+                  onChange={(e) => setSetReceiptFooter(e.target.value)}
+                  placeholder="Thank you for dining with us..."
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Custom POS Categories (comma separated)
+                </label>
+                <input
+                  type="text"
+                  value={setCustomCategoriesText}
+                  onChange={(e) => setSetCustomCategoriesText(e.target.value)}
+                  placeholder="e.g. Grill, Cocktails, Desserts, Wine"
+                  className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setSettingsModalOpen(false)}
+                  className="h-9 px-3.5 rounded-lg border border-slate-200 text-slate-600 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingSettings}
+                  className="h-9 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                >
+                  {savingSettings ? 'Saving...' : 'Save POS Settings'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: RECORD POS PURCHASE EXPENSE                                        */}
+      {/* ========================================================================= */}
+      {purchaseModalOpen && (
+        <div className="no-print fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleRecordPurchase}
+            className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden text-xs"
+          >
+            <div className="bg-[#0b6b3a] text-white px-5 py-3.5 flex items-center justify-between">
+              <h3 className="font-display text-sm font-bold">Record F&amp;B Purchase</h3>
+              <button
+                type="button"
+                onClick={() => setPurchaseModalOpen(false)}
+                className="text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Item Description *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={purItemDesc}
+                  onChange={(e) => setPurItemDesc(e.target.value)}
+                  placeholder="e.g. Fresh Chicken & Produce"
+                  className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Supplier *</label>
+                  <input
+                    type="text"
+                    required
+                    value={purSupplier}
+                    onChange={(e) => setPurSupplier(e.target.value)}
+                    placeholder="Vendor name"
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Category</label>
+                  <select
+                    value={purCategory}
+                    onChange={(e) =>
+                      setPurCategory(e.target.value as 'Restaurant & Bar' | 'Procurement')
+                    }
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 bg-white text-xs"
+                  >
+                    <option value="Restaurant & Bar">Restaurant &amp; Bar</option>
+                    <option value="Procurement">Procurement</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Amount (₦) *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={purAmount}
+                    onChange={(e) => setPurAmount(Math.max(0, Number(e.target.value)))}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-3 font-mono-tabular text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Method</label>
+                  <select
+                    value={purMethod}
+                    onChange={(e) => setPurMethod(e.target.value)}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-2 bg-white text-xs"
+                  >
+                    <option value="Cash NGN">Cash</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Card POS">Card</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={purDate}
+                    onChange={(e) => setPurDate(e.target.value)}
+                    className="w-full h-10 border border-slate-200 rounded-lg px-2 font-mono-tabular text-xs"
+                  />
+                </div>
+              </div>
+
+              {inventoryItems.length > 0 && (
+                <div className="grid grid-cols-3 gap-3 pt-1">
+                  <div className="col-span-2">
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Restock Store Inventory (Optional)
+                    </label>
+                    <select
+                      value={purInvId}
+                      onChange={(e) => setPurInvId(e.target.value)}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2 bg-white text-xs"
+                    >
+                      <option value="">No inventory link</option>
+                      {inventoryItems.map((inv) => (
+                        <option key={inv.id} value={inv.id}>
+                          {inv.name} ({inv.quantityOnHand} {inv.unit})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Qty</label>
+                    <input
+                      type="number"
+                      min={0}
+                      disabled={!purInvId}
+                      value={purRestockQty}
+                      onChange={(e) => setPurRestockQty(Math.max(0, Number(e.target.value)))}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-2 font-mono-tabular text-xs disabled:bg-slate-100"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setPurchaseModalOpen(false)}
+                  className="h-9 px-3.5 rounded-lg border border-slate-200 text-slate-600 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingPurchase}
+                  className="h-9 px-4 rounded-lg bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold disabled:opacity-50 cursor-pointer"
+                >
+                  {savingPurchase ? 'Recording...' : 'Record & Print Invoice'}
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       )}
 

@@ -27,9 +27,12 @@ import {
   BlockedDateRecord,
   formatBookingSourceLabel,
   formatNgn,
+  getCheckInDateRestriction,
+  getOtaCancellationRestriction,
   getRoomSection,
   GuestRecord,
   isOtaBookingChannel,
+  isOtaReservation,
   OtaIntegrationRecord,
   PaymentStatusLabel,
   PRIMARY_BOOKING_SOURCES,
@@ -60,6 +63,7 @@ interface ReservationsCalendarViewProps {
   blockedDates: BlockedDateRecord[];
   otaChannels?: OtaIntegrationRecord[];
   guests?: GuestRecord[];
+  canCompleteCheckIn?: boolean;
   actorRole: string;
   onNotify: (msg: string) => void;
   onGuestCheckedIn?: (info: CheckedInConfirmationInfo) => void;
@@ -97,6 +101,7 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
   blockedDates,
   otaChannels = [],
   guests = [],
+  canCompleteCheckIn = true,
   actorRole,
   onNotify,
   onGuestCheckedIn,
@@ -243,9 +248,27 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         } else {
           bookedCount += 1;
         }
-        if (isOtaBookingChannel(check.conflictReservation.channel)) {
+        if (isOtaReservation(check.conflictReservation)) {
           otaCount += 1;
         }
+      }
+    });
+
+    // Live totals across ALL active & upcoming reservations on the calendar (not limited to 1-night search window)
+    let activeConfirmedTotal = 0;
+    let activeOtaTotal = 0;
+    reservations.forEach((res) => {
+      if (!isActiveBlockingReservation(res)) return;
+      const normIn = normalizeIsoDate(res.checkInDate);
+      const normOut = normalizeIsoDate(res.checkOutDate);
+      const effOut = normOut || normIn;
+      const isCurrentOrFuture = res.status === 'checked_in' || !effOut || effOut >= todayIso;
+      if (!isCurrentOrFuture) return;
+      if (res.status === 'confirmed' || res.status === 'pending') {
+        activeConfirmedTotal += 1;
+      }
+      if (isOtaReservation(res)) {
+        activeOtaTotal += 1;
       }
     });
 
@@ -257,12 +280,14 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       checkedInCount,
       bookedCount,
       otaCount,
+      activeConfirmedTotal,
+      activeOtaTotal,
       blockedCount,
       oooCount,
       availNights,
       availabilityPct: total > 0 ? Math.round((openCount / total) * 100) : 0,
     };
-  }, [sortedRooms, availCheckIn, availCheckOut, reservations, blockedDates]);
+  }, [sortedRooms, availCheckIn, availCheckOut, reservations, blockedDates, todayIso]);
 
   const q = searchQuery.trim().toLowerCase();
 
@@ -584,20 +609,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setConflictError(conflict);
       return;
     }
-    if (immediateCheckIn) {
-      if (
-        !quickPayConfirmed ||
-        !quickIdVerified ||
-        quickIdNumber.trim().length < 3 ||
-        quickKeyIssued !== 'yes' ||
-        !quickRoomReady
-      ) {
-        setConflictError(
-          'Immediate check-in requires confirming payment, verifying Guest ID, setting Key Issued = Yes, and confirming room readiness.'
-        );
-        return;
-      }
-    }
     const nightsCount = diffNights(bookCheckIn, bookCheckOut);
     setBusyId('book');
     try {
@@ -628,25 +639,16 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         cautionDepositNgn: cautionEnabled ? Math.max(0, cautionFeeNgn) : 0,
         cautionDepositCollectedNgn: cautionEnabled ? Math.max(0, cautionCollectedNgn) : 0,
         cautionDepositRefunded: cautionEnabled ? cautionRefunded : false,
-        immediateCheckIn,
-        paymentConfirmed: immediateCheckIn ? quickPayConfirmed : false,
-        idVerified: immediateCheckIn ? quickIdVerified : false,
-        keyIssued: immediateCheckIn ? quickKeyIssued === 'yes' : false,
+        immediateCheckIn: false,
+        paymentConfirmed: false,
+        idVerified: false,
+        keyIssued: false,
         actorRole,
       });
       onNotify(
-        immediateCheckIn
-          ? `Checked in ${trimmedGuest} to ${room.roomNumber}`
-          : `Booked ${room.roomNumber} for ${trimmedGuest} (${bookCheckIn} → ${bookCheckOut})`
+        `Reservation Created Successfully — ${room.roomNumber} for ${trimmedGuest} (${bookCheckIn} → ${bookCheckOut})`
       );
-      if (immediateCheckIn) {
-        onGuestCheckedIn?.({
-          guestName: trimmedGuest,
-          roomNumber: room.roomNumber,
-          bookingRef: createdRes.bookingRef,
-          reservationId: createdRes.id,
-        });
-      } else if (Math.max(0, depositNgn) > 0 || paymentStatus === 'Paid' || paymentStatus === 'Partial') {
+      if (Math.max(0, depositNgn) > 0 || paymentStatus === 'Paid' || paymentStatus === 'Partial') {
         setReceiptTarget({
           reservation: createdRes.reservation,
           amountPaid: Math.max(0, depositNgn),
@@ -832,14 +834,16 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="font-mono-tabular text-2xl font-bold text-slate-900">
-              {availabilitySummary.bookedCount}
+              {availabilitySummary.activeConfirmedTotal}
             </span>
             <span className="font-mono-tabular text-xs text-orange-700 font-medium">
-              {availabilitySummary.otaCount} Airbnb / OTA
+              {availabilitySummary.activeOtaTotal} Airbnb / OTA
             </span>
           </div>
           <p className="mt-1 text-[11px] text-slate-500">
-            Live PMS &amp; channel reservations
+            {availabilitySummary.bookedCount > 0
+              ? `${availabilitySummary.bookedCount} in selected range · Live PMS & channel stays`
+              : 'Live PMS & channel reservations'}
           </p>
         </div>
 
@@ -1707,6 +1711,8 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
             {filteredReservations.map((res) => {
               const normIn = normalizeIsoDate(res.checkInDate);
               const isFutureStay = normIn > todayIso;
+              const otaCheckInBlock = getCheckInDateRestriction(res, todayIso);
+              const otaCancelBlock = getOtaCancellationRestriction(res);
               return (
               <div
                 key={res.id}
@@ -1762,47 +1768,69 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   >
                     Open Folio
                   </button>
-                  {res.status === 'confirmed' && (
-                    <button
-                      type="button"
-                      disabled={busyId === res.id}
-                      onClick={() => setCheckInTarget(res)}
-                      className="px-2.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
-                    >
-                      Check In
-                    </button>
-                  )}
-                  {(res.status === 'confirmed' || res.status === 'pending') && (
-                    <button
-                      type="button"
-                      disabled={busyId === res.id}
-                      onClick={async () => {
-                        setBusyId(res.id);
-                        try {
-                          const targetRoom = rooms.find((rm) => rm.id === res.roomId);
-                          await transitionReservationStatus({
-                            property,
-                            reservation: res,
-                            room: targetRoom,
-                            nextStatus: 'cancelled',
-                            actorRole,
-                          });
-                          onNotify(`Cancelled reservation ${res.bookingRef}`);
-                        } catch (err) {
-                          setCalendarNotice(
-                            err instanceof Error
-                              ? err.message
-                              : `Unable to cancel ${res.bookingRef}.`
-                          );
-                        } finally {
-                          setBusyId(null);
-                        }
-                      }}
-                      className="px-2.5 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-lg cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  )}
+                  {(res.status === 'confirmed' || res.status === 'pending') &&
+                    !otaCheckInBlock.restricted && (
+                      <button
+                        type="button"
+                        disabled={busyId === res.id}
+                        onClick={() => setCheckInTarget(res)}
+                        className="px-2.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                      >
+                        Check In
+                      </button>
+                    )}
+                  {(res.status === 'confirmed' || res.status === 'pending') &&
+                    otaCheckInBlock.restricted && (
+                      <span
+                        title={otaCheckInBlock.message}
+                        className="px-2.5 py-1.5 text-[11px] font-semibold bg-amber-50 border border-amber-200 text-amber-800 rounded-lg"
+                      >
+                        Check-in {otaCheckInBlock.checkInIso}
+                      </span>
+                    )}
+                  {(res.status === 'confirmed' || res.status === 'pending') &&
+                    !otaCancelBlock.restricted && (
+                      <button
+                        type="button"
+                        disabled={busyId === res.id}
+                        onClick={async () => {
+                          setBusyId(res.id);
+                          try {
+                            const targetRoom = rooms.find((rm) => rm.id === res.roomId);
+                            await transitionReservationStatus({
+                              property,
+                              reservation: res,
+                              room: targetRoom,
+                              nextStatus: 'cancelled',
+                              actorRole,
+                            });
+                            onNotify(`Cancelled reservation ${res.bookingRef}`);
+                          } catch (err) {
+                            setCalendarNotice(
+                              err instanceof Error
+                                ? err.message
+                                : `Unable to cancel ${res.bookingRef}.`
+                            );
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                        className="px-2.5 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-lg cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  {(res.status === 'confirmed' || res.status === 'pending') &&
+                    otaCancelBlock.restricted && (
+                      <button
+                        type="button"
+                        title={otaCancelBlock.message}
+                        onClick={() => setCalendarNotice(otaCancelBlock.message)}
+                        className="px-2.5 py-1.5 text-[11px] font-medium text-amber-800 border border-amber-200 bg-amber-50/70 hover:bg-amber-100/70 rounded-lg cursor-pointer"
+                      >
+                        Cancel via {otaCancelBlock.platformLabel}
+                      </button>
+                    )}
                 </div>
               </div>
               );
@@ -2434,15 +2462,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                       <option value="Unpaid">Unpaid</option>
                     </select>
                   </div>
-                  <label className="h-10 inline-flex items-center gap-2 px-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 font-medium cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={immediateCheckIn}
-                      onChange={(e) => setImmediateCheckIn(e.target.checked)}
-                      className="rounded border-slate-300 text-emerald-600"
-                    />
-                    <span>Check in guest immediately</span>
-                  </label>
+                  <div className="h-10 inline-flex items-center gap-2 px-3 rounded-lg border border-emerald-200 bg-emerald-50/70 text-[11px] font-medium text-emerald-900">
+                    <span>
+                      Check-in opens on arrival date ({normalizeIsoDate(bookCheckIn)})
+                    </span>
+                  </div>
                 </div>
 
                 <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 space-y-2.5">
@@ -2498,91 +2522,6 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                   )}
                 </div>
 
-                {immediateCheckIn && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-2.5">
-                    <p className="font-bold text-slate-900">
-                      Mandatory Check-In Verification
-                    </p>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="block font-medium text-slate-700 mb-1">Guest ID Type</label>
-                        <select
-                          value={quickIdType}
-                          onChange={(e) => setQuickIdType(e.target.value as GuestRecord['idType'])}
-                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
-                        >
-                          <option value="NIN">NIN</option>
-                          <option value="International Passport">International Passport</option>
-                          <option value="Driver License">Driver License</option>
-                          <option value="Voter Card">Voter Card</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block font-medium text-slate-700 mb-1">ID Number *</label>
-                        <input
-                          type="text"
-                          required
-                          value={quickIdNumber}
-                          onChange={(e) => setQuickIdNumber(e.target.value)}
-                          placeholder="ID / Passport No."
-                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-mono-tabular"
-                        />
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={quickPayConfirmed}
-                        onChange={(e) => setQuickPayConfirmed(e.target.checked)}
-                      />
-                      <span>1. Payment confirmed (deposit/transfer verified)</span>
-                    </label>
-                    <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={quickIdVerified}
-                        onChange={(e) => setQuickIdVerified(e.target.checked)}
-                      />
-                      <span>2. Guest government ID inspected &amp; verified</span>
-                    </label>
-                    <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={quickRoomReady}
-                        onChange={(e) => setQuickRoomReady(e.target.checked)}
-                      />
-                      <span>3. Room inspected ready for guest</span>
-                    </label>
-                    <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2.5">
-                      <span className="font-semibold text-slate-800">4. Key Issued? *</span>
-                      <div className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setQuickKeyIssued('yes')}
-                          className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
-                            quickKeyIssued === 'yes'
-                              ? 'bg-emerald-600 border-emerald-600 text-white'
-                              : 'bg-white border-slate-200 text-slate-700'
-                          }`}
-                        >
-                          Yes
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQuickKeyIssued('no')}
-                          className={`px-3 py-1 rounded font-semibold border cursor-pointer ${
-                            quickKeyIssued === 'no'
-                              ? 'bg-rose-600 border-rose-600 text-white'
-                              : 'bg-white border-slate-200 text-slate-700'
-                          }`}
-                        >
-                          No
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     type="button"
@@ -2595,19 +2534,13 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                     type="submit"
                     disabled={
                       busyId === 'book' ||
-                      Boolean(describeRoomConflict(targetRoomId, bookCheckIn, bookCheckOut)) ||
-                      (immediateCheckIn &&
-                        (!quickPayConfirmed ||
-                          !quickIdVerified ||
-                          quickIdNumber.trim().length < 3 ||
-                          quickKeyIssued !== 'yes' ||
-                          !quickRoomReady))
+                      Boolean(describeRoomConflict(targetRoomId, bookCheckIn, bookCheckOut))
                     }
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
+                    className="px-4 py-2 bg-[#0b6b3a] hover:bg-[#09552e] text-white font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
                   >
                     {busyId === 'book'
                       ? 'Saving...'
-                      : `Confirm (${diffNights(bookCheckIn, bookCheckOut)} nights)`}
+                      : `Confirm Reservation (${diffNights(bookCheckIn, bookCheckOut)} nights)`}
                   </button>
                 </div>
               </form>
@@ -2622,10 +2555,13 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
           reservation={checkInTarget}
           room={rooms.find((r) => r.id === checkInTarget.roomId)}
           rooms={rooms}
+          reservations={reservations}
+          blockedDates={blockedDates}
           guest={
             guests.find((g) => g.id === checkInTarget.guestId) ||
             guests.find((g) => g.fullName.toLowerCase() === checkInTarget.guestName.toLowerCase())
           }
+          canCompleteCheckIn={canCompleteCheckIn ?? true}
           actorRole={actorRole}
           onClose={() => setCheckInTarget(null)}
           onCompleted={(info) => {

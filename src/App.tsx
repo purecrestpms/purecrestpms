@@ -73,6 +73,7 @@ import {
 import {
   backfillMissingSystemPropertyIdsWorkflow,
   buildPropertyIcalFeed,
+  fixGideonIdenyiRoomAssignmentIfNeeded,
   heartbeatStaffSessionWorkflow,
   markMessageReadWorkflow,
   migrateLegacyMediaUrlsInFirestore,
@@ -438,6 +439,7 @@ export default function App() {
   const [propsLoaded, setPropsLoaded] = useState(false);
   const autoSeedAttemptedRef = useRef<string | null>(null);
   const catalogSyncedPropsRef = useRef<Set<string>>(new Set());
+  const gideonRoomFixedPropsRef = useRef<Set<string>>(new Set());
   const propInfoSyncedRef = useRef<Set<string>>(new Set());
   const msgSyncedRef = useRef<Set<string>>(new Set());
   const licenseCapSyncedRef = useRef<Set<string>>(new Set());
@@ -1176,6 +1178,44 @@ export default function App() {
       }
     });
   }, [properties, activePropertyId, rooms, reservations, housekeepingTasks, activeRole]);
+
+  // One-time idempotent correction: move Gideon Idenyi (12-07 → 12-11) Airbnb reservation from RM-4 to RM-1
+  useEffect(() => {
+    const activeProp = properties.find((p) => p.id === activePropertyId);
+    if (!activeProp || rooms.length === 0 || reservations.length === 0) return;
+    if (gideonRoomFixedPropsRef.current.has(activeProp.id)) return;
+
+    const rm1 = rooms.find((r) => r.roomNumber.trim().toUpperCase() === 'RM-1');
+    if (!rm1) return;
+
+    const needsReassign = reservations.some((res) => {
+      if (res.status === 'cancelled' || res.status === 'checked_out' || res.status === 'no_show') {
+        return false;
+      }
+      const nameLower = String(res.guestName || '').trim().toLowerCase();
+      return (
+        nameLower.includes('gideon') &&
+        nameLower.includes('idenyi') &&
+        String(res.checkInDate || '').trim().slice(0, 10).endsWith('-12-07') &&
+        String(res.checkOutDate || '').trim().slice(0, 10).endsWith('-12-11') &&
+        (res.roomId !== rm1.id || res.roomNumber.trim().toUpperCase() !== 'RM-1')
+      );
+    });
+
+    gideonRoomFixedPropsRef.current.add(activeProp.id);
+    if (!needsReassign) return;
+
+    void fixGideonIdenyiRoomAssignmentIfNeeded({
+      property: activeProp,
+      rooms,
+      reservations,
+      actorRole: ROLE_LABELS[activeRole],
+    }).then((didUpdate) => {
+      if (didUpdate) {
+        notify('Updated Gideon Idenyi (12-07 → 12-11) Airbnb reservation to RM-1');
+      }
+    });
+  }, [properties, activePropertyId, rooms, reservations, activeRole]);
 
   // Automatically migrate any legacy /assets/aistudio/ or AI Studio image paths in Firestore to /assets/media/
   useEffect(() => {
@@ -2198,6 +2238,11 @@ export default function App() {
                   blockedDates={blockedDates}
                   otaChannels={otaChannels}
                   guests={guests}
+                  canCompleteCheckIn={
+                    effectiveRole === 'pch_admin' ||
+                    effectiveRole === 'property_admin' ||
+                    effectiveRole === 'front_desk'
+                  }
                   actorRole={ROLE_LABELS[effectiveRole]}
                   onNotify={notify}
                   onGuestCheckedIn={(info) => setCheckedInPopup(info)}

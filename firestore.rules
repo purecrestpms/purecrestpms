@@ -106,8 +106,9 @@ service cloud.firestore {
       data.keys().hasOnly([
         'systemPropertyId', 'subdomainSlug', 'name', 'code', 'city', 'state', 'country', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
         'currency', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource',
-        'roomCount', 'status', 'licenseKey', 'licensePlan', 'adminEmail',
-        'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
+        'roomCount', 'status', 'licenseKey', 'licensePlan',
+        'posServiceChargeRate', 'posTaxRate', 'posReceiptHeader', 'posReceiptFooter', 'posCategories',
+        'adminEmail', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       (!('systemPropertyId' in data) || (data.systemPropertyId is string && data.systemPropertyId.size() >= 15 && data.systemPropertyId.size() <= 32 && data.systemPropertyId.matches('^PCH-PROP-[0-9]{6,}$'))) &&
       (!('subdomainSlug' in data) || (data.subdomainSlug is string && data.subdomainSlug.size() >= 2 && data.subdomainSlug.size() <= 48 && data.subdomainSlug.matches('^[a-z0-9\\-]+$'))) &&
@@ -129,6 +130,11 @@ service cloud.firestore {
       data.status in ['active', 'onboarding', 'suspended'] &&
       (!('licenseKey' in data) || (data.licenseKey is string && data.licenseKey.size() <= 64)) &&
       (!('licensePlan' in data) || (data.licensePlan is string && data.licensePlan in ['Starter', 'Professional', 'Enterprise', 'Lifetime Sovereign'])) &&
+      (!('posServiceChargeRate' in data) || (data.posServiceChargeRate is number && data.posServiceChargeRate >= 0 && data.posServiceChargeRate <= 50)) &&
+      (!('posTaxRate' in data) || (data.posTaxRate is number && data.posTaxRate >= 0 && data.posTaxRate <= 50)) &&
+      (!('posReceiptHeader' in data) || (data.posReceiptHeader is string && data.posReceiptHeader.size() <= 200)) &&
+      (!('posReceiptFooter' in data) || (data.posReceiptFooter is string && data.posReceiptFooter.size() <= 240)) &&
+      (!('posCategories' in data) || (data.posCategories is list && data.posCategories.size() <= 30 && (data.posCategories.size() == 0 || data.posCategories[0] is string))) &&
       data.adminEmail is string && data.adminEmail.size() >= 3 && data.adminEmail.size() <= 120 &&
       isAuthorizedEmailList(data.authorizedEmails) &&
       data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
@@ -236,7 +242,7 @@ service cloud.firestore {
         'totalStays', 'lifetimeSpendNgn', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'propertyId', 'fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber',
+        'propertyId', 'fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber', 'idExpiryDate',
         'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
@@ -250,6 +256,7 @@ service cloud.firestore {
       (!('nationality' in data) || (data.nationality is string && data.nationality.size() <= 64)) &&
       data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'] &&
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
+      (!('idExpiryDate' in data) || (data.idExpiryDate is string && data.idExpiryDate.size() <= 24)) &&
       data.vipTier in ['Standard', 'Silver', 'Gold', 'Diplomatic'] &&
       data.totalStays is number && data.totalStays >= 0 &&
       data.lifetimeSpendNgn is number && data.lifetimeSpendNgn >= 0 &&
@@ -274,7 +281,7 @@ service cloud.firestore {
         'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'actualPayoutReceivedNgn', 'otaPayoutStatus', 'otaPayoutReceivedAtIso', 'amountDueAtPropertyNgn', 'paymentManuallyEdited', 'hotelPaidNgn',
         'status', 'paymentMethod', 'paymentStatus',
         'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso',
-        'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso',
+        'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'idExpiryDate', 'ratePlan', 'specialRequests', 'keyIssued', 'checkedInAtIso',
         'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso',
         'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
@@ -329,6 +336,9 @@ service cloud.firestore {
       (!('idVerified' in data) || data.idVerified is bool) &&
       (!('idType' in data) || (data.idType is string && data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'])) &&
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
+      (!('idExpiryDate' in data) || (data.idExpiryDate is string && data.idExpiryDate.size() <= 24)) &&
+      (!('ratePlan' in data) || (data.ratePlan is string && data.ratePlan.size() <= 64)) &&
+      (!('specialRequests' in data) || (data.specialRequests is string && data.specialRequests.size() <= 500)) &&
       (!('keyIssued' in data) || data.keyIssued is bool) &&
       (!('checkedInAtIso' in data) || (data.checkedInAtIso is string && data.checkedInAtIso.size() <= 40)) &&
       (!('checkOutTime' in data) || (data.checkOutTime is string && data.checkOutTime.size() <= 16)) &&
@@ -371,7 +381,7 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'propertyId', 'orderNumber', 'orderDate', 'serviceType', 'tableOrRoom', 'guestName', 'reservationId', 'itemsSummary', 'itemCount',
-        'subtotalNgn', 'vatNgn', 'totalNgn', 'paymentStatus', 'paymentMethod', 'kitchenStatus', 'notes',
+        'subtotalNgn', 'serviceChargeNgn', 'discountNgn', 'vatNgn', 'totalNgn', 'paymentStatus', 'paymentMethod', 'kitchenStatus', 'notes',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
@@ -384,6 +394,8 @@ service cloud.firestore {
       data.itemsSummary is string && data.itemsSummary.size() >= 2 && data.itemsSummary.size() <= 400 &&
       data.itemCount is number && data.itemCount >= 1 &&
       data.subtotalNgn is number && data.subtotalNgn >= 0 &&
+      (!('serviceChargeNgn' in data) || (data.serviceChargeNgn is number && data.serviceChargeNgn >= 0)) &&
+      (!('discountNgn' in data) || (data.discountNgn is number && data.discountNgn >= 0)) &&
       data.vatNgn is number && data.vatNgn >= 0 &&
       data.totalNgn is number && data.totalNgn >= 0 &&
       data.paymentStatus in ['paid', 'room_folio', 'unpaid'] &&
@@ -402,11 +414,12 @@ service cloud.firestore {
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'propertyId', 'name', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available',
+        'propertyId', 'name', 'section', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available',
         'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
       data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+      (!('section' in data) || (data.section is string && data.section in ['Kitchen', 'Food & Beverage'])) &&
       data.category is string && data.category.size() >= 2 && data.category.size() <= 48 &&
       data.priceNgn is number && data.priceNgn >= 0 &&
       (!('costNgn' in data) || (data.costNgn is number && data.costNgn >= 0)) &&
@@ -760,7 +773,12 @@ service cloud.firestore {
         (!('systemPropertyId' in existing()) || existing().systemPropertyId == '' || incoming().systemPropertyId == existing().systemPropertyId) && (
           isPchSuperAdmin() || (
             isPropertyAdmin(propertyId) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl', 'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'roomCount', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'address', 'phone', 'whatsapp', 'email', 'logoUrl',
+              'usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource',
+              'roomCount', 'posServiceChargeRate', 'posTaxRate', 'posReceiptHeader', 'posReceiptFooter', 'posCategories',
+              'authorizedEmails', 'updatedAt'
+            ])
           ) || (
             isPropertyOperator(propertyId) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['usdExchangeRateNgn', 'usdRateUpdatedIso', 'usdRateSource', 'updatedAt'])
@@ -799,9 +817,9 @@ service cloud.firestore {
           isValidGuest(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber', 'idExpiryDate', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(guestId) && isPropertyAdmin(propertyId);
       }
 
       // Subcollection: Reservations
@@ -815,9 +833,9 @@ service cloud.firestore {
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'actualPayoutReceivedNgn', 'otaPayoutStatus', 'otaPayoutReceivedAtIso', 'amountDueAtPropertyNgn', 'paymentManuallyEdited', 'hotelPaidNgn', 'paymentMethod', 'paymentStatus', 'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'actualPayoutReceivedNgn', 'otaPayoutStatus', 'otaPayoutReceivedAtIso', 'amountDueAtPropertyNgn', 'paymentManuallyEdited', 'hotelPaidNgn', 'paymentMethod', 'paymentStatus', 'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'idExpiryDate', 'ratePlan', 'specialRequests', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(reservationId) && isPropertyAdmin(propertyId);
       }
 
       // Subcollection: Housekeeping Tasks
@@ -847,27 +865,34 @@ service cloud.firestore {
           isValidPosOrder(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() || (
+              isPropertyAdmin(propertyId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'serviceType', 'tableOrRoom', 'guestName', 'reservationId', 'itemsSummary', 'itemCount',
+                'subtotalNgn', 'serviceChargeNgn', 'discountNgn', 'vatNgn', 'totalNgn',
+                'paymentStatus', 'paymentMethod', 'kitchenStatus', 'notes', 'updatedAt'
+              ])
+            ) || (
               existing().kitchenStatus != 'served' &&
               incoming().diff(existing()).affectedKeys().hasOnly(['kitchenStatus', 'paymentStatus', 'paymentMethod', 'updatedAt'])
             )
           );
-        allow delete: if isValidId(propertyId) && isValidId(orderId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(orderId) && isPropertyAdmin(propertyId);
       }
 
-      // Subcollection: POS Menu Items
+      // Subcollection: POS Menu Items (Property Admin & Super Admin catalog control)
       match /pos_menu_items/{itemId} {
         allow get: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
-        allow create: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(itemId) && isPropertyAdmin(propertyId) &&
           isValidPosMenuItem(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
           incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId) &&
+        allow update: if isValidId(propertyId) && isValidId(itemId) && isPropertyAdmin(propertyId) &&
           isValidPosMenuItem(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
           incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
             isBootstrappedAdmin() ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available', 'authorizedEmails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'section', 'category', 'priceNgn', 'costNgn', 'prepMinutes', 'available', 'authorizedEmails', 'updatedAt'])
           );
-        allow delete: if isValidId(propertyId) && isValidId(itemId) && isPropertyOperator(propertyId);
+        allow delete: if isValidId(propertyId) && isValidId(itemId) && isPropertyAdmin(propertyId);
       }
 
       // Subcollection: Accounting Ledger
