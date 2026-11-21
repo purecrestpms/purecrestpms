@@ -52,6 +52,7 @@ import {
   StaffRole,
   StaffSessionRecord,
 } from '../types/pms';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 
 interface StaffDashboardViewProps {
   property: PropertyRecord;
@@ -443,7 +444,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       });
       onNotify?.(`Clocked in at ${formatClock24To12(res.clockInTime)}`);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to clock in right now.');
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to clock in right now. Please try again.', 'StaffDashboard:ClockIn')
+      );
     } finally {
       setClockBusy(false);
     }
@@ -461,7 +464,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       });
       onNotify?.(`Clocked out at ${formatClock24To12(outTime)}`);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to clock out right now.');
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to clock out right now. Please try again.', 'StaffDashboard:ClockOut')
+      );
     } finally {
       setClockBusy(false);
     }
@@ -594,7 +599,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       }
       setShowEndShiftModal(false);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Could not close shift.');
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to close shift right now. Please try again.', 'StaffDashboard:EndShift')
+      );
     } finally {
       setEndingShift(false);
     }

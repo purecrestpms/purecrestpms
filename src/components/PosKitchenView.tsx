@@ -56,6 +56,8 @@ import {
 import { useCms } from '../context/CmsContext';
 import { PurchaseInvoiceData, PurchaseInvoiceModal } from './PurchaseInvoiceModal';
 import { printPosOrderDocument } from '../utils/printPosDocument';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
+import { FeedbackBanner } from './FeedbackBanner';
 
 interface PosKitchenViewProps {
   property: PropertyRecord;
@@ -726,7 +728,11 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       setCompletedOrderPrompt(printablePayload);
     } catch (err) {
       setPosError(
-        err instanceof Error ? err.message : 'Unable to complete purchase. Please try again.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to complete purchase. Please try again.',
+          'POS:CompleteSale'
+        )
       );
     } finally {
       setSubmitting(false);
@@ -1067,7 +1073,11 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       setMenuModalOpen(false);
     } catch (err) {
       onNotify(
-        `Unable to save POS product: ${err instanceof Error ? err.message : 'Please try again.'}`
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to save menu item. Please try again.',
+          'POS:SaveMenuItem'
+        )
       );
     } finally {
       setSavingMenu(false);
@@ -1087,7 +1097,11 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       setMenuModalOpen(false);
     } catch (err) {
       onNotify(
-        `Unable to remove POS product: ${err instanceof Error ? err.message : 'Please try again.'}`
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to remove menu item. Please try again.',
+          'POS:DeleteMenuItem'
+        )
       );
     } finally {
       setSavingMenu(false);
@@ -1110,7 +1124,11 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       );
     } catch (err) {
       onNotify(
-        `Unable to load standard menu: ${err instanceof Error ? err.message : 'Please try again.'}`
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to load standard menu items. Please try again.',
+          'POS:SeedMenu'
+        )
       );
     } finally {
       setSeedingMenu(false);
@@ -1161,7 +1179,11 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       setEditingOrder(null);
     } catch (err) {
       onNotify(
-        `Unable to update order: ${err instanceof Error ? err.message : 'Please try again.'}`
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to update order. Please try again.',
+          'POS:UpdateOrder'
+        )
       );
     } finally {
       setSavingOrderEdit(false);
@@ -1200,7 +1222,11 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       setSettingsModalOpen(false);
     } catch (err) {
       onNotify(
-        `Unable to save POS settings: ${err instanceof Error ? err.message : 'Please try again.'}`
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to save POS settings. Please try again.',
+          'POS:SaveSettings'
+        )
       );
     } finally {
       setSavingSettings(false);
@@ -1265,7 +1291,11 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
       setPurRestockQty(0);
     } catch (err) {
       onNotify(
-        `Unable to record purchase: ${err instanceof Error ? err.message : 'Please try again.'}`
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to record purchase. Please try again.',
+          'POS:RecordPurchase'
+        )
       );
     } finally {
       setSavingPurchase(false);
@@ -1624,24 +1654,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
           </div>
         </div>
 
-        {posError && (
-          <div
-            role="alert"
-            className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-start justify-between gap-3"
-          >
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span className="font-medium">{posError}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPosError(null)}
-              className="text-rose-700 hover:text-rose-950 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+        <FeedbackBanner message={posError} onDismiss={() => setPosError(null)} />
 
         {/* ========================================================================= */}
         {/* VIEW 1: POS TERMINAL (Matches Attached PureCrest POS Reference Design)    */}

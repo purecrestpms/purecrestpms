@@ -23,6 +23,7 @@ import {
   syncOtaChannelWorkflow,
   transitionReservationStatus,
 } from '../services/pmsService';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 import {
   BlockedDateRecord,
   formatBookingSourceLabel,
@@ -558,7 +559,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
         setBlockReason('');
       } catch (err) {
         setConflictError(
-          err instanceof Error ? err.message : 'Unable to save blocked dates right now.'
+          getUserFriendlyErrorMessage(
+            err,
+            'Unable to save blocked dates right now. Please try again.',
+            'Calendar:BlockMultiple'
+          )
         );
       } finally {
         setBusyId(null);
@@ -589,7 +594,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setBlockReason('');
     } catch (err) {
       setConflictError(
-        err instanceof Error ? err.message : 'Unable to save blocked dates right now.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to save blocked dates right now. Please try again.',
+          'Calendar:BlockRoom'
+        )
       );
     } finally {
       setBusyId(null);
@@ -669,7 +678,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       setQuickKeyIssued(null);
     } catch (err) {
       setConflictError(
-        err instanceof Error ? err.message : 'Unable to save reservation right now.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to save reservation. Please try again.',
+          'Calendar:QuickBooking'
+        )
       );
     } finally {
       setBusyId(null);
@@ -683,7 +696,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
       onNotify(`Removed date block on ${block.roomNumber}`);
     } catch (err) {
       setCalendarNotice(
-        err instanceof Error ? err.message : 'Unable to remove date block right now.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to remove date block right now. Please try again.',
+          'Calendar:Unblock'
+        )
       );
     } finally {
       setBusyId(null);
@@ -1807,9 +1824,11 @@ export const ReservationsCalendarView: React.FC<ReservationsCalendarViewProps> =
                             onNotify(`Cancelled reservation ${res.bookingRef}`);
                           } catch (err) {
                             setCalendarNotice(
-                              err instanceof Error
-                                ? err.message
-                                : `Unable to cancel ${res.bookingRef}.`
+                              getUserFriendlyErrorMessage(
+                                err,
+                                `Unable to cancel reservation ${res.bookingRef}. Please try again.`,
+                                'Calendar:CancelReservation'
+                              )
                             );
                           } finally {
                             setBusyId(null);

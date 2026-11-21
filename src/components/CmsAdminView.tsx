@@ -25,6 +25,7 @@ import {
   PropertyRecord,
   StaffRole,
 } from '../types/pms';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 
 interface CmsAdminViewProps {
   property: PropertyRecord;
@@ -222,7 +223,9 @@ export const CmsAdminView: React.FC<CmsAdminViewProps> = ({
       setCms(draft);
       onNotify('Published CMS updates live across all portals & pages');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to save CMS changes.');
+      setErrorMsg(
+        getUserFriendlyErrorMessage(err, 'Unable to save CMS changes. Please try again.', 'CMS:Publish')
+      );
     } finally {
       setSaving(false);
     }
@@ -241,7 +244,9 @@ export const CmsAdminView: React.FC<CmsAdminViewProps> = ({
       setShowResetModal(false);
       onNotify('Restored all app pages & text to factory defaults');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to reset CMS defaults.');
+      setErrorMsg(
+        getUserFriendlyErrorMessage(err, 'Unable to reset CMS defaults. Please try again.', 'CMS:Reset')
+      );
     } finally {
       setSaving(false);
     }

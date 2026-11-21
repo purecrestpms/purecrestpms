@@ -61,7 +61,7 @@ service cloud.firestore {
     }
 
     function isActiveUserDoc() {
-      return isSignedIn() &&
+      return isVerifiedUser() &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
     }
@@ -71,6 +71,23 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.propertyId == propertyId &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in [
           'pch_admin', 'property_admin', 'front_desk', 'housekeeping', 'fnb_kitchen', 'accountant', 'maintenance'
+        ];
+    }
+
+    function userAccountDocIdForToken() {
+      return 'usr_' + request.auth.token.email.lower().replace('[^a-zA-Z0-9_-]', '_').replace('^_+|_+$', '');
+    }
+
+    function isActivePropertyAccount(propertyId) {
+      return isVerifiedUser() &&
+        request.auth.token.email is string &&
+        request.auth.token.email.size() >= 3 &&
+        request.auth.token.email.size() <= 96 &&
+        exists(/databases/$(database)/documents/properties/$(propertyId)) &&
+        exists(/databases/$(database)/documents/properties/$(propertyId)/user_accounts/$(userAccountDocIdForToken())) &&
+        get(/databases/$(database)/documents/properties/$(propertyId)/user_accounts/$(userAccountDocIdForToken())).data.active == true &&
+        get(/databases/$(database)/documents/properties/$(propertyId)/user_accounts/$(userAccountDocIdForToken())).data.role in [
+          'property_admin', 'front_desk', 'housekeeping', 'fnb_kitchen', 'accountant', 'maintenance'
         ];
     }
 
@@ -85,11 +102,16 @@ service cloud.firestore {
 
     function isPropertyOperator(propertyId) {
       return isPchSuperAdmin() ||
-        isActivePropertyUser(propertyId) || (
+        isActivePropertyUser(propertyId) ||
+        isActivePropertyAccount(propertyId) || (
           isVerifiedUser() &&
           exists(/databases/$(database)/documents/properties/$(propertyId)) && (
             get(/databases/$(database)/documents/properties/$(propertyId)).data.ownerUid == request.auth.uid ||
-            isAuthorizedEmail(get(/databases/$(database)/documents/properties/$(propertyId)).data.authorizedEmails)
+            isAuthorizedEmail(get(/databases/$(database)/documents/properties/$(propertyId)).data.authorizedEmails) ||
+            (
+              request.auth.token.email is string &&
+              get(/databases/$(database)/documents/properties/$(propertyId)).data.adminEmail.lower() == request.auth.token.email.lower()
+            )
           )
         );
     }
@@ -99,6 +121,9 @@ service cloud.firestore {
         isActiveUserDoc() &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'property_admin' &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.propertyId == propertyId
+      ) || (
+        isActivePropertyAccount(propertyId) &&
+        get(/databases/$(database)/documents/properties/$(propertyId)/user_accounts/$(userAccountDocIdForToken())).data.role == 'property_admin'
       ) || (
         isVerifiedUser() &&
         exists(/databases/$(database)/documents/properties/$(propertyId)) && (
@@ -775,7 +800,7 @@ service cloud.firestore {
 
     // Root collection: Properties
     match /properties/{propertyId} {
-      allow get: if isValidId(propertyId) && (isPchSuperAdmin() || isActivePropertyUser(propertyId) || (resource != null && isMemberResource(existing())));
+      allow get: if isValidId(propertyId) && (isPchSuperAdmin() || isActivePropertyUser(propertyId) || isActivePropertyAccount(propertyId) || (resource != null && isMemberResource(existing())));
       allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
       allow create: if isValidId(propertyId) && isPchSuperAdmin() && isValidProperty(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -823,12 +848,14 @@ service cloud.firestore {
       match /guests/{guestId} {
         allow get: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
-        allow create: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(guestId) &&
           isValidGuest(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
-          incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(guestId) && isPropertyOperator(propertyId) &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time &&
+          isPropertyOperator(propertyId);
+        allow update: if isValidId(propertyId) && isValidId(guestId) &&
           isValidGuest(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
-          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time &&
+          isPropertyOperator(propertyId) && (
             isBootstrappedAdmin() ||
             incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'email', 'phone', 'address', 'city', 'state', 'country', 'nationality', 'idType', 'idNumber', 'idExpiryDate', 'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'updatedAt'])
           );
@@ -839,12 +866,14 @@ service cloud.firestore {
       match /reservations/{reservationId} {
         allow get: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId);
         allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
-        allow create: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId) &&
+        allow create: if isValidId(propertyId) && isValidId(reservationId) &&
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == request.auth.uid &&
-          incoming().createdAt == request.time && incoming().updatedAt == request.time;
-        allow update: if isValidId(propertyId) && isValidId(reservationId) && isPropertyOperator(propertyId) &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time &&
+          isPropertyOperator(propertyId);
+        allow update: if isValidId(propertyId) && isValidId(reservationId) &&
           isValidReservation(incoming(), propertyId) && incoming().ownerUid == existing().ownerUid &&
-          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time &&
+          isPropertyOperator(propertyId) && (
             isBootstrappedAdmin() ||
             incoming().diff(existing()).affectedKeys().hasOnly(['bookingRef', 'guestId', 'roomId', 'roomNumber', 'requestedRoomType', 'guestName', 'guestPhone', 'guestEmail', 'guestAddress', 'guestCity', 'guestState', 'guestCountry', 'nightlyRateNgn', 'status', 'posChargesNgn', 'paidNgn', 'sourceCurrency', 'sourceNightlyRate', 'sourceTotalAmount', 'fxRateToNgn', 'paymentCollectionMode', 'otaPaidNgn', 'otaPaidSourceAmount', 'expectedPayoutNgn', 'actualPayoutReceivedNgn', 'otaPayoutStatus', 'otaPayoutReceivedAtIso', 'amountDueAtPropertyNgn', 'paymentManuallyEdited', 'hotelPaidNgn', 'paymentMethod', 'paymentStatus', 'cautionDepositEnabled', 'cautionDepositNgn', 'cautionDepositCollectedNgn', 'cautionDepositRefunded', 'cautionDepositRefundedAtIso', 'checkInDate', 'checkOutDate', 'bookedDate', 'nights', 'adults', 'children', 'roomChargesNgn', 'channel', 'paymentConfirmed', 'idVerified', 'idType', 'idNumber', 'idExpiryDate', 'ratePlan', 'specialRequests', 'keyIssued', 'checkedInAtIso', 'checkOutTime', 'lateCheckoutFeeNgn', 'lateCheckoutApplied', 'checkedOutAtIso', 'cancellationType', 'cancellationFeeNgn', 'cancellationReason', 'cancelledAtIso', 'externalUid', 'authorizedEmails', 'updatedAt'])
           );

@@ -80,6 +80,7 @@ import {
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
 import { resolveAppImageUrl } from '../utils/mediaAssets';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 
 interface AdminLicensingViewProps {
   section: Extract<
@@ -317,7 +318,9 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
         `Production ready: kept ${result.roomsResetCount} rooms (vacant & clean) and removed ${result.deletedDocsCount} demo records`
       );
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'Unable to clear demo records.');
+      onNotify(
+        getUserFriendlyErrorMessage(err, 'Unable to clear demo records. Please try again.', 'Admin:PurgeDemo')
+      );
     } finally {
       setBusy(false);
     }
@@ -369,7 +372,13 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       setPropAdminPassword('');
       if (created.propertyId) onSelectProperty(created.propertyId);
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'Unable to provision client property.');
+      onNotify(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to provision client property. Please try again.',
+          'Admin:CreateProperty'
+        )
+      );
     } finally {
       setBusy(false);
     }
@@ -391,7 +400,13 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       onNotify(`Updated client subdomain & admin settings for ${editTenantName || editingTenantProp.name}`);
       setEditingTenantProp(null);
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'Unable to update client tenant settings.');
+      onNotify(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to update client tenant settings. Please try again.',
+          'Admin:UpdateTenant'
+        )
+      );
     } finally {
       setBusy(false);
     }
@@ -506,16 +521,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
   const [csvWarnings, setCsvWarnings] = useState<string[]>([]);
   const [csvImporting, setCsvImporting] = useState(false);
 
-  const formatChannelError = (err: unknown, fallback: string): string => {
-    if (!(err instanceof Error)) return fallback;
-    try {
-      const parsed = JSON.parse(err.message) as { error?: string };
-      if (parsed && typeof parsed.error === 'string') return parsed.error;
-    } catch {
-      // Plain error message
-    }
-    return err.message || fallback;
-  };
+  const formatChannelError = (err: unknown, fallback: string): string =>
+    getUserFriendlyErrorMessage(err, fallback, 'Admin:ChannelManager');
 
   const getDisplayChannelName = (name: string) =>
     name === 'Hotels.ng' ? 'Booking.com' : name;
@@ -769,8 +776,8 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
           totalCancelled += res.cancelled;
         } catch (err) {
           totalErrors += 1;
-          if (!firstError && err instanceof Error) {
-            firstError = `${ch.channelName}: ${err.message}`;
+          if (!firstError) {
+            firstError = `${ch.channelName}: ${formatChannelError(err, 'Sync failed.')}`;
           }
         }
       }
@@ -835,7 +842,13 @@ export const AdminLicensingView: React.FC<AdminLicensingViewProps> = ({
       setNewIcalUrl('');
       setNewCommissionPct(String(getDefaultOtaCommissionPct(newChannelName)));
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : `Unable to add ${newChannelName}`);
+      onNotify(
+        getUserFriendlyErrorMessage(
+          err,
+          `Unable to add ${newChannelName}. Please try again.`,
+          'Admin:AddChannel'
+        )
+      );
     } finally {
       setBusy(false);
     }

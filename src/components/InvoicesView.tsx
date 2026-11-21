@@ -12,6 +12,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { recordReservationFolioPayment } from '../services/pmsService';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 import {
   formatBookingSourceLabel,
   formatChannelCurrency,
@@ -254,7 +255,13 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         setPayAmountInput('');
         onNotify(`Recorded ${formatNgn(amount)} direct payment on INV-${selectedRes.bookingRef}`);
       } catch (err) {
-        onNotify(err instanceof Error ? err.message : 'Unable to record payment');
+        onNotify(
+          getUserFriendlyErrorMessage(
+            err,
+            'Unable to record payment. Please try again.',
+            'Invoices:Payment'
+          )
+        );
       } finally {
         setSavingPay(false);
       }

@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { sendPropertyMessageWorkflow } from '../services/pmsService';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 import {
   ASSIGNABLE_ROLE_LABELS,
   AssignablePropertyRole,
@@ -243,7 +244,9 @@ export const StaffSessionsView: React.FC<StaffSessionsViewProps> = ({
       setModalFeedback(confirmation);
       onNotify(confirmation);
     } catch (err) {
-      setModalFeedback(err instanceof Error ? err.message : 'Unable to send notification.');
+      setModalFeedback(
+        getUserFriendlyErrorMessage(err, 'Unable to send notification. Please try again.', 'StaffSessions:Notify')
+      );
     } finally {
       setSendingNotification(false);
     }
@@ -260,7 +263,11 @@ export const StaffSessionsView: React.FC<StaffSessionsViewProps> = ({
       );
     } catch (err) {
       setModalFeedback(
-        err instanceof Error ? err.message : 'Unable to send password setup email.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to send password setup email. Please try again.',
+          'StaffSessions:PasswordLink'
+        )
       );
     } finally {
       setSendingReset(false);

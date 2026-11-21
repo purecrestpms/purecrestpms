@@ -22,6 +22,7 @@ import {
   PlanInquiryRecord,
 } from '../types/pms';
 import { PCH_BRAND_LOGO_URL } from '../utils/mediaAssets';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 
 const PCH_LOGO_ICON = PCH_BRAND_LOGO_URL;
 
@@ -307,9 +308,11 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = () => {
       setPurchaseConfirmation(saved);
     } catch (err) {
       setPurchaseError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to record your order right now. Please try again or email purecresthospitality@gmail.com.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to submit your order right now. Please try again or email purecresthospitality@gmail.com.',
+          'Homepage:PlanOrder'
+        )
       );
     } finally {
       setPurchaseBusy(false);
@@ -368,9 +371,11 @@ export const AppHomepageView: React.FC<AppHomepageViewProps> = () => {
       setContactMessage('');
     } catch (err) {
       setContactError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to submit your inquiry right now. Please email purecresthospitality@gmail.com.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to submit your inquiry right now. Please email purecresthospitality@gmail.com.',
+          'Homepage:ContactInquiry'
+        )
       );
     } finally {
       setContactBusy(false);

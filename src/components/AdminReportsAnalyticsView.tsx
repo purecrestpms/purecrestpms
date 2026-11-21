@@ -22,6 +22,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 import {
   AttendanceRecord,
   BlockedDateRecord,
@@ -576,7 +577,9 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       doc.save(fileSlug);
       onNotify(`Exported PDF report (${fileSlug})`);
     } catch (err) {
-      onNotify(`PDF export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      onNotify(
+        getUserFriendlyErrorMessage(err, 'Unable to export PDF report. Please try again.', 'Reports:ExportPDF')
+      );
     }
   };
 
@@ -659,7 +662,9 @@ export const AdminReportsAnalyticsView: React.FC<AdminReportsAnalyticsViewProps>
       XLSX.writeFile(wb, fileSlug);
       onNotify(`Exported Excel workbook (${fileSlug})`);
     } catch (err) {
-      onNotify(`Excel export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      onNotify(
+        getUserFriendlyErrorMessage(err, 'Unable to export Excel workbook. Please try again.', 'Reports:ExportExcel')
+      );
     }
   };
 

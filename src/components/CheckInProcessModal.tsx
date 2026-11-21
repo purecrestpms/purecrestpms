@@ -25,6 +25,8 @@ import {
   sortRoomsByNumber,
 } from '../types/pms';
 import { checkRoomDateRangeAvailability, getLocalIsoDate } from '../utils/availability';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
+import { FeedbackBanner } from './FeedbackBanner';
 
 export interface CheckedInConfirmationInfo {
   guestName: string;
@@ -280,7 +282,13 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
       });
       onClose();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unable to complete check-in.');
+      setErrorMsg(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to complete check-in. Please verify details and try again.',
+          'FrontDesk:CheckIn'
+        )
+      );
     } finally {
       setSubmitting(false);
     }
@@ -355,11 +363,7 @@ export const CheckInProcessModal: React.FC<CheckInProcessModalProps> = ({
             </div>
           )}
 
-          {errorMsg && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
-              {errorMsg}
-            </div>
-          )}
+          <FeedbackBanner message={errorMsg} onDismiss={() => setErrorMsg(null)} />
 
           {/* STEP 1: ROOM ASSIGNMENT CHECK */}
           <div

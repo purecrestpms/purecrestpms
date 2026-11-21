@@ -127,6 +127,8 @@ import { ReservationPaymentModal } from './ReservationPaymentModal';
 import { PaymentReceiptModal, PaymentReceiptMode } from './PaymentReceiptModal';
 import { CurrencyConverterWidget } from './CurrencyConverterWidget';
 import { getAmenityIcon, RoomGallerySlider } from './RoomGallerySlider';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
+import { FeedbackBanner } from './FeedbackBanner';
 
 interface RoomsReservationsViewProps {
   section: Extract<
@@ -160,17 +162,8 @@ interface RoomsReservationsViewProps {
 
 const DEFAULT_SUITE_IMAGE = DEFAULT_ROOM_COVER_IMAGE_URL;
 
-function parseReadableError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  if (raw.trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(raw) as { error?: string };
-      if (parsed.error) return parsed.error;
-    } catch {
-      // fallback below
-    }
-  }
-  return raw;
+function parseReadableError(err: unknown, fallback = 'Unable to complete this action. Please try again.'): string {
+  return getUserFriendlyErrorMessage(err, fallback, 'Reservations');
 }
 
 function isCleanExternalImageUrl(url: string): boolean {
@@ -944,7 +937,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setDraftImageUrl(uploadedUrl);
       setDraftGalleryImages((prev) => Array.from(new Set([uploadedUrl, ...prev])).slice(0, 6));
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Unable to process image.');
+      setUploadError(parseReadableError(err, 'Unable to process image. Please try another file.'));
     } finally {
       e.target.value = '';
     }
@@ -969,7 +962,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       });
       setDraftGalleryImages((prev) => Array.from(new Set([...prev, uploadedUrl])).slice(0, 6));
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Unable to process gallery slide.');
+      setUploadError(parseReadableError(err, 'Unable to process gallery image. Please try another file.'));
     } finally {
       e.target.value = '';
     }
@@ -1115,7 +1108,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setNewRoomImageUrl(uploadedUrl);
       setNewRoomGalleryImages((prev) => Array.from(new Set([uploadedUrl, ...prev])).slice(0, 6));
     } catch (err) {
-      setAddRoomError(err instanceof Error ? err.message : 'Unable to process room photo.');
+      setAddRoomError(parseReadableError(err, 'Unable to process room photo. Please try another file.'));
     } finally {
       e.target.value = '';
     }
@@ -1140,7 +1133,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       });
       setNewRoomGalleryImages((prev) => Array.from(new Set([...prev, uploadedUrl])).slice(0, 6));
     } catch (err) {
-      setAddRoomError(err instanceof Error ? err.message : 'Unable to process gallery slide.');
+      setAddRoomError(parseReadableError(err, 'Unable to process gallery image. Please try another file.'));
     } finally {
       e.target.value = '';
     }
@@ -1231,7 +1224,9 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       onNotify(`Added new room ${trimmedCode} (${trimmedType}) to ${property.name}`);
       setShowAddRoomModal(false);
     } catch (err) {
-      setAddRoomError(err instanceof Error ? err.message : 'Unable to add room.');
+      setAddRoomError(
+        getUserFriendlyErrorMessage(err, 'Unable to add room. Please try again.', 'Rooms')
+      );
     } finally {
       setBusyId(null);
     }
@@ -1471,7 +1466,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setImmediateCheckIn(false);
     } catch (err) {
       setBookingError(
-        err instanceof Error ? err.message : 'Unable to save reservation. Please try again.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to save reservation. Please try again.',
+          'CreateReservation'
+        )
       );
     } finally {
       setBusyId(null);
@@ -1593,7 +1592,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       onNavigateSection?.('in_house');
     } catch (err) {
       setWalkInError(
-        err instanceof Error ? err.message : 'Unable to complete walk-in check-in.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to complete walk-in check-in. Please try again.',
+          'WalkInCheckIn'
+        )
       );
     } finally {
       setBusyId(null);
@@ -1621,7 +1624,11 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       setEditingRateRoomId(null);
     } catch (err) {
       setActionError(
-        err instanceof Error ? err.message : 'Unable to update room rate right now.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to update room rate right now. Please try again.',
+          'UpdateRoomRate'
+        )
       );
     } finally {
       setBusyId(null);
@@ -1821,8 +1828,12 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
       );
       setEditingStayDetails(false);
     } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : 'Unable to save reservation changes.'
+      setEditStayError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to save reservation changes. Please try again.',
+          'EditReservation'
+        )
       );
     } finally {
       setBusyId(null);
@@ -2532,24 +2543,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
         </div>
       </div>
 
-      {actionError && (
-        <div
-          role="alert"
-          className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-900 flex items-center justify-between gap-3 shadow-xs"
-        >
-          <div className="flex items-center gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{actionError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setActionError(null)}
-            className="text-rose-700 hover:text-rose-950 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      <FeedbackBanner message={actionError} onDismiss={() => setActionError(null)} />
 
       {/* Expandable Advanced Search Filter Panel */}
       {(section === 'arrivals' || isStayTableSection) && showAdvancedSearch && (
@@ -7308,9 +7302,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                   );
                                 } catch (err) {
                                   setActionError(
-                                    err instanceof Error
-                                      ? err.message
-                                      : 'Unable to extend stay right now.'
+                                    parseReadableError(err, 'Unable to extend stay right now. Please try again.')
                                   );
                                 } finally {
                                   setBusyId(null);
@@ -8124,25 +8116,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                     </span>
                   </div>
 
-                  {bookingError && (
-                    <div
-                      role="alert"
-                      className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-900 flex items-start justify-between gap-3"
-                    >
-                      <div className="flex items-start gap-2.5 min-w-0">
-                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <span className="leading-snug font-medium">{bookingError}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setBookingError(null)}
-                        aria-label="Dismiss alert"
-                        className="text-rose-700 hover:text-rose-950 shrink-0 cursor-pointer"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
+                  <FeedbackBanner message={bookingError} onDismiss={() => setBookingError(null)} />
 
                   {/* Two-Column New Reservation Workspace: 2 columns on tablets & desktops, 1 column on mobile */}
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
@@ -8889,7 +8863,7 @@ export const RoomsReservationsView: React.FC<RoomsReservationsViewProps> = ({
                                     className="w-full h-10 border border-blue-200 rounded-lg px-3 bg-white text-xs font-semibold text-blue-900"
                                   >
                                     <option value="ota_prepaid">Paid to OTA</option>
-                                    <option value="pay_at_property">Pay at Property</option>
+                                    <option value="hotel_collect">Pay at Property</option>
                                   </select>
                                 </div>
 

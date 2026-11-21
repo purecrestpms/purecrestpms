@@ -23,6 +23,8 @@ import {
   PropertyRecord,
   ReservationRecord,
 } from '../types/pms';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
+import { FeedbackBanner } from './FeedbackBanner';
 
 interface ReservationPaymentModalProps {
   property: PropertyRecord;
@@ -233,7 +235,11 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
       });
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : 'Unable to save payment settings.'
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to save payment details. Please try again.',
+          'Reservations:Payment'
+        )
       );
     } finally {
       setSaving(false);
@@ -306,11 +312,7 @@ export const ReservationPaymentModal: React.FC<ReservationPaymentModalProps> = (
           </button>
         </div>
 
-        {errorMsg && (
-          <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">
-            {errorMsg}
-          </div>
-        )}
+        <FeedbackBanner message={errorMsg} onDismiss={() => setErrorMsg(null)} />
 
         {/* Section 1: Payment Collection Type (OTA Bookings Only) */}
         {isOtaChannel && (

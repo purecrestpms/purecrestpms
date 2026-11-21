@@ -28,6 +28,8 @@ import {
   RoomRecord,
 } from '../types/pms';
 import { useCms } from '../context/CmsContext';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
+import { FeedbackBanner } from './FeedbackBanner';
 
 interface HousekeepingMaintenanceViewProps {
   section: Extract<NavSectionId, 'housekeeping' | 'maintenance'>;
@@ -126,7 +128,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       setShowTaskForm(false);
       setHkNotes('');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to create housekeeping task. Please try again.',
+          'Housekeeping:CreateTask'
+        )
+      );
     }
   };
 
@@ -159,7 +167,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       onNotify(`Updated housekeeping task for Room ${editingTask.roomNumber}`);
       setEditingTask(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to update housekeeping task. Please try again.',
+          'Housekeeping:UpdateTask'
+        )
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -173,7 +187,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       onNotify(`Deleted housekeeping task for Room ${task.roomNumber}`);
       setConfirmDeleteTaskId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to delete housekeeping task. Please try again.',
+          'Housekeeping:DeleteTask'
+        )
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -204,7 +224,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       setIssueTitle('');
       setLocationLabel('');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to submit maintenance ticket. Please try again.',
+          'Maintenance:CreateTicket'
+        )
+      );
     }
   };
 
@@ -245,7 +271,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       onNotify(`Updated maintenance ticket for ${editTicketLocation.trim()}`);
       setEditingTicket(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to update maintenance ticket. Please try again.',
+          'Maintenance:UpdateTicket'
+        )
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -259,7 +291,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
       onNotify(`Deleted maintenance ticket for ${ticket.locationLabel}`);
       setConfirmDeleteTicketId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to delete maintenance ticket. Please try again.',
+          'Maintenance:DeleteTicket'
+        )
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -267,21 +305,7 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
 
   return (
     <div className="space-y-6">
-      {actionError && (
-        <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{actionError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setActionError(null)}
-            className="text-rose-700 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      <FeedbackBanner message={actionError} onDismiss={() => setActionError(null)} />
 
       <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -518,7 +542,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                               });
                               onNotify(`Marked ${r.roomNumber} as ${hk}`);
                             } catch (err) {
-                              setActionError(err instanceof Error ? err.message : String(err));
+                              setActionError(
+                                getUserFriendlyErrorMessage(
+                                  err,
+                                  'Unable to update room housekeeping status. Please try again.',
+                                  'Housekeeping:RoomStatus'
+                                )
+                              );
                             } finally {
                               setBusyRecordId(null);
                             }
@@ -593,7 +623,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                                     actorRole,
                                   });
                                 } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
+                                  setActionError(
+                                    getUserFriendlyErrorMessage(
+                                      err,
+                                      'Unable to update housekeeping task status. Please try again.',
+                                      'Housekeeping:StartTask'
+                                    )
+                                  );
                                 }
                               }}
                               className="px-2.5 py-1 bg-slate-900 text-white rounded font-medium cursor-pointer"
@@ -614,7 +650,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                                     actorRole,
                                   });
                                 } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
+                                  setActionError(
+                                    getUserFriendlyErrorMessage(
+                                      err,
+                                      'Unable to complete housekeeping task. Please try again.',
+                                      'Housekeeping:CompleteTask'
+                                    )
+                                  );
                                 }
                               }}
                               className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium cursor-pointer"
@@ -870,7 +912,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                                     actorRole,
                                   });
                                 } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
+                                  setActionError(
+                                    getUserFriendlyErrorMessage(
+                                      err,
+                                      'Unable to update maintenance ticket. Please try again.',
+                                      'Maintenance:StartWork'
+                                    )
+                                  );
                                 }
                               }}
                               className="px-2.5 py-1 bg-slate-900 text-white rounded font-medium cursor-pointer"
@@ -892,7 +940,13 @@ export const HousekeepingMaintenanceView: React.FC<HousekeepingMaintenanceViewPr
                                   });
                                   onNotify(`Resolved maintenance on ${ticket.locationLabel}`);
                                 } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
+                                  setActionError(
+                                    getUserFriendlyErrorMessage(
+                                      err,
+                                      'Unable to resolve maintenance ticket. Please try again.',
+                                      'Maintenance:Resolve'
+                                    )
+                                  );
                                 }
                               }}
                               className="px-2.5 py-1 bg-emerald-600 text-white rounded font-medium cursor-pointer"

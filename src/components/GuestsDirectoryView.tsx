@@ -42,6 +42,7 @@ import {
   StaffRole,
 } from '../types/pms';
 import { CountrySelect } from './CountrySelect';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 
 interface GuestsDirectoryViewProps {
   property: PropertyRecord;
@@ -90,16 +91,11 @@ function getInitials(fullName: string): string {
 }
 
 function parseReadableError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  if (raw.trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(raw) as { error?: string };
-      if (parsed.error) return parsed.error;
-    } catch {
-      // fallback below
-    }
-  }
-  return raw;
+  return getUserFriendlyErrorMessage(
+    err,
+    'Unable to update guest record. Please try again.',
+    'Guests'
+  );
 }
 
 function getVipTextClass(tier: GuestRecord['vipTier']): string {

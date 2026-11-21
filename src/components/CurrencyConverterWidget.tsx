@@ -10,6 +10,7 @@ import {
   RoomRecord,
   sortRoomsByNumber,
 } from '../types/pms';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 
 interface CurrencyConverterWidgetProps {
   property: PropertyRecord;
@@ -85,18 +86,8 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
     }
   };
 
-  const formatFxError = (err: unknown, fallback: string): string => {
-    if (!(err instanceof Error)) return fallback;
-    try {
-      const parsed = JSON.parse(err.message) as { error?: string };
-      if (parsed && typeof parsed.error === 'string') {
-        return parsed.error;
-      }
-    } catch {
-      // Plain error message
-    }
-    return err.message || fallback;
-  };
+  const formatFxError = (err: unknown, fallback: string): string =>
+    getUserFriendlyErrorMessage(err, fallback, 'CurrencyConverter');
 
   const handleSyncLiveRate = async () => {
     setSyncingLive(true);

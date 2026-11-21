@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import { collection, doc, enableNetwork, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import {
+  AlertCircle,
   AlertTriangle,
   ArrowRight,
   Bell,
@@ -21,6 +22,7 @@ import {
   Copy,
   DoorOpen,
   ExternalLink,
+  Info,
   KeyRound,
   Lock,
   LogOut,
@@ -61,6 +63,7 @@ import { StaffSessionsView } from './components/StaffSessionsView';
 import { StaffShiftReportView } from './components/StaffShiftReportView';
 import { mergeCmsWithDefaults, useCms } from './context/CmsContext';
 import { RICHGATES_PROPERTY_ID } from './data/seedData';
+import { getUserFriendlyErrorMessage } from './utils/errorMessages';
 import {
   auth,
   CENTRAL_AUTH_ORIGIN,
@@ -143,7 +146,13 @@ class PageErrorBoundary extends Component<
   }
 
   static getDerivedStateFromError(error: Error) {
-    return { error: error.message || 'Unexpected rendering error' };
+    return {
+      error: getUserFriendlyErrorMessage(
+        error,
+        'An unexpected error occurred while loading this section. Please try again.',
+        'PageErrorBoundary'
+      ),
+    };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -153,19 +162,19 @@ class PageErrorBoundary extends Component<
   render() {
     if (this.state.error) {
       return (
-        <div className="bg-white border border-red-200 rounded-xl p-6 space-y-3">
-          <div className="flex items-center gap-2 text-red-700">
-            <AlertTriangle className="w-5 h-5" />
-            <h2 className="font-display text-base font-bold">Unable to render this section</h2>
+        <div className="bg-white border border-rose-200 rounded-xl p-6 space-y-3 shadow-xs">
+          <div className="flex items-center gap-2.5 text-rose-700">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <h2 className="font-display text-base font-bold">Unable to load this section</h2>
           </div>
-          <p className="text-xs text-slate-600 font-mono-tabular">{this.state.error}</p>
+          <p className="text-sm text-slate-600 leading-relaxed">{this.state.error}</p>
           <button
             type="button"
             onClick={() => {
               this.setState({ error: null });
               this.props.onReset();
             }}
-            className="px-4 py-2 text-xs font-semibold bg-slate-900 text-white rounded-lg"
+            className="px-4 py-2 text-xs font-semibold bg-[#0B245B] hover:bg-[#081a44] text-white rounded-lg cursor-pointer"
           >
             Return to Dashboard
           </button>
@@ -421,9 +430,10 @@ function formatAuthErrorMessage(err: unknown): string {
   if (code === 'auth/expired-action-code' || code === 'auth/invalid-action-code') {
     return 'This verification or password reset link has expired or has already been used. Request a fresh link below.';
   }
-  return (
-    sanitizeAuthErrorText(raw) ||
-    'Unable to complete authentication right now. Please try again.'
+  return getUserFriendlyErrorMessage(
+    err,
+    'Unable to complete authentication right now. Please try again.',
+    'Auth'
   );
 }
 
@@ -461,7 +471,10 @@ export default function App() {
   const [prefillBookingRoomId, setPrefillBookingRoomId] = useState<string | null>(null);
   const [prefillBookingGuest, setPrefillBookingGuest] = useState<GuestRecord | null>(null);
   const [activePropertyId, setActivePropertyId] = useState<string>('');
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    variant: 'success' | 'error' | 'info';
+  } | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showPortalModal, setShowPortalModal] = useState(false);
@@ -654,11 +667,23 @@ export default function App() {
   const [messages, setMessages] = useState<PropertyMessageRecord[]>([]);
   const [planInquiries, setPlanInquiries] = useState<PlanInquiryRecord[]>([]);
 
-  const notify = (msg: string) => {
-    setToast(msg);
+  const notify = (msg: string, variant?: 'success' | 'error' | 'info') => {
+    const cleanMessage = getUserFriendlyErrorMessage(
+      msg,
+      'Unable to complete this request. Please try again.',
+      'Toast'
+    );
+    const inferredVariant: 'success' | 'error' | 'info' =
+      variant ??
+      (/^(unable to|could not|failed|error|you don't have permission|cannot|please sign in|your session)/i.test(
+        cleanMessage
+      ) || /\bfailed\b/i.test(cleanMessage)
+        ? 'error'
+        : 'success');
+    setToast({ message: cleanMessage, variant: inferredVariant });
     setTimeout(() => {
-      setToast((prev) => (prev === msg ? null : prev));
-    }, 4000);
+      setToast((prev) => (prev && prev.message === cleanMessage ? null : prev));
+    }, inferredVariant === 'error' ? 6000 : 4000);
   };
 
   const syncUrlParams = (nextPortal: PortalMode, nextSection: NavSectionId) => {
@@ -767,12 +792,16 @@ export default function App() {
     } catch (err) {
       if (isFirestoreOfflineError(err)) {
         setDbError(
-          'Unable to reach the cloud database right now. Check your internet connection and click Retry Connection.'
+          'Unable to connect right now. Please check your internet connection and click Retry Connection.'
         );
       } else {
-        const msg = err instanceof Error ? err.message : String(err);
-        setDbError(msg);
-        console.error('Seed error:', msg);
+        setDbError(
+          getUserFriendlyErrorMessage(
+            err,
+            'Unable to initialize property workspace. Please try again.',
+            'BootstrapSeed'
+          )
+        );
       }
     } finally {
       setSeeding(false);
@@ -951,13 +980,17 @@ export default function App() {
     const onSnapshotErr = (path: string) => (err: unknown) => {
       if (isFirestoreOfflineError(err)) {
         setDbError(
-          'Reconnecting to the cloud database... Check your internet connection or click Retry Connection.'
+          'Reconnecting to the service... Please check your internet connection or click Retry Connection.'
         );
         return;
       }
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Data sync error [${path}]:`, msg);
-      setDbError(`Data sync issue (${path.replace(/_/g, ' ')}): ${msg}`);
+      setDbError(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to sync property data right now. Please check your connection and try again.',
+          `Sync:${path}`
+        )
+      );
     };
 
     const unsubProps = onSnapshot(
@@ -2168,17 +2201,36 @@ export default function App() {
 
         {toast && (
           <div
-            role="status"
-            className="no-print mx-4 sm:mx-6 mt-4 px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-900 flex items-center justify-between gap-3 shadow-xs"
+            role={toast.variant === 'error' ? 'alert' : 'status'}
+            className={`no-print mx-4 sm:mx-6 mt-4 px-4 py-3 rounded-xl border text-xs font-medium flex items-center justify-between gap-3 shadow-xs ${
+              toast.variant === 'error'
+                ? 'bg-rose-50 border-rose-200 text-rose-900'
+                : toast.variant === 'info'
+                  ? 'bg-blue-50 border-blue-200 text-[#061f4d]'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+            }`}
           >
             <div className="flex items-center gap-2.5 min-w-0">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{toast}</span>
+              {toast.variant === 'error' ? (
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              ) : toast.variant === 'info' ? (
+                <Info className="w-4 h-4 text-[#0a367a] shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              )}
+              <span className="leading-relaxed break-words">{toast.message}</span>
             </div>
             <button
               type="button"
               onClick={() => setToast(null)}
-              className="text-emerald-700 hover:text-emerald-950 p-0.5 cursor-pointer"
+              aria-label="Dismiss notification"
+              className={`p-1 rounded-md transition-colors cursor-pointer shrink-0 ${
+                toast.variant === 'error'
+                  ? 'text-rose-700 hover:text-rose-950 hover:bg-rose-100'
+                  : toast.variant === 'info'
+                    ? 'text-[#0a367a] hover:text-[#061f4d] hover:bg-blue-100'
+                    : 'text-emerald-700 hover:text-emerald-950 hover:bg-emerald-100'
+              }`}
             >
               <X className="w-3.5 h-3.5" />
             </button>

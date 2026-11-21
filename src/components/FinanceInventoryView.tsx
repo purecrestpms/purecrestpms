@@ -50,6 +50,8 @@ import {
 import { useCms } from '../context/CmsContext';
 import { ReservationPaymentModal } from './ReservationPaymentModal';
 import { PurchaseInvoiceData, PurchaseInvoiceModal } from './PurchaseInvoiceModal';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
+import { FeedbackBanner } from './FeedbackBanner';
 
 function formatPdfNgn(amount: number): string {
   return `NGN ${Math.round(amount).toLocaleString('en-US')}`;
@@ -426,7 +428,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
         totalNgn: cleanAmt,
       });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to post ledger entry. Please try again.', 'Finance:CreateLedger')
+      );
     }
   };
 
@@ -469,7 +473,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       onNotify(`Updated ledger entry ${editingLedger.reference || editingLedger.description}`);
       setEditingLedger(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to update ledger entry. Please try again.', 'Finance:UpdateLedger')
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -483,7 +489,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       onNotify(`Deleted ledger entry ${entry.reference || entry.description}`);
       setConfirmDeleteLedgerId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to delete ledger entry. Please try again.', 'Finance:DeleteLedger')
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -513,7 +521,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       setSku('');
       setItemName('');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to add inventory item. Please try again.', 'Inventory:CreateItem')
+      );
     }
   };
 
@@ -558,7 +568,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       onNotify(`Updated inventory SKU ${editISku.trim().toUpperCase()}`);
       setEditingInv(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to update inventory item. Please try again.', 'Inventory:UpdateItem')
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -572,7 +584,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
       onNotify(`Deleted inventory SKU ${item.sku} (${item.name})`);
       setConfirmDeleteInvId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to delete inventory item. Please try again.', 'Inventory:DeleteItem')
+      );
     } finally {
       setBusyRecordId(null);
     }
@@ -625,7 +639,9 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
         });
       }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to issue purchase order. Please try again.', 'Procurement:CreatePO')
+      );
     }
   };
 
@@ -657,21 +673,11 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {actionError && (
-        <div className="no-print bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{actionError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setActionError(null)}
-            className="text-rose-700 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      <FeedbackBanner
+        message={actionError}
+        onDismiss={() => setActionError(null)}
+        className="no-print"
+      />
       {/* Print-Only Formal Letterhead */}
       {(section === 'accounting' || section === 'reports') && (
         <div className="hidden print-only border-b-2 border-slate-900 pb-4 mb-4">
@@ -1407,7 +1413,13 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                                     newQty: item.quantityOnHand - 1,
                                   });
                                 } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
+                                  setActionError(
+                                    getUserFriendlyErrorMessage(
+                                      err,
+                                      'Unable to adjust stock quantity. Please try again.',
+                                      'Inventory:AdjustQty'
+                                    )
+                                  );
                                 }
                               }}
                               className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-100 font-mono-tabular cursor-pointer"
@@ -1425,7 +1437,13 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                                     newQty: item.quantityOnHand + 1,
                                   });
                                 } catch (err) {
-                                  setActionError(err instanceof Error ? err.message : String(err));
+                                  setActionError(
+                                    getUserFriendlyErrorMessage(
+                                      err,
+                                      'Unable to adjust stock quantity. Please try again.',
+                                      'Inventory:AdjustQty'
+                                    )
+                                  );
                                 }
                               }}
                               className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-100 font-mono-tabular cursor-pointer"
@@ -1633,7 +1651,13 @@ export const FinanceInventoryView: React.FC<FinanceInventoryViewProps> = ({
                                       totalNgn: po.totalCostNgn,
                                     });
                                   } catch (err) {
-                                    setActionError(err instanceof Error ? err.message : String(err));
+                                    setActionError(
+                                      getUserFriendlyErrorMessage(
+                                        err,
+                                        'Unable to receive purchase order. Please try again.',
+                                        'Procurement:ReceivePO'
+                                      )
+                                    );
                                   }
                                 }}
                                 className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium whitespace-nowrap cursor-pointer"

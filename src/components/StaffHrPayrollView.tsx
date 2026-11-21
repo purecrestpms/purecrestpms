@@ -53,6 +53,7 @@ import {
   updateStaffMemberWorkflow,
   updateStaffSalary,
 } from '../services/pmsService';
+import { getUserFriendlyErrorMessage } from '../utils/errorMessages';
 import {
   ALL_DEPARTMENTS,
   ASSIGNABLE_ROLE_LABELS,
@@ -469,7 +470,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       setPropAdminPhone('+234 ');
       setPropAdminPassword('');
     } catch (err) {
-      setUserActionError(err instanceof Error ? err.message : String(err));
+      setUserActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to create property admin login. Please try again.', 'HR:CreatePropAdmin')
+      );
     } finally {
       setCreatingPropLogin(false);
     }
@@ -528,8 +531,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       setUDepartment('Front Desk');
       setUPrivileges([...ROLE_ALLOWED_SECTIONS.front_desk]);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setUserActionError(msg);
+      setUserActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to create user account. Please try again.', 'HR:CreateUserAccount')
+      );
     } finally {
       setCreatingUser(false);
     }
@@ -584,7 +588,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       );
       setEditingAccount(null);
     } catch (err) {
-      setUserActionError(err instanceof Error ? err.message : String(err));
+      setUserActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to update user account. Please try again.', 'HR:UpdateUserAccount')
+      );
     } finally {
       setSavingUserEdit(false);
     }
@@ -602,7 +608,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Removed role & unassigned ${acc.fullName}`);
       setConfirmUnassignAccId(null);
     } catch (err) {
-      setUserActionError(err instanceof Error ? err.message : String(err));
+      setUserActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to unassign user role. Please try again.', 'HR:UnassignUser')
+      );
     } finally {
       setBusyActionId(null);
     }
@@ -620,7 +628,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Deleted user account ${acc.email}`);
       setConfirmDeleteAccId(null);
     } catch (err) {
-      setUserActionError(err instanceof Error ? err.message : String(err));
+      setUserActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to delete user account. Please try again.', 'HR:DeleteUser')
+      );
     } finally {
       setBusyActionId(null);
     }
@@ -666,7 +676,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Updated staff record for ${combined}`);
       setEditingStaffModal(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to update staff record. Please try again.', 'HR:UpdateStaff')
+      );
     } finally {
       setSavingStaffEdit(false);
     }
@@ -684,7 +696,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Deleted staff record ${staff.fullName} (${staff.staffCode})`);
       setConfirmDeleteStaffId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to delete staff record. Please try again.', 'HR:DeleteStaff')
+      );
     } finally {
       setBusyActionId(null);
     }
@@ -749,7 +763,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       setNotifyAccFeedback(result.message);
       onNotify(result.message);
     } catch (err) {
-      setNotifyAccFeedback(err instanceof Error ? err.message : 'Unable to share email details.');
+      setNotifyAccFeedback(
+        getUserFriendlyErrorMessage(err, 'Unable to share email details. Please try again.', 'HR:ShareEmail')
+      );
     } finally {
       setNotifyAccBusy(false);
     }
@@ -801,7 +817,13 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
         `Password setup email sent to ${notifyAccTarget.email}. They can set their password and sign in.`
       );
     } catch (err) {
-      setNotifyAccFeedback(err instanceof Error ? err.message : 'Unable to send password setup email.');
+      setNotifyAccFeedback(
+        getUserFriendlyErrorMessage(
+          err,
+          'Unable to send password setup email. Please try again.',
+          'HR:PasswordSetup'
+        )
+      );
     } finally {
       setNotifyAccResetBusy(false);
     }
@@ -835,7 +857,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       setLastName('');
       setEmail('');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to add staff member. Please try again.', 'HR:CreateStaff')
+      );
     }
   };
 
@@ -853,7 +877,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       });
       onNotify(`Assigned ${shiftWindow} shift to ${staff.fullName}`);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to assign shift. Please try again.', 'HR:CreateShift')
+      );
     }
   };
 
@@ -865,7 +891,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Deleted shift for ${sh.staffName} (${sh.shiftDate})`);
       setConfirmDeleteShiftId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to delete shift. Please try again.', 'HR:DeleteShift')
+      );
     } finally {
       setBusyActionId(null);
     }
@@ -879,7 +907,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Deleted attendance log for ${att.staffName} (${att.date})`);
       setConfirmDeleteAttId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to delete attendance log. Please try again.', 'HR:DeleteAttendance')
+      );
     } finally {
       setBusyActionId(null);
     }
@@ -899,7 +929,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       onNotify(`Updated monthly salary for ${staff.fullName}`);
       setEditingStaffId(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to update monthly salary. Please try again.', 'HR:UpdateSalary')
+      );
     } finally {
       setSavingSalary(false);
     }
@@ -919,7 +951,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       });
       onNotify(`Paid & posted ${payrollPeriod} Monthly Payroll (Pay Date ${payDate}) to Ledger`);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to process payroll right now. Please try again.', 'HR:RunPayroll')
+      );
     } finally {
       setRunningPayroll(false);
     }
@@ -1087,7 +1121,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
       setClosingShiftTarget(null);
       setHandoverNotes('');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(
+        getUserFriendlyErrorMessage(err, 'Unable to close shift right now. Please try again.', 'HR:CloseShift')
+      );
     } finally {
       setClosingShiftBusy(false);
     }
@@ -3101,7 +3137,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                       await clockInStaff({ property, staff: s });
                       onNotify(`Clocked in ${s.fullName}`);
                     } catch (err) {
-                      setActionError(err instanceof Error ? err.message : String(err));
+                      setActionError(
+                        getUserFriendlyErrorMessage(err, 'Unable to clock in staff member. Please try again.', 'HR:ClockIn')
+                      );
                     }
                     e.target.value = '';
                   }
@@ -3140,7 +3178,9 @@ export const StaffHrPayrollView: React.FC<StaffHrPayrollViewProps> = ({
                             await clockOutAttendance({ property, record: att });
                             onNotify(`Clocked out ${att.staffName}`);
                           } catch (err) {
-                            setActionError(err instanceof Error ? err.message : String(err));
+                            setActionError(
+                              getUserFriendlyErrorMessage(err, 'Unable to clock out staff member. Please try again.', 'HR:ClockOut')
+                            );
                           }
                         }}
                         className="px-2.5 py-1 border border-slate-200 hover:bg-slate-100 rounded text-slate-700 font-medium cursor-pointer"
