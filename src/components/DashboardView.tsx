@@ -602,49 +602,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [occupancyTrend]);
 
   return (
-    <div className="space-y-6">
-      {/* 1. Greeting Hero Banner with Property Suite Photo */}
-      <div className="relative bg-white border border-slate-200 rounded-2xl overflow-hidden min-h-[118px] flex items-center shadow-xs">
-        <div className="relative z-10 px-6 py-5 sm:px-8 sm:py-6 max-w-xl">
-          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
+    <div className="space-y-5">
+      {/* 1. Compact Greeting Header */}
+      <div className="relative bg-white border border-slate-200 rounded-xl overflow-hidden min-h-[88px] flex items-center">
+        <div className="relative z-10 px-5 py-4 max-w-xl">
+          <h1 className="font-display text-lg sm:text-xl font-bold tracking-tight leading-snug">
             <span className="text-[#0a367a]">{getTimeGreeting()},</span>{' '}
-            <span className="text-slate-900">{greetingName}!</span>
+            <span className="text-slate-900">{greetingName}</span>
           </h1>
-          <p className="text-sm sm:text-base text-slate-600 mt-1.5">
-            Here&apos;s what&apos;s happening at{' '}
-            <span className="font-semibold text-slate-900">{property.name}</span> today.
+          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+            Live overview for{' '}
+            <span className="font-semibold text-slate-800">{property.name}</span>.
           </p>
         </div>
 
-        <div className="hidden sm:block absolute inset-y-0 right-0 w-[48%] lg:w-[44%] pointer-events-none">
+        <div className="hidden sm:block absolute inset-y-0 right-0 w-[42%] lg:w-[38%] pointer-events-none">
           <img
             src={heroImageUrl}
             alt={property.name}
             referrerPolicy="no-referrer"
             className="w-full h-full object-cover object-center"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-white via-white/75 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-white via-white/80 to-transparent" />
         </div>
       </div>
 
-      {/* 2. Four Essential KPI Cards (Dark Blue & White) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* 2. Four Essential KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5">
         {/* Occupancy Rate */}
         <button
           type="button"
           onClick={() => onNavigate('rooms')}
-          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-4 flex items-center gap-3.5 transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <BedDouble className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-600">Occupancy Rate</p>
-            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Occupancy Rate</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {metrics.occupancyRate}%
             </p>
             <p
-              className={`text-xs font-semibold mt-0.5 font-mono-tabular ${
+              className={`text-[11px] font-semibold mt-0.5 font-mono-tabular ${
                 metrics.occDelta >= 0 ? 'text-[#0a367a]' : 'text-rose-700'
               }`}
             >
@@ -658,17 +658,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('arrivals')}
-          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-4 flex items-center gap-3.5 transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <Calendar className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Calendar className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-600">Arrivals</p>
-            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Arrivals</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.arrivalsToday).padStart(2, '0')}
             </p>
-            <p className="text-xs font-semibold text-[#1557b0] mt-0.5 font-mono-tabular">
+            <p className="text-[11px] font-semibold text-[#1557b0] mt-0.5 font-mono-tabular">
               {metrics.arrivalsDelta >= 0 ? '↑ +' : '↓ '}
               {metrics.arrivalsDelta} vs yesterday
             </p>
@@ -679,17 +679,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('in_house')}
-          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-4 flex items-center gap-3.5 transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <LogOut className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <LogOut className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-600">Departures</p>
-            <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Departures</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5">
               {String(metrics.departuresToday).padStart(2, '0')}
             </p>
-            <p className="text-xs font-semibold text-slate-600 mt-0.5 font-mono-tabular">
+            <p className="text-[11px] font-semibold text-slate-500 mt-0.5 font-mono-tabular">
               {metrics.departuresDelta >= 0 ? '↑ +' : '↓ '}
               {metrics.departuresDelta} vs yesterday
             </p>
@@ -700,18 +700,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('accounting')}
-          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 flex items-center gap-4 shadow-xs transition-colors cursor-pointer"
+          className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-4 flex items-center gap-3.5 transition-colors cursor-pointer"
         >
-          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <Wallet className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Wallet className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-600">Today&apos;s Revenue</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] leading-tight mt-0.5 truncate">
+            <p className="text-xs font-semibold text-slate-500">Today&apos;s Revenue</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] leading-tight mt-0.5 truncate">
               {formatNgn(metrics.revenueToday)}
             </p>
             <p
-              className={`text-xs font-semibold mt-0.5 font-mono-tabular ${
+              className={`text-[11px] font-semibold mt-0.5 font-mono-tabular ${
                 metrics.revenueDeltaPct >= 0 ? 'text-[#0a367a]' : 'text-rose-700'
               }`}
             >
@@ -722,43 +722,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </button>
       </div>
 
-      {/* 2b. Financial Overview: OTA Prepayments, Payments Received, Outstanding Balance */}
-      <div className="space-y-3">
+      {/* 2b. Financial Overview */}
+      <div className="space-y-2.5">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h2 className="font-display text-lg font-bold text-[#061f4d]">
+            <h2 className="font-display text-sm sm:text-base font-bold text-[#061f4d]">
               Financial Overview
             </h2>
-            <p className="text-xs sm:text-sm text-slate-500">
-              Live payment position across OTA channels and direct property settlements
+            <p className="text-xs text-slate-500">
+              Payment position across OTA channels and direct property settlements
             </p>
           </div>
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="inline-flex items-center gap-1 text-sm font-semibold text-[#0a367a] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-[#0a367a] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
           >
             <span>Detailed Payments</span>
-            <ArrowRight className="w-4 h-4" />
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 shadow-xs transition-colors cursor-pointer"
+            className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-4 transition-colors cursor-pointer"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-slate-600">OTA Prepayments</span>
-              <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-                <Globe className="w-4.5 h-4.5" />
+              <span className="text-xs font-semibold text-slate-500">OTA Prepayments</span>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+                <Globe className="w-4 h-4" />
               </div>
             </div>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-2 truncate">
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1.5 truncate">
               {formatNgn(financialOverview.otaPrepaymentsNgn)}
             </p>
-            <p className="text-xs text-slate-500 mt-1.5 font-mono-tabular">
+            <p className="text-[11px] text-slate-500 mt-1 font-mono-tabular">
               {financialOverview.otaPendingPayoutCount} pending ·{' '}
               {financialOverview.otaReceivedPayoutCount} received · Exp.{' '}
               <span className="font-semibold text-[#0a367a]">
@@ -770,18 +770,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-5 shadow-xs transition-colors cursor-pointer"
+            className="text-left bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-4 transition-colors cursor-pointer"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-slate-600">Payments Received</span>
-              <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-                <CheckCircle2 className="w-4.5 h-4.5" />
+              <span className="text-xs font-semibold text-slate-500">Payments Received</span>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-4 h-4" />
               </div>
             </div>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#0a367a] mt-2 truncate">
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#0a367a] mt-1.5 truncate">
               {formatNgn(financialOverview.paymentsReceivedNgn)}
             </p>
-            <p className="text-xs text-slate-500 mt-1.5">
+            <p className="text-[11px] text-slate-500 mt-1">
               Direct receipts &amp; settled OTA payouts across{' '}
               <span className="font-mono-tabular font-semibold text-slate-800">
                 {financialOverview.paymentsReceivedCount}
@@ -793,22 +793,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="text-left bg-white border border-slate-200 hover:border-rose-300 rounded-2xl p-5 shadow-xs transition-colors cursor-pointer"
+            className="text-left bg-white border border-slate-200 hover:border-rose-300 rounded-xl p-4 transition-colors cursor-pointer"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-slate-600">Outstanding Balance</span>
-              <div className="w-9 h-9 rounded-lg bg-rose-50 text-rose-700 flex items-center justify-center shrink-0">
-                <AlertCircle className="w-4.5 h-4.5" />
+              <span className="text-xs font-semibold text-slate-500">Outstanding Balance</span>
+              <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-700 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-4 h-4" />
               </div>
             </div>
             <p
-              className={`font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold mt-2 truncate ${
+              className={`font-display font-mono-tabular text-xl sm:text-2xl font-extrabold mt-1.5 truncate ${
                 financialOverview.outstandingBalanceNgn > 0 ? 'text-rose-700' : 'text-[#061f4d]'
               }`}
             >
               {formatNgn(financialOverview.outstandingBalanceNgn)}
             </p>
-            <p className="text-xs text-slate-500 mt-1.5">
+            <p className="text-[11px] text-slate-500 mt-1">
               {financialOverview.outstandingCount > 0 ? (
                 <>
                   <span className="font-mono-tabular font-semibold text-rose-700">
@@ -824,14 +824,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 3. Middle Row: Booking Performance Bar Chart + Dark Blue Quick Actions */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      {/* 3. Middle Row: Booking Performance Bar Chart + Quick Actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Booking Performance */}
-        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col justify-between">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-2">
+        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col justify-between">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <BarChart3 className="w-4.5 h-4.5 text-blue-200" />
-              <h2 className="font-display text-base font-bold text-white">
+              <BarChart3 className="w-4 h-4 text-blue-200" />
+              <h2 className="font-display text-sm font-bold text-white">
                 Booking Performance
               </h2>
             </div>
@@ -840,7 +840,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               aria-label="Booking performance period"
               value={perfRange}
               onChange={(e) => setPerfRange(e.target.value as '7d' | '14d' | '30d')}
-              className="h-8 px-3 rounded-lg border border-white/25 bg-white/10 text-xs font-semibold text-white focus:outline-none cursor-pointer"
+              className="h-7 px-2.5 rounded-lg border border-white/25 bg-white/10 text-xs font-semibold text-white focus:outline-none cursor-pointer"
             >
               <option value="7d" className="text-slate-900">Last 7 Days</option>
               <option value="14d" className="text-slate-900">Last 14 Days</option>
@@ -848,7 +848,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </select>
           </div>
 
-          <div className="p-5">
+          <div className="p-4">
             <div className="relative h-56 flex items-end gap-2 sm:gap-4 pt-6 pb-2 pl-7 pr-2">
               {/* Horizontal Y-Axis Gridlines */}
               <div className="absolute inset-x-0 top-6 bottom-8 left-7 right-2 flex flex-col justify-between pointer-events-none">
@@ -904,71 +904,71 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Quick Actions Panel */}
-        <div className="lg:col-span-4 bg-[#0a367a] rounded-2xl p-5 text-white flex flex-col justify-between shadow-xs">
-          <div className="flex items-center gap-2 mb-4">
-            <Zap className="w-4.5 h-4.5 text-blue-200" />
-            <h2 className="font-display text-base font-bold text-white">Quick Actions</h2>
+        <div className="lg:col-span-4 bg-[#0a367a] rounded-xl p-4 text-white flex flex-col justify-between">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-blue-200" />
+            <h2 className="font-display text-sm font-bold text-white">Quick Actions</h2>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 flex-1">
+          <div className="grid grid-cols-2 gap-2.5 flex-1">
             <button
               type="button"
               onClick={() => onNavigate('reservations')}
-              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-lg p-3.5 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <CalendarPlus className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-sm font-bold leading-tight text-[#061f4d]">New Reservation</span>
+              <CalendarPlus className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold leading-tight text-[#061f4d]">New Reservation</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('arrivals')}
-              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-lg p-3.5 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <LogIn className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-sm font-bold leading-tight text-[#061f4d]">Check In</span>
+              <LogIn className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold leading-tight text-[#061f4d]">Check In</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('in_house')}
-              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-lg p-3.5 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <LogOut className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-sm font-bold leading-tight text-[#061f4d]">Check Out</span>
+              <LogOut className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold leading-tight text-[#061f4d]">Check Out</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('pos_kitchen')}
-              className="bg-white hover:bg-blue-50 text-slate-900 rounded-xl p-4 flex flex-col items-center justify-center gap-2.5 text-center transition-colors cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-slate-900 rounded-lg p-3.5 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
             >
-              <ShoppingCart className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-sm font-bold leading-tight text-[#061f4d]">Point of Sale</span>
+              <ShoppingCart className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold leading-tight text-[#061f4d]">Point of Sale</span>
             </button>
           </div>
           <button
             type="button"
             onClick={() => onNavigate('accounting')}
-            className="mt-3 w-full py-2.5 px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="mt-2.5 w-full py-2 px-3 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
-            <CreditCard className="w-4 h-4 text-blue-200" />
+            <CreditCard className="w-3.5 h-3.5 text-blue-200" />
             <span>Payments &amp; Ledger</span>
           </button>
         </div>
       </div>
 
       {/* 4. In-House Guests + Check-Outs Due Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* In-House Guests */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <BedDouble className="w-4.5 h-4.5 text-blue-200" />
-              <h2 className="font-display text-base font-bold text-white">
+              <BedDouble className="w-4 h-4 text-blue-200" />
+              <h2 className="font-display text-sm font-bold text-white">
                 In-House Guests
               </h2>
-              <span className="px-2 py-0.5 rounded-md bg-white/15 text-xs font-bold font-mono-tabular text-white">
+              <span className="px-2 py-0.5 rounded bg-white/15 text-[11px] font-bold font-mono-tabular text-white">
                 {inHouseGuests.length}
               </span>
             </div>
@@ -983,19 +983,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {inHouseGuests.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
+            <div className="p-6 text-center text-xs text-slate-500">
               No guests are currently checked in. Use <strong>Check In</strong> to check in an arrival or walk-in guest.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
-                    <th className="py-3 px-5">Guest Name</th>
-                    <th className="py-3 px-3">Room</th>
-                    <th className="py-3 px-3">Stay</th>
-                    <th className="py-3 px-3">Balance</th>
-                    <th className="py-3 px-5 text-right">Status</th>
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-semibold text-slate-600">
+                    <th className="py-2.5 px-4">Guest Name</th>
+                    <th className="py-2.5 px-3">Room</th>
+                    <th className="py-2.5 px-3">Stay</th>
+                    <th className="py-2.5 px-3">Balance</th>
+                    <th className="py-2.5 px-4 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1055,14 +1055,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Check-Outs Due */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <LogOut className="w-4.5 h-4.5 text-blue-200" />
-              <h2 className="font-display text-base font-bold text-white">
+              <LogOut className="w-4 h-4 text-blue-200" />
+              <h2 className="font-display text-sm font-bold text-white">
                 Check-Outs Due
               </h2>
-              <span className="px-2 py-0.5 rounded-md text-xs font-bold font-mono-tabular bg-white/15 text-white">
+              <span className="px-2 py-0.5 rounded text-[11px] font-bold font-mono-tabular bg-white/15 text-white">
                 {checkOutsDue.length}
               </span>
             </div>
@@ -1077,7 +1077,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {checkOutsDue.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500 my-auto">
+            <div className="p-6 text-center text-xs text-slate-500 my-auto">
               No check-outs due today. All scheduled departures are clear.
             </div>
           ) : (
@@ -1091,15 +1091,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div
                     key={res.id}
                     onClick={() => onOpenReservationFolio(res.id, 'front_desk')}
-                    className="px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-blue-50/40 transition-colors cursor-pointer"
+                    className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-blue-50/40 transition-colors cursor-pointer"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-slate-900 truncate">
+                        <span className="font-semibold text-xs sm:text-sm text-slate-900 truncate">
                           {res.guestName}
                         </span>
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold shrink-0 ${
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold shrink-0 ${
                             isOverdue
                               ? 'bg-rose-100 text-rose-800'
                               : 'bg-amber-100 text-amber-800'
@@ -1108,7 +1108,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           {isOverdue ? 'Overdue' : 'Due Today'}
                         </span>
                       </div>
-                      <div className="text-xs text-slate-500 font-mono-tabular mt-0.5">
+                      <div className="text-[11px] text-slate-500 font-mono-tabular mt-0.5">
                         {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'} · Out{' '}
                         {formatShortDate(res.checkOutDate)} ·{' '}
                         {pay.balance > 0 ? (
@@ -1126,7 +1126,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         e.stopPropagation();
                         onOpenReservationFolio(res.id, 'front_desk');
                       }}
-                      className="px-3.5 py-2 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+                      className="px-3 py-1.5 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-semibold shrink-0 transition-colors cursor-pointer"
                     >
                       Check Out
                     </button>
@@ -1139,13 +1139,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 5. Recent Reservations Table + Occupancy Trend Line Chart */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Recent Reservations */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <ListFilter className="w-4.5 h-4.5 text-blue-200" />
-              <h2 className="font-display text-base font-bold text-white">
+              <ListFilter className="w-4 h-4 text-blue-200" />
+              <h2 className="font-display text-sm font-bold text-white">
                 Recent Reservations
               </h2>
             </div>
@@ -1160,19 +1160,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {recentReservations.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
+            <div className="p-6 text-center text-xs text-slate-500">
               No active reservations yet. Click <strong>New Reservation</strong> to create one.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
-                    <th className="py-3 px-5">Guest Name</th>
-                    <th className="py-3 px-3">Room</th>
-                    <th className="py-3 px-3">Check-in</th>
-                    <th className="py-3 px-3">Check-out</th>
-                    <th className="py-3 px-5 text-right">Status</th>
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-semibold text-slate-600">
+                    <th className="py-2.5 px-4">Guest Name</th>
+                    <th className="py-2.5 px-3">Room</th>
+                    <th className="py-2.5 px-3">Check-in</th>
+                    <th className="py-2.5 px-3">Check-out</th>
+                    <th className="py-2.5 px-4 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1185,24 +1185,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         onClick={() => onOpenReservationFolio(res.id, 'reservations')}
                         className="hover:bg-blue-50/40 transition-colors cursor-pointer"
                       >
-                        <td className="py-3 px-5 whitespace-nowrap">
+                        <td className="py-2.5 px-4 whitespace-nowrap">
                           <div className="font-semibold text-slate-900">{res.guestName}</div>
-                          <div className="text-xs font-medium text-slate-500">
+                          <div className="text-[11px] font-medium text-slate-500">
                             {formatBookingSourceLabel(res.channel)}
                           </div>
                         </td>
-                        <td className="py-3 px-3 font-mono-tabular text-slate-700 whitespace-nowrap">
+                        <td className="py-2.5 px-3 font-mono-tabular text-slate-700 whitespace-nowrap">
                           {roomDisp.isAssigned ? roomDisp.roomNumberLabel : 'Unassigned'}
                         </td>
-                        <td className="py-3 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                        <td className="py-2.5 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
                           {formatShortDate(res.checkInDate)}
                         </td>
-                        <td className="py-3 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                        <td className="py-2.5 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
                           {formatShortDate(res.checkOutDate)}
                         </td>
-                        <td className="py-3 px-5 text-right whitespace-nowrap">
+                        <td className="py-2.5 px-4 text-right whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold ${badge.className}`}
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${badge.className}`}
                           >
                             {badge.label}
                           </span>
@@ -1217,20 +1217,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Occupancy Trend Area Chart */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col justify-between">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col justify-between">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <TrendingUp className="w-4.5 h-4.5 text-blue-200" />
-              <h2 className="font-display text-base font-bold text-white">
+              <TrendingUp className="w-4 h-4 text-blue-200" />
+              <h2 className="font-display text-sm font-bold text-white">
                 Occupancy Trend
               </h2>
             </div>
-            <span className="px-2.5 py-0.5 rounded-md bg-white/15 text-white font-mono-tabular text-xs font-bold">
+            <span className="px-2 py-0.5 rounded bg-white/15 text-white font-mono-tabular text-[11px] font-bold">
               {metrics.occupancyRate}%
             </span>
           </div>
 
-          <div className="p-5 w-full">
+          <div className="p-4 w-full">
             <svg
               viewBox={`0 0 ${trendSvg.W} ${trendSvg.H}`}
               className="w-full h-auto overflow-visible"
@@ -1308,19 +1308,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 6. Live Dashboard Reservations & OTA Availability Calendar (Placed right before footer) */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-        <div className="bg-[#0a367a] text-white px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="bg-[#0a367a] text-white px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <Calendar className="w-4.5 h-4.5 text-blue-200" />
-              <h2 className="font-display text-base font-bold text-white">
+              <Calendar className="w-4 h-4 text-blue-200" />
+              <h2 className="font-display text-sm font-bold text-white">
                 Reservations &amp; OTA Calendar
               </h2>
-              <span className="px-2 py-0.5 rounded-md bg-white/15 text-xs font-bold font-mono-tabular text-white">
+              <span className="px-2 py-0.5 rounded bg-white/15 text-[11px] font-bold font-mono-tabular text-white">
                 {currentAndUpcomingReservations.length} active/upcoming
               </span>
             </div>
-            <p className="text-xs text-blue-100 mt-0.5">
+            <p className="text-[11px] text-blue-100 mt-0.5">
               Live room schedule across Direct, Airbnb, Booking.com &amp; blocked dates
             </p>
           </div>

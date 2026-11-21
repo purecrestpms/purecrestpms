@@ -45,7 +45,7 @@ service cloud.firestore {
     }
 
     function isAuthorizedEmailList(arr) {
-      return arr is list && arr.size() >= 1 && arr.size() <= 25 && arr[0] is string && arr[0].size() <= 120;
+      return arr is list && arr.size() >= 1 && arr.size() <= 100 && arr[0] is string && arr[0].size() <= 120;
     }
 
     function isStringListMax50(arr) {
@@ -60,6 +60,20 @@ service cloud.firestore {
         );
     }
 
+    function isActiveUserDoc() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    function isActivePropertyUser(propertyId) {
+      return isActiveUserDoc() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.propertyId == propertyId &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in [
+          'pch_admin', 'property_admin', 'front_desk', 'housekeeping', 'fnb_kitchen', 'accountant', 'maintenance'
+        ];
+    }
+
     function isMemberResource(data) {
       return isBootstrappedAdmin() || (
         isVerifiedUser() && (
@@ -70,29 +84,28 @@ service cloud.firestore {
     }
 
     function isPropertyOperator(propertyId) {
-      return isPchSuperAdmin() || (
-        isVerifiedUser() &&
-        exists(/databases/$(database)/documents/properties/$(propertyId)) && (
-          get(/databases/$(database)/documents/properties/$(propertyId)).data.ownerUid == request.auth.uid ||
-          isAuthorizedEmail(get(/databases/$(database)/documents/properties/$(propertyId)).data.authorizedEmails)
-        )
-      );
+      return isPchSuperAdmin() ||
+        isActivePropertyUser(propertyId) || (
+          isVerifiedUser() &&
+          exists(/databases/$(database)/documents/properties/$(propertyId)) && (
+            get(/databases/$(database)/documents/properties/$(propertyId)).data.ownerUid == request.auth.uid ||
+            isAuthorizedEmail(get(/databases/$(database)/documents/properties/$(propertyId)).data.authorizedEmails)
+          )
+        );
     }
 
     function isPropertyAdmin(propertyId) {
       return isPchSuperAdmin() || (
+        isActiveUserDoc() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'property_admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.propertyId == propertyId
+      ) || (
         isVerifiedUser() &&
         exists(/databases/$(database)/documents/properties/$(propertyId)) && (
           get(/databases/$(database)/documents/properties/$(propertyId)).data.ownerUid == request.auth.uid ||
           (
             request.auth.token.email is string &&
             get(/databases/$(database)/documents/properties/$(propertyId)).data.adminEmail.lower() == request.auth.token.email.lower()
-          ) ||
-          (
-            exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true &&
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'property_admin' &&
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.propertyId == propertyId
           )
         )
       );
@@ -221,15 +234,15 @@ service cloud.firestore {
       data.roomType is string && data.roomType.size() >= 2 && data.roomType.size() <= 64 &&
       (!('section' in data) || (data.section is string && data.section in ['Serviced Apartment', 'Hotel Rooms'])) &&
       data.floor is number && data.floor >= 0 && data.floor <= 50 &&
-      data.nightlyRateNgn is number && data.nightlyRateNgn >= 1000 &&
+      data.nightlyRateNgn is number && data.nightlyRateNgn >= 0 &&
       data.maxGuests is number && data.maxGuests >= 1 && data.maxGuests <= 12 &&
       data.occupancyStatus in ['vacant', 'occupied', 'reserved', 'out_of_order'] &&
       data.housekeepingStatus in ['clean', 'dirty', 'cleaning', 'inspected'] &&
       (!('currentGuestName' in data) || (data.currentGuestName is string && data.currentGuestName.size() <= 120)) &&
       (!('currentReservationId' in data) || (data.currentReservationId is string && data.currentReservationId.size() <= 128)) &&
-      (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 350000)) &&
-      (!('galleryImages' in data) || (data.galleryImages is list && data.galleryImages.size() <= 6 && (data.galleryImages.size() == 0 || data.galleryImages[0] is string))) &&
-      (!('amenities' in data) || (data.amenities is list && data.amenities.size() <= 15 && (data.amenities.size() == 0 || data.amenities[0] is string))) &&
+      (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000000)) &&
+      (!('galleryImages' in data) || (data.galleryImages is list && data.galleryImages.size() <= 12 && (data.galleryImages.size() == 0 || data.galleryImages[0] is string))) &&
+      (!('amenities' in data) || (data.amenities is list && data.amenities.size() <= 30 && (data.amenities.size() == 0 || data.amenities[0] is string))) &&
       isAuthorizedEmailList(data.authorizedEmails) &&
       data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
       data.createdAt is timestamp &&
@@ -246,7 +259,7 @@ service cloud.firestore {
         'vipTier', 'totalStays', 'lifetimeSpendNgn', 'notes', 'authorizedEmails', 'ownerUid', 'createdAt', 'updatedAt'
       ]) &&
       data.propertyId == propertyId &&
-      data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
+      data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
       (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
       data.phone is string && data.phone.size() <= 32 &&
       (!('address' in data) || (data.address is string && data.address.size() <= 200)) &&
@@ -254,7 +267,7 @@ service cloud.firestore {
       (!('state' in data) || (data.state is string && data.state.size() <= 80)) &&
       (!('country' in data) || (data.country is string && data.country.size() <= 80)) &&
       (!('nationality' in data) || (data.nationality is string && data.nationality.size() <= 64)) &&
-      data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'] &&
+      data.idType is string && data.idType.size() <= 48 &&
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
       (!('idExpiryDate' in data) || (data.idExpiryDate is string && data.idExpiryDate.size() <= 24)) &&
       data.vipTier in ['Standard', 'Silver', 'Gold', 'Diplomatic'] &&
@@ -292,7 +305,7 @@ service cloud.firestore {
       data.roomNumber is string && data.roomNumber.size() >= 1 && data.roomNumber.size() <= 24 &&
       (!('requestedRoomType' in data) || (data.requestedRoomType is string && data.requestedRoomType.size() <= 64)) &&
       (!('guestId' in data) || (data.guestId is string && data.guestId.size() <= 128)) &&
-      data.guestName is string && data.guestName.size() >= 2 && data.guestName.size() <= 120 &&
+      data.guestName is string && data.guestName.size() >= 1 && data.guestName.size() <= 120 &&
       (!('guestPhone' in data) || (data.guestPhone is string && data.guestPhone.size() <= 32)) &&
       (!('guestEmail' in data) || (data.guestEmail is string && data.guestEmail.size() <= 120)) &&
       (!('guestAddress' in data) || (data.guestAddress is string && data.guestAddress.size() <= 200)) &&
@@ -305,7 +318,7 @@ service cloud.firestore {
       data.nights is number && data.nights >= 1 &&
       data.adults is number && data.adults >= 1 &&
       (!('children' in data) || (data.children is number && data.children >= 0 && data.children <= 20)) &&
-      data.channel in ['Walk-in', 'Website', 'Phone', 'WhatsApp', 'Direct Walk-In', 'Direct Web', 'Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Custom iCal'] &&
+      data.channel in ['Walk-in', 'Website', 'Phone', 'WhatsApp', 'Direct Walk-In', 'Direct Web', 'Direct Booking', 'Booking.com', 'Airbnb', 'Expedia', 'Hotels.ng', 'VRBO', 'Custom iCal'] &&
       data.nightlyRateNgn is number && data.nightlyRateNgn >= 0 &&
       data.roomChargesNgn is number && data.roomChargesNgn >= 0 &&
       data.posChargesNgn is number && data.posChargesNgn >= 0 &&
@@ -325,7 +338,7 @@ service cloud.firestore {
       (!('paymentManuallyEdited' in data) || data.paymentManuallyEdited is bool) &&
       (!('hotelPaidNgn' in data) || (data.hotelPaidNgn is number && data.hotelPaidNgn >= 0)) &&
       data.status in ['confirmed', 'pending', 'checked_in', 'checked_out', 'cancelled', 'no_show'] &&
-      data.paymentMethod in ['Bank Transfer', 'Card POS', 'Cash NGN', 'Corporate Invoice', 'Online Gateway', 'OTA Platform Payout'] &&
+      data.paymentMethod in ['Bank Transfer', 'Card POS', 'Cash NGN', 'Corporate Invoice', 'Online Gateway', 'OTA Platform Payout', 'Cash', 'Card', 'Room Charge'] &&
       (!('paymentStatus' in data) || (data.paymentStatus is string && data.paymentStatus in ['Paid', 'Partial', 'Unpaid', 'Paid to OTA'])) &&
       (!('cautionDepositEnabled' in data) || data.cautionDepositEnabled is bool) &&
       (!('cautionDepositNgn' in data) || (data.cautionDepositNgn is number && data.cautionDepositNgn >= 0 && data.cautionDepositNgn <= 100000000)) &&
@@ -334,7 +347,7 @@ service cloud.firestore {
       (!('cautionDepositRefundedAtIso' in data) || (data.cautionDepositRefundedAtIso is string && data.cautionDepositRefundedAtIso.size() <= 40)) &&
       (!('paymentConfirmed' in data) || data.paymentConfirmed is bool) &&
       (!('idVerified' in data) || data.idVerified is bool) &&
-      (!('idType' in data) || (data.idType is string && data.idType in ['NIN', 'International Passport', 'Driver License', 'Voter Card'])) &&
+      (!('idType' in data) || (data.idType is string && data.idType.size() <= 48)) &&
       (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 64)) &&
       (!('idExpiryDate' in data) || (data.idExpiryDate is string && data.idExpiryDate.size() <= 24)) &&
       (!('ratePlan' in data) || (data.ratePlan is string && data.ratePlan.size() <= 64)) &&
@@ -362,7 +375,7 @@ service cloud.firestore {
       data.propertyId == propertyId &&
       data.roomId is string && data.roomId.size() >= 1 && data.roomId.size() <= 128 &&
       data.roomNumber is string && data.roomNumber.size() >= 1 && data.roomNumber.size() <= 16 &&
-      data.taskType in ['Checkout Turnover', 'Daily Stayover', 'Deep Clean', 'VIP Inspection'] &&
+      data.taskType is string && data.taskType.size() >= 2 && data.taskType.size() <= 64 &&
       data.assignedTo is string && data.assignedTo.size() <= 80 &&
       data.priority in ['Normal', 'High', 'Urgent'] &&
       data.status in ['pending', 'in_progress', 'completed', 'inspected'] &&
@@ -592,7 +605,7 @@ service cloud.firestore {
       (!('roomId' in data) || (data.roomId is string && data.roomId.size() <= 128)) &&
       data.locationLabel is string && data.locationLabel.size() >= 2 && data.locationLabel.size() <= 80 &&
       data.issueTitle is string && data.issueTitle.size() >= 2 && data.issueTitle.size() <= 160 &&
-      data.category in ['HVAC & AC', 'Plumbing', 'Electrical & Inverter', 'Carpentry', 'Generator & Power'] &&
+      data.category is string && data.category.size() >= 2 && data.category.size() <= 64 &&
       data.priority in ['Low', 'Medium', 'High', 'Critical'] &&
       data.assignedTo is string && data.assignedTo.size() <= 80 &&
       data.estimatedCostNgn is number && data.estimatedCostNgn >= 0 &&
@@ -762,7 +775,7 @@ service cloud.firestore {
 
     // Root collection: Properties
     match /properties/{propertyId} {
-      allow get: if isValidId(propertyId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
+      allow get: if isValidId(propertyId) && (isPchSuperAdmin() || isActivePropertyUser(propertyId) || (resource != null && isMemberResource(existing())));
       allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
       allow create: if isValidId(propertyId) && isPchSuperAdmin() && isValidProperty(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -869,11 +882,10 @@ service cloud.firestore {
               incoming().diff(existing()).affectedKeys().hasOnly([
                 'serviceType', 'tableOrRoom', 'guestName', 'reservationId', 'itemsSummary', 'itemCount',
                 'subtotalNgn', 'serviceChargeNgn', 'discountNgn', 'vatNgn', 'totalNgn',
-                'paymentStatus', 'paymentMethod', 'kitchenStatus', 'notes', 'updatedAt'
+                'paymentStatus', 'paymentMethod', 'kitchenStatus', 'notes', 'authorizedEmails', 'updatedAt'
               ])
             ) || (
-              existing().kitchenStatus != 'served' &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['kitchenStatus', 'paymentStatus', 'paymentMethod', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['kitchenStatus', 'paymentStatus', 'paymentMethod', 'notes', 'authorizedEmails', 'updatedAt'])
             )
           );
         allow delete: if isValidId(propertyId) && isValidId(orderId) && isPropertyAdmin(propertyId);
@@ -1129,7 +1141,7 @@ service cloud.firestore {
 
     // Root collection: User RBAC Profiles (strictly isolated PII)
     match /users/{userId} {
-      allow get: if isValidId(userId) && (isPchSuperAdmin() || (isVerifiedUser() && request.auth.uid == userId));
+      allow get: if isValidId(userId) && (isPchSuperAdmin() || (isSignedIn() && request.auth.uid == userId));
       allow list: if isBootstrappedAdmin() || (isVerifiedUser() && resource.data.ownerUid == request.auth.uid);
       allow create: if isValidId(userId) && isVerifiedUser() && isValidUserProfile(incoming()) &&
         incoming().ownerUid == request.auth.uid &&
@@ -1157,7 +1169,7 @@ service cloud.firestore {
     match /audit_logs/{logId} {
       allow get: if isValidId(logId) && (isPchSuperAdmin() || (resource != null && isMemberResource(existing())));
       allow list: if isBootstrappedAdmin() || (isVerifiedUser() && ((request.auth.token.email is string && (request.auth.token.email in resource.data.authorizedEmails || request.auth.token.email.lower() in resource.data.authorizedEmails)) || resource.data.ownerUid == request.auth.uid));
-      allow create: if isValidId(logId) && isVerifiedUser() && isValidAuditLog(incoming()) &&
+      allow create: if isValidId(logId) && (isVerifiedUser() || isActiveUserDoc()) && isValidAuditLog(incoming()) &&
         incoming().ownerUid == request.auth.uid && incoming().createdAt == request.time;
       allow update: if false;
       allow delete: if false;
@@ -1165,7 +1177,7 @@ service cloud.firestore {
 
     // Root collection: Global Application CMS Config (PCH Super Admin writable)
     match /app_cms/{cmsId} {
-      allow get: if isValidId(cmsId) && cmsId == 'global' && isVerifiedUser();
+      allow get: if isValidId(cmsId) && cmsId == 'global' && isSignedIn();
       allow list: if false;
       allow create: if isValidId(cmsId) && cmsId == 'global' && isPchSuperAdmin() &&
         isValidCmsConfig(incoming()) && incoming().ownerUid == request.auth.uid &&

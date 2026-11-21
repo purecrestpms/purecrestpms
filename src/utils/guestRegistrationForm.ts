@@ -124,24 +124,24 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
   doc.text(`Date: ${generatedDate}`, pageWidth - margin, 26, { align: 'right' });
 
   doc.setDrawColor(15, 23, 42);
-  doc.setLineWidth(0.6);
-  doc.line(margin, 30, pageWidth - margin, 30);
+  doc.setLineWidth(0.5);
+  doc.line(margin, 28, pageWidth - margin, 28);
 
-  let cursorY = 38;
+  let cursorY = 34;
 
   // Section 1: Personal & Contact Information
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.text('1. PERSONAL & CONTACT DETAILS', margin, cursorY);
 
   autoTable(doc, {
-    startY: cursorY + 2.5,
+    startY: cursorY + 2,
     margin: { left: margin, right: margin },
     theme: 'grid',
     styles: {
-      fontSize: 9,
-      cellPadding: 3,
+      fontSize: 8.5,
+      cellPadding: 2.3,
       lineColor: [203, 213, 225],
       lineWidth: 0.2,
       textColor: [15, 23, 42],
@@ -170,21 +170,21 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     ],
   });
 
-  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 95) + 8;
+  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 85) + 6;
 
   // Section 2: Identification Details
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.text('2. IDENTIFICATION DETAILS', margin, cursorY);
 
   autoTable(doc, {
-    startY: cursorY + 2.5,
+    startY: cursorY + 2,
     margin: { left: margin, right: margin },
     theme: 'grid',
     styles: {
-      fontSize: 9,
-      cellPadding: 3,
+      fontSize: 8.5,
+      cellPadding: 2.3,
       lineColor: [203, 213, 225],
       lineWidth: 0.2,
       textColor: [15, 23, 42],
@@ -206,12 +206,12 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     ],
   });
 
-  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 130) + 8;
+  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 116) + 6;
 
   // Section 3: Reservation / Stay Details
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.text('3. STAY & RESERVATION INFORMATION', margin, cursorY);
 
   const roomInfo = latestReservation ? getReservationRoomDisplay(latestReservation, rooms) : null;
@@ -253,12 +253,12 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
       ];
 
   autoTable(doc, {
-    startY: cursorY + 2.5,
+    startY: cursorY + 2,
     margin: { left: margin, right: margin },
     theme: 'grid',
     styles: {
-      fontSize: 9,
-      cellPadding: 3,
+      fontSize: 8.5,
+      cellPadding: 2.3,
       lineColor: [203, 213, 225],
       lineWidth: 0.2,
       textColor: [15, 23, 42],
@@ -272,21 +272,21 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     body: stayRows,
   });
 
-  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 180) + 8;
+  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 162) + 6;
 
   // Section 4: Notes & Guest Preferences
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.text('4. GUEST PREFERENCES & FRONT DESK NOTES', margin, cursorY);
 
   autoTable(doc, {
-    startY: cursorY + 2.5,
+    startY: cursorY + 2,
     margin: { left: margin, right: margin },
     theme: 'grid',
     styles: {
-      fontSize: 9,
-      cellPadding: 3.5,
+      fontSize: 8.5,
+      cellPadding: 2.5,
       lineColor: [203, 213, 225],
       lineWidth: 0.2,
       textColor: [30, 41, 59],
@@ -294,45 +294,49 @@ export function downloadGuestRegistrationPdf(params: GuestRegistrationExportPara
     body: [[safeVal(guest.notes, 'No special requests or notes recorded.')]],
   });
 
-  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 208) + 8;
+  cursorY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 186) + 6;
 
-  // Section 5: Terms & Declaration
+  // Section 5: Terms & Declaration (clamped so signatures always remain on Page 1)
+  const pageHeightCheck = doc.internal.pageSize.getHeight();
+  const maxDeclY = pageHeightCheck - 64;
+  cursorY = Math.min(cursorY, maxDeclY);
+
   doc.setFillColor(248, 250, 252);
   doc.setDrawColor(203, 213, 225);
-  doc.roundedRect(margin, cursorY, pageWidth - margin * 2, 24, 2, 2, 'FD');
+  doc.roundedRect(margin, cursorY, pageWidth - margin * 2, 21, 2, 2, 'FD');
 
   doc.setTextColor(6, 21, 57);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.text('GUEST DECLARATION & HOUSE POLICY', margin + 3.5, cursorY + 5.5);
+  doc.setFontSize(8.2);
+  doc.text('GUEST DECLARATION & HOUSE POLICY', margin + 3.5, cursorY + 5);
 
   doc.setTextColor(71, 85, 105);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(7.8);
   const policyText =
     `I confirm that the registration information provided above is accurate and agree to abide by the house rules, check-out times, and payment terms of ${property.name}. ` +
     `Standard check-in is 2:00 PM and check-out is 12:00 PM unless an approved extension is arranged with Front Desk.`;
-  doc.text(policyText, margin + 3.5, cursorY + 11, { maxWidth: pageWidth - margin * 2 - 7 });
+  doc.text(policyText, margin + 3.5, cursorY + 10, { maxWidth: pageWidth - margin * 2 - 7 });
 
-  cursorY += 34;
+  cursorY += 27;
 
-  // Signature Lines
+  // Signature Lines (strictly on Page 1)
   const colWidth = (pageWidth - margin * 2 - 14) / 2;
   doc.setDrawColor(100, 116, 139);
-  doc.line(margin, cursorY + 12, margin + colWidth, cursorY + 12);
-  doc.line(margin + colWidth + 14, cursorY + 12, pageWidth - margin, cursorY + 12);
+  doc.line(margin, cursorY + 10, margin + colWidth, cursorY + 10);
+  doc.line(margin + colWidth + 14, cursorY + 10, pageWidth - margin, cursorY + 10);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(15, 23, 42);
-  doc.text('Guest Signature & Date', margin, cursorY + 17);
-  doc.text('Front Desk Officer Signature & Date', margin + colWidth + 14, cursorY + 17);
+  doc.text('Guest Signature & Date', margin, cursorY + 14.5);
+  doc.text('Front Desk Officer Signature & Date', margin + colWidth + 14, cursorY + 14.5);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(100, 116, 139);
-  doc.text(safeVal(guest.fullName, 'Guest Name'), margin, cursorY + 21.5);
-  doc.text(property.name || 'Front Desk', margin + colWidth + 14, cursorY + 21.5);
+  doc.text(safeVal(guest.fullName, 'Guest Name'), margin, cursorY + 18.5);
+  doc.text(property.name || 'Front Desk', margin + colWidth + 14, cursorY + 18.5);
 
   // Footer
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -379,7 +383,7 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
   <style>
     @page {
       size: A4 portrait;
-      margin: 7mm 10mm;
+      margin: 6mm 9mm;
     }
     * {
       box-sizing: border-box;
@@ -396,11 +400,8 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     }
     .page-sheet {
       width: 100%;
-      height: 277mm;
-      max-height: 277mm;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
+      max-height: 266mm;
+      display: block;
       overflow: hidden;
       page-break-inside: avoid;
       break-inside: avoid;
@@ -410,27 +411,27 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     .header {
       background: #ffffff;
       color: #0f172a;
-      padding: 4px 0 8px;
-      border-bottom: 2px solid #0f172a;
+      padding: 2px 0 6px;
+      border-bottom: 1.8px solid #0f172a;
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
-      gap: 14px;
+      gap: 12px;
     }
     .header h1 {
       margin: 0;
-      font-size: 16px;
+      font-size: 14.5px;
       font-weight: 800;
       letter-spacing: 0.03em;
       text-transform: uppercase;
-      line-height: 1.2;
+      line-height: 1.15;
       color: #0f172a;
     }
     .header .contact {
-      margin-top: 3px;
-      font-size: 9px;
+      margin-top: 2px;
+      font-size: 8.5px;
       color: #475569;
-      line-height: 1.3;
+      line-height: 1.25;
     }
     .header .meta {
       text-align: right;
@@ -438,49 +439,49 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       flex-shrink: 0;
     }
     .header .meta .doc-title {
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 800;
       color: #0f172a;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
     .header .meta .blank-meta {
-      margin-top: 4px;
-      font-size: 9px;
+      margin-top: 3px;
+      font-size: 8.5px;
       color: #334155;
-      line-height: 1.4;
+      line-height: 1.3;
     }
     .instruction {
-      margin: 5px 0 2px;
-      font-size: 8.8px;
+      margin: 4px 0 2px;
+      font-size: 8.2px;
       color: #475569;
       font-style: italic;
     }
     .section {
-      margin-top: 7px;
+      margin-top: 5px;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .section-title {
-      margin: 0 0 3px;
-      font-size: 9.5px;
+      margin: 0 0 2.5px;
+      font-size: 8.8px;
       font-weight: 800;
       letter-spacing: 0.07em;
       text-transform: uppercase;
       color: #0f172a;
       border-left: 3px solid #0f172a;
       padding-left: 6px;
-      line-height: 1.2;
+      line-height: 1.15;
     }
     table {
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
-      font-size: 9.5px;
+      font-size: 8.8px;
     }
     th, td {
       border: 1px solid #94a3b8;
-      padding: 4px 7px;
+      padding: 3px 6px;
       text-align: left;
       vertical-align: middle;
     }
@@ -489,11 +490,11 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       font-weight: 700;
       color: #1e293b;
       width: 19%;
-      font-size: 9px;
+      font-size: 8.4px;
     }
     td {
       width: 31%;
-      height: 22px;
+      height: 18px;
       background: #ffffff;
       color: #475569;
     }
@@ -501,20 +502,20 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 12px;
-      font-size: 9px;
+      gap: 10px;
+      font-size: 8.4px;
       color: #1e293b;
     }
     .checkbox-item {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      gap: 3.5px;
       white-space: nowrap;
     }
     .box {
       display: inline-block;
-      width: 10px;
-      height: 10px;
+      width: 9px;
+      height: 9px;
       border: 1.2px solid #475569;
       border-radius: 1.5px;
       background: #ffffff;
@@ -522,30 +523,30 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     }
     .hint {
       color: #94a3b8;
-      font-size: 8.5px;
+      font-size: 8px;
       letter-spacing: 0.04em;
     }
     .notes-box {
       border: 1px solid #94a3b8;
-      padding: 4px 8px 6px;
+      padding: 3px 7px 4px;
       background: #ffffff;
     }
     .write-line {
-      height: 17px;
+      height: 14px;
       border-bottom: 1px dashed #cbd5e1;
     }
     .write-line:last-child {
       border-bottom: none;
-      height: 14px;
+      height: 12px;
     }
     .declaration {
-      margin-top: 7px;
+      margin-top: 6px;
       background: #f8fafc;
       border: 1px solid #cbd5e1;
       border-radius: 3px;
-      padding: 6px 9px;
-      font-size: 8.5px;
-      line-height: 1.4;
+      padding: 5px 8px;
+      font-size: 8px;
+      line-height: 1.32;
       color: #334155;
       page-break-inside: avoid;
       break-inside: avoid;
@@ -553,23 +554,23 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
     .declaration strong {
       display: block;
       color: #0f172a;
-      margin-bottom: 2px;
-      font-size: 9px;
+      margin-bottom: 1.5px;
+      font-size: 8.4px;
       letter-spacing: 0.05em;
       text-transform: uppercase;
     }
     .signatures {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 28px;
-      margin-top: 18px;
+      gap: 24px;
+      margin-top: 16px;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .sig-block {
       border-top: 1px solid #334155;
-      padding-top: 4px;
-      font-size: 9px;
+      padding-top: 3.5px;
+      font-size: 8.5px;
     }
     .sig-block strong {
       display: block;
@@ -577,24 +578,23 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
       font-weight: 700;
     }
     .sig-block .sig-sub {
-      margin-top: 3px;
+      margin-top: 2px;
       color: #64748b;
-      font-size: 8.5px;
+      font-size: 8px;
     }
     .footer {
       margin-top: 8px;
-      padding-top: 5px;
+      padding-top: 4px;
       border-top: 1px solid #cbd5e1;
       display: flex;
       justify-content: space-between;
-      font-size: 8px;
+      font-size: 7.5px;
       color: #64748b;
     }
   </style>
 </head>
 <body>
   <div class="page-sheet">
-    <div>
       <div class="header">
         <div>
           <h1>${escapeHtml(propertyName)}</h1>
@@ -740,7 +740,6 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
         <div class="notes-box">
           <div class="write-line"></div>
           <div class="write-line"></div>
-          <div class="write-line"></div>
         </div>
       </div>
 
@@ -748,9 +747,7 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
         <strong>Guest Declaration &amp; House Policy</strong>
         I confirm that the information provided on this registration form is true and accurate, and I agree to abide by the house rules, security regulations, and payment terms of ${escapeHtml(propertyName)}. Standard check-in is 2:00 PM and check-out is 12:00 PM unless an approved extension is arranged with Front Desk.
       </div>
-    </div>
 
-    <div>
       <div class="signatures">
         <div class="sig-block">
           <strong>Guest Signature</strong>
@@ -766,7 +763,6 @@ export function printGuestRegistrationForm(params: BlankGuestRegistrationPrintPa
         <span>${escapeHtml(propertyName)} · Official Guest Registration Form</span>
         <span>Front Desk Copy</span>
       </div>
-    </div>
   </div>
 </body>
 </html>`;

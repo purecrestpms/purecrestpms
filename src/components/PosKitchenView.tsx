@@ -1744,7 +1744,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 gap-3">
                   {visibleMenu.map((item) => {
                     const isDisabled = item.available === false;
                     const inCartQty = cart.find((c) => c.id === item.id)?.qty || 0;
@@ -1760,7 +1760,7 @@ export const PosKitchenView: React.FC<PosKitchenViewProps> = ({
                             addToCart(item);
                           }
                         }}
-                        className={`group relative rounded-xl border bg-white px-3 py-3.5 text-center flex flex-col items-center justify-center gap-1 transition-all select-none ${
+                        className={`group relative rounded-xl border bg-white px-4 py-4 text-center flex flex-col items-center justify-center gap-1.5 transition-all select-none ${
                           isDisabled
                             ? 'border-slate-200 opacity-50 cursor-not-allowed'
                             : inCartQty > 0

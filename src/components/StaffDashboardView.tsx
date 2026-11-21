@@ -629,11 +629,11 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
     : `Login: ${loginTimeLabel}`;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {actionError && (
         <div
           role="alert"
-          className="no-print bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-sm text-rose-900 flex items-center justify-between gap-3"
+          className="no-print bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-xs sm:text-sm text-rose-900 flex items-center justify-between gap-3"
         >
           <span>{actionError}</span>
           <button
@@ -646,19 +646,19 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
       )}
 
-      {/* 1. Eight Operational KPI Cards (2 rows of 4, Dark Blue & White) */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 1. Eight Operational KPI Cards (2 rows of 4) */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <button
           type="button"
           onClick={() => canAccess('rooms') && onNavigate('rooms')}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <BedDouble className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">Total Rooms</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Total Rooms</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {sortedRooms.length}
             </p>
           </div>
@@ -669,14 +669,14 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
           onClick={() => {
             setRoomFilter('vacant');
           }}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <BedDouble className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">Available Rooms</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Available Rooms</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {availableRooms.length}
             </p>
           </div>
@@ -687,14 +687,14 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
           onClick={() => {
             setRoomFilter('occupied');
           }}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <BedDouble className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <BedDouble className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">Occupied Rooms</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Occupied Rooms</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {occupiedRooms.length}
             </p>
           </div>
@@ -703,14 +703,14 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => canAccess('reservations') && onNavigate('reservations')}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <Calendar className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Calendar className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">Reserved Rooms</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Reserved Rooms</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {reservedRooms.length}
             </p>
           </div>
@@ -719,14 +719,14 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => canAccess('in_house') && onNavigate('in_house')}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <Users className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <Users className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">In-House Guests</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">In-House Guests</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {inHouseList.length}
             </p>
           </div>
@@ -735,17 +735,17 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => canAccess('rooms') && onNavigate('rooms')}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <RefreshCw className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <RefreshCw className="w-5 h-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">Occupancy Rate</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Occupancy Rate</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {occupancyRate}%
             </p>
-            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1.5">
+            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1">
               <div
                 className="h-full bg-[#0a367a] rounded-full transition-all"
                 style={{ width: `${occupancyRate}%` }}
@@ -757,14 +757,14 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => canAccess('arrivals') && onNavigate('arrivals')}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <CalendarCheck className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <CalendarCheck className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">Today&apos;s Arrivals</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Today&apos;s Arrivals</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {arrivalsToday.length}
             </p>
           </div>
@@ -773,30 +773,30 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         <button
           type="button"
           onClick={() => canAccess('in_house') && onNavigate('in_house')}
-          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-2xl p-4 sm:p-5 flex items-center gap-4 text-left shadow-xs transition-colors cursor-pointer"
+          className="bg-white border border-slate-200 hover:border-[#0a367a] rounded-xl p-3.5 sm:p-4 flex items-center gap-3 text-left transition-colors cursor-pointer"
         >
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-            <LogOut className="w-6 h-6" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+            <LogOut className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-semibold text-slate-600">Today&apos;s Departures</p>
-            <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#061f4d] mt-0.5">
+            <p className="text-xs font-semibold text-slate-500">Today&apos;s Departures</p>
+            <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-0.5">
               {departuresToday.length}
             </p>
           </div>
         </button>
       </section>
 
-      {/* 2. Middle Analytics & Clock-In Row: Room Occupancy Overview | Room Status | Staff Clock In */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      {/* 2. Middle Analytics & Clock-In Row */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Card 1: Room Occupancy Overview */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center gap-2">
-            <BarChart3 className="w-4.5 h-4.5 text-blue-200" />
-            <h2 className="font-display text-base font-bold">Room Occupancy Overview</h2>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-blue-200" />
+            <h2 className="font-display text-sm font-bold">Room Occupancy Overview</h2>
           </div>
-          <div className="p-5 flex items-center justify-around gap-4 flex-1">
-            <div className="relative w-32 h-32 shrink-0">
+          <div className="p-4 flex items-center justify-around gap-4 flex-1">
+            <div className="relative w-28 h-28 shrink-0">
               <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
                 <circle
                   cx="60"
@@ -804,7 +804,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                   r={donutRadius}
                   fill="none"
                   stroke="#e2e8f0"
-                  strokeWidth="16"
+                  strokeWidth="15"
                 />
                 <circle
                   cx="60"
@@ -812,23 +812,23 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                   r={donutRadius}
                   fill="none"
                   stroke="#1557b0"
-                  strokeWidth="16"
+                  strokeWidth="15"
                   strokeDasharray={`${occRateDash} ${donutCirc}`}
                   strokeLinecap="butt"
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="font-display font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-none">
+                <span className="font-display font-mono-tabular text-xl font-extrabold text-[#061f4d] leading-none">
                   {occupancyRate}%
                 </span>
-                <span className="text-xs font-medium text-slate-500 mt-0.5">Occupancy</span>
+                <span className="text-[11px] font-medium text-slate-500 mt-0.5">Occupancy</span>
               </div>
             </div>
 
-            <div className="space-y-2.5 text-sm min-w-[130px]">
+            <div className="space-y-2 text-xs min-w-[124px]">
               <div className="flex items-center justify-between gap-4">
                 <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
-                  <span className="w-3 h-3 rounded-full bg-[#1557b0]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#1557b0]" />
                   Occupied
                 </span>
                 <span className="font-mono-tabular font-bold text-slate-900">
@@ -837,7 +837,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
-                  <span className="w-3 h-3 rounded-full bg-slate-300" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
                   Available
                 </span>
                 <span className="font-mono-tabular font-bold text-slate-900">
@@ -846,7 +846,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
-                  <span className="w-3 h-3 rounded-full bg-slate-700" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
                   Out of Order
                 </span>
                 <span className="font-mono-tabular font-bold text-slate-900">
@@ -858,13 +858,13 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
 
         {/* Card 2: Room Status */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center gap-2">
-            <BedDouble className="w-4.5 h-4.5 text-blue-200" />
-            <h2 className="font-display text-base font-bold">Room Status</h2>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center gap-2">
+            <BedDouble className="w-4 h-4 text-blue-200" />
+            <h2 className="font-display text-sm font-bold">Room Status</h2>
           </div>
-          <div className="p-5 flex items-center justify-around gap-4 flex-1">
-            <div className="relative w-32 h-32 shrink-0">
+          <div className="p-4 flex items-center justify-around gap-4 flex-1">
+            <div className="relative w-28 h-28 shrink-0">
               <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
                 <circle
                   cx="60"
@@ -872,7 +872,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                   r={donutRadius}
                   fill="none"
                   stroke="#e2e8f0"
-                  strokeWidth="16"
+                  strokeWidth="15"
                 />
                 {occupiedRooms.length > 0 && (
                   <circle
@@ -881,7 +881,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                     r={donutRadius}
                     fill="none"
                     stroke="#1557b0"
-                    strokeWidth="16"
+                    strokeWidth="15"
                     strokeDasharray={`${occDash} ${donutCirc}`}
                     strokeDashoffset={0}
                   />
@@ -893,7 +893,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                     r={donutRadius}
                     fill="none"
                     stroke="#16a34a"
-                    strokeWidth="16"
+                    strokeWidth="15"
                     strokeDasharray={`${availDash} ${donutCirc}`}
                     strokeDashoffset={-occDash}
                   />
@@ -905,24 +905,24 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                     r={donutRadius}
                     fill="none"
                     stroke="#f59e0b"
-                    strokeWidth="16"
+                    strokeWidth="15"
                     strokeDasharray={`${oooDash} ${donutCirc}`}
                     strokeDashoffset={-(occDash + availDash)}
                   />
                 )}
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="font-display font-mono-tabular text-2xl font-extrabold text-[#061f4d] leading-none">
+                <span className="font-display font-mono-tabular text-xl font-extrabold text-[#061f4d] leading-none">
                   {sortedRooms.length}
                 </span>
-                <span className="text-xs font-medium text-slate-500 mt-0.5">Total Rooms</span>
+                <span className="text-[11px] font-medium text-slate-500 mt-0.5">Total Rooms</span>
               </div>
             </div>
 
-            <div className="space-y-2.5 text-sm min-w-[130px]">
+            <div className="space-y-2 text-xs min-w-[124px]">
               <div className="flex items-center justify-between gap-4">
                 <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
-                  <span className="w-3 h-3 rounded-full bg-[#1557b0]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#1557b0]" />
                   Occupied
                 </span>
                 <span className="font-mono-tabular font-bold text-slate-900">
@@ -931,7 +931,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
-                  <span className="w-3 h-3 rounded-full bg-emerald-600" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
                   Available
                 </span>
                 <span className="font-mono-tabular font-bold text-slate-900">
@@ -940,7 +940,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="inline-flex items-center gap-2 text-slate-700 font-medium">
-                  <span className="w-3 h-3 rounded-full bg-amber-500" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                   Out of Order
                 </span>
                 <span className="font-mono-tabular font-bold text-slate-900">
@@ -952,9 +952,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
 
         {/* Card 3: Staff Clock In */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
-            <h2 className="font-display text-base font-bold">Staff Clock In</h2>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
+            <h2 className="font-display text-sm font-bold">Staff Clock In</h2>
             <button
               type="button"
               onClick={() => setShowEndShiftModal(true)}
@@ -964,35 +964,35 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
               <span>Shift Report</span>
             </button>
           </div>
-          <div className="p-5 flex flex-col justify-between gap-3.5 flex-1">
-            <div className="flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-full bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
-                <UserCircle2 className="w-8 h-8" />
+          <div className="p-4 flex flex-col justify-between gap-3 flex-1">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-blue-50 text-[#0a367a] flex items-center justify-center shrink-0">
+                <UserCircle2 className="w-6 h-6" />
               </div>
               <div className="min-w-0">
-                <p className="font-display text-base font-bold text-slate-900 truncate">
+                <p className="font-display text-sm font-bold text-slate-900 truncate">
                   {userName}
                 </p>
                 <p className="text-xs font-semibold text-slate-600 truncate">
                   {resolvedDepartment} · {actorRole}
                 </p>
-                <p className="text-xs text-slate-500 font-mono-tabular truncate">{shiftLabel}</p>
+                <p className="text-[11px] text-slate-500 font-mono-tabular truncate">{shiftLabel}</p>
               </div>
             </div>
 
-            <div className="text-center py-1">
-              <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#0a367a] leading-tight">
+            <div className="text-center py-0.5">
+              <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#0a367a] leading-tight">
                 {liveClockStr}
               </p>
-              <p className="text-xs font-semibold text-slate-500">{liveDateStr}</p>
+              <p className="text-[11px] font-semibold text-slate-500">{liveDateStr}</p>
             </div>
 
-            <div className="no-print grid grid-cols-2 gap-2.5">
+            <div className="no-print grid grid-cols-2 gap-2">
               <button
                 type="button"
                 disabled={clockBusy || Boolean(activeAttendance)}
                 onClick={handleClockIn}
-                className="h-10 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-sm font-bold disabled:opacity-45 cursor-pointer transition-colors"
+                className="h-9 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#0a367a] hover:bg-[#07275a] text-white text-xs font-bold disabled:opacity-45 cursor-pointer transition-colors"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span>{clockBusy && !activeAttendance ? 'Saving...' : 'Clock In'}</span>
@@ -1001,7 +1001,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                 type="button"
                 disabled={clockBusy || !activeAttendance}
                 onClick={handleClockOut}
-                className="h-10 inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#0a367a] bg-white hover:bg-blue-50 text-[#0a367a] text-sm font-bold disabled:opacity-45 cursor-pointer transition-colors"
+                className="h-9 inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#0a367a] bg-white hover:bg-blue-50 text-[#0a367a] text-xs font-bold disabled:opacity-45 cursor-pointer transition-colors"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
                 <span>{clockBusy && activeAttendance ? 'Saving...' : 'Clock Out'}</span>
@@ -1010,7 +1010,7 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
 
             <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-700">
               <CheckCircle2
-                className={`w-4 h-4 ${
+                className={`w-3.5 h-3.5 ${
                   activeAttendance ? 'text-emerald-600' : 'text-slate-400'
                 }`}
               />
@@ -1034,12 +1034,12 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
       </section>
 
-      {/* 3. Operational Row: Today's Arrivals & Departures | Recent Reservations | Quick Actions */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      {/* 3. Operational Row */}
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Today's Arrivals & Departures */}
-        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5">
-            <h2 className="font-display text-base font-bold">
+        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3">
+            <h2 className="font-display text-sm font-bold">
               Today&apos;s Arrivals &amp; Departures
             </h2>
           </div>
@@ -1097,9 +1097,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
 
         {/* Recent Reservations */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
-            <h2 className="font-display text-base font-bold">Recent Reservations</h2>
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
+            <h2 className="font-display text-sm font-bold">Recent Reservations</h2>
             {canAccess('reservations') && (
               <button
                 type="button"
@@ -1112,19 +1112,19 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
             )}
           </div>
           {recentReservations.length === 0 ? (
-            <div className="p-6 text-center text-sm text-slate-500 my-auto">
+            <div className="p-6 text-center text-xs text-slate-500 my-auto">
               No recent reservations yet.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
-                    <th className="py-2.5 px-3">Ref No.</th>
-                    <th className="py-2.5 px-2">Guest Name</th>
-                    <th className="py-2.5 px-2">Check-In</th>
-                    <th className="py-2.5 px-2">Room</th>
-                    <th className="py-2.5 px-3 text-right">Status</th>
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-semibold text-slate-600">
+                    <th className="py-2 px-3">Ref No.</th>
+                    <th className="py-2 px-2">Guest Name</th>
+                    <th className="py-2 px-2">Check-In</th>
+                    <th className="py-2 px-2">Room</th>
+                    <th className="py-2 px-3 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1137,21 +1137,21 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                         onClick={() => onOpenReservationFolio(res.id, 'reservations', 'view')}
                         className="hover:bg-blue-50/40 transition-colors cursor-pointer"
                       >
-                        <td className="py-2.5 px-3 font-mono-tabular font-semibold text-[#0a367a] whitespace-nowrap">
+                        <td className="py-2 px-3 font-mono-tabular font-semibold text-[#0a367a] whitespace-nowrap">
                           {res.bookingRef || res.id.slice(0, 8)}
                         </td>
-                        <td className="py-2.5 px-2 font-semibold text-slate-900 max-w-[130px] truncate">
+                        <td className="py-2 px-2 font-semibold text-slate-900 max-w-[130px] truncate">
                           {res.guestName}
                         </td>
-                        <td className="py-2.5 px-2 font-mono-tabular text-slate-600 whitespace-nowrap">
+                        <td className="py-2 px-2 font-mono-tabular text-slate-600 whitespace-nowrap">
                           {formatShortMonthDay(res.checkInDate)}
                         </td>
-                        <td className="py-2.5 px-2 font-mono-tabular text-slate-700 whitespace-nowrap">
+                        <td className="py-2 px-2 font-mono-tabular text-slate-700 whitespace-nowrap">
                           {roomDisp.isAssigned ? roomDisp.roomNumberLabel : '—'}
                         </td>
-                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <td className="py-2 px-3 text-right whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${pill.className}`}
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${pill.className}`}
                           >
                             {pill.label}
                           </span>
@@ -1166,56 +1166,56 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
 
         {/* Quick Actions */}
-        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5">
-            <h2 className="font-display text-base font-bold">Quick Actions</h2>
+        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3">
+            <h2 className="font-display text-sm font-bold">Quick Actions</h2>
           </div>
-          <div className="p-4 grid grid-cols-2 gap-3 flex-1">
+          <div className="p-3.5 grid grid-cols-2 gap-2.5 flex-1">
             <button
               type="button"
               onClick={() => canAccess('reservations') && onNavigate('reservations')}
-              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="rounded-lg border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-1.5 text-center transition-colors cursor-pointer"
             >
-              <CalendarPlus className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">Reservation</span>
+              <CalendarPlus className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold text-[#061f4d]">Reservation</span>
             </button>
 
             <button
               type="button"
               onClick={() => canAccess('arrivals') && onNavigate('arrivals')}
-              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="rounded-lg border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-1.5 text-center transition-colors cursor-pointer"
             >
-              <LogIn className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">Check-In</span>
+              <LogIn className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold text-[#061f4d]">Check-In</span>
             </button>
 
             <button
               type="button"
               onClick={() => canAccess('in_house') && onNavigate('in_house')}
-              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="rounded-lg border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-1.5 text-center transition-colors cursor-pointer"
             >
-              <LogOut className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">Check-Out</span>
+              <LogOut className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold text-[#061f4d]">Check-Out</span>
             </button>
 
             <button
               type="button"
               onClick={() => canAccess('pos_kitchen') && onNavigate('pos_kitchen')}
-              className="rounded-xl border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-2 text-center transition-colors cursor-pointer"
+              className="rounded-lg border border-blue-200/80 bg-blue-50/60 hover:bg-blue-100/70 p-3 flex flex-col items-center justify-center gap-1.5 text-center transition-colors cursor-pointer"
             >
-              <ShoppingCart className="w-6 h-6 text-[#0a367a]" />
-              <span className="text-xs sm:text-sm font-bold text-[#061f4d]">POS</span>
+              <ShoppingCart className="w-5 h-5 text-[#0a367a]" />
+              <span className="text-xs font-bold text-[#061f4d]">POS</span>
             </button>
           </div>
         </div>
       </section>
 
-      {/* 4. Bottom Operational Row: Recent POS Transactions | Upcoming Tasks | Staff Attendance Summary */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      {/* 4. Bottom Operational Row */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Recent POS Transactions */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
-            <h2 className="font-display text-base font-bold">Recent POS Transactions</h2>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
+            <h2 className="font-display text-sm font-bold">Recent POS Transactions</h2>
             {canAccess('pos_kitchen') && (
               <button
                 type="button"
@@ -1228,18 +1228,18 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
             )}
           </div>
           {recentPosOrders.length === 0 ? (
-            <div className="p-6 text-center text-sm text-slate-500 my-auto">
+            <div className="p-6 text-center text-xs text-slate-500 my-auto">
               No POS transactions recorded yet.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/70 text-xs font-semibold text-slate-600">
-                    <th className="py-2.5 px-3">Time</th>
-                    <th className="py-2.5 px-2">Item(s)</th>
-                    <th className="py-2.5 px-2">Amount</th>
-                    <th className="py-2.5 px-3 text-right">Payment</th>
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-semibold text-slate-600">
+                    <th className="py-2 px-3">Time</th>
+                    <th className="py-2 px-2">Item(s)</th>
+                    <th className="py-2 px-2">Amount</th>
+                    <th className="py-2 px-3 text-right">Payment</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1254,16 +1254,16 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                         onClick={() => canAccess('pos_kitchen') && onNavigate('pos_kitchen')}
                         className="hover:bg-blue-50/40 transition-colors cursor-pointer"
                       >
-                        <td className="py-2.5 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
+                        <td className="py-2 px-3 font-mono-tabular text-slate-600 whitespace-nowrap">
                           {timeStr}
                         </td>
-                        <td className="py-2.5 px-2 font-semibold text-slate-900 max-w-[140px] truncate">
+                        <td className="py-2 px-2 font-semibold text-slate-900 max-w-[140px] truncate">
                           {ord.itemsSummary || `Order #${ord.orderNumber}`}
                         </td>
-                        <td className="py-2.5 px-2 font-mono-tabular font-bold text-[#0a367a] whitespace-nowrap">
+                        <td className="py-2 px-2 font-mono-tabular font-bold text-[#0a367a] whitespace-nowrap">
                           {formatNgn(ord.totalNgn)}
                         </td>
-                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                        <td className="py-2 px-3 text-right text-slate-600 whitespace-nowrap">
                           {ord.paymentMethod || 'Cash NGN'}
                         </td>
                       </tr>
@@ -1276,31 +1276,31 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
 
         {/* Upcoming Tasks */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center gap-2">
-            <ClipboardCheck className="w-4.5 h-4.5 text-blue-200" />
-            <h2 className="font-display text-base font-bold">Upcoming Tasks</h2>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center gap-2">
+            <ClipboardCheck className="w-4 h-4 text-blue-200" />
+            <h2 className="font-display text-sm font-bold">Upcoming Tasks</h2>
           </div>
           {upcomingTasks.length === 0 ? (
-            <div className="p-6 text-center text-sm text-slate-500 my-auto">
+            <div className="p-6 text-center text-xs text-slate-500 my-auto">
               All housekeeping &amp; maintenance tasks are clear.
             </div>
           ) : (
-            <div className="p-4 divide-y divide-slate-100">
+            <div className="p-3.5 divide-y divide-slate-100">
               {upcomingTasks.map((task) => (
                 <button
                   key={task.id}
                   type="button"
                   onClick={() => canAccess(task.section) && onNavigate(task.section)}
-                  className="w-full py-2.5 flex items-center justify-between gap-3 text-left hover:bg-blue-50/40 px-2 -mx-2 rounded-lg transition-colors cursor-pointer"
+                  className="w-full py-2 flex items-center justify-between gap-3 text-left hover:bg-blue-50/40 px-2 -mx-2 rounded-lg transition-colors cursor-pointer"
                 >
-                  <span className="inline-flex items-center gap-2.5 min-w-0">
-                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${task.dotColor}`} />
-                    <span className="text-sm font-semibold text-slate-800 truncate">
+                  <span className="inline-flex items-center gap-2 min-w-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${task.dotColor}`} />
+                    <span className="text-xs font-semibold text-slate-800 truncate">
                       {task.title}
                     </span>
                   </span>
-                  <span className="font-mono-tabular text-xs font-semibold text-slate-500 shrink-0">
+                  <span className="font-mono-tabular text-[11px] font-semibold text-slate-500 shrink-0">
                     {task.timeLabel}
                   </span>
                 </button>
@@ -1310,9 +1310,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
         </div>
 
         {/* Staff Attendance Summary */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col">
-          <div className="bg-[#0a367a] text-white px-5 py-3.5 flex items-center justify-between gap-2">
-            <h2 className="font-display text-base font-bold">Staff Attendance Summary</h2>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-[#0a367a] text-white px-4 py-3 flex items-center justify-between gap-2">
+            <h2 className="font-display text-sm font-bold">Staff Attendance Summary</h2>
             {canAccess('shifts_attendance') && (
               <button
                 type="button"
@@ -1324,31 +1324,31 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
               </button>
             )}
           </div>
-          <div className="p-5 grid grid-cols-3 divide-x divide-slate-200 flex-1 items-center">
+          <div className="p-4 grid grid-cols-3 divide-x divide-slate-200 flex-1 items-center">
             <div className="text-center px-2">
-              <div className="inline-flex items-center justify-center gap-1.5 text-emerald-700 text-xs sm:text-sm font-semibold">
-                <UserCheck className="w-4 h-4" />
+              <div className="inline-flex items-center justify-center gap-1 text-emerald-700 text-xs font-semibold">
+                <UserCheck className="w-3.5 h-3.5" />
                 <span>Present</span>
               </div>
-              <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] mt-2">
+              <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1.5">
                 {attendanceSummary.presentCount}
               </p>
             </div>
             <div className="text-center px-2">
-              <div className="inline-flex items-center justify-center gap-1.5 text-[#0a367a] text-xs sm:text-sm font-semibold">
-                <Coffee className="w-4 h-4" />
+              <div className="inline-flex items-center justify-center gap-1 text-[#0a367a] text-xs font-semibold">
+                <Coffee className="w-3.5 h-3.5" />
                 <span>Off / Out</span>
               </div>
-              <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] mt-2">
+              <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1.5">
                 {attendanceSummary.completedOrBreakCount}
               </p>
             </div>
             <div className="text-center px-2">
-              <div className="inline-flex items-center justify-center gap-1.5 text-rose-600 text-xs sm:text-sm font-semibold">
-                <UserX className="w-4 h-4" />
+              <div className="inline-flex items-center justify-center gap-1 text-rose-600 text-xs font-semibold">
+                <UserX className="w-3.5 h-3.5" />
                 <span>Absent</span>
               </div>
-              <p className="font-display font-mono-tabular text-3xl font-extrabold text-[#061f4d] mt-2">
+              <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#061f4d] mt-1.5">
                 {attendanceSummary.absentCount}
               </p>
             </div>
@@ -1357,18 +1357,18 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
       </section>
 
       {/* 5. Preserved Rooms Overview & Room Photos */}
-      <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-        <div className="bg-[#0a367a] text-white px-5 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+      <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="bg-[#0a367a] text-white px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-base sm:text-lg font-bold">
+            <h2 className="font-display text-sm font-bold">
               Rooms Overview ({sortedRooms.length})
             </h2>
-            <p className="text-xs text-blue-100 mt-0.5">
+            <p className="text-[11px] text-blue-100 mt-0.5">
               Live occupancy and housekeeping status across all rooms
             </p>
           </div>
 
-          <div className="no-print flex flex-wrap items-center gap-1.5 bg-white/10 p-1 rounded-xl border border-white/15">
+          <div className="no-print flex flex-wrap items-center gap-1 bg-white/10 p-1 rounded-lg border border-white/15">
             {(
               [
                 { id: 'all', label: `All (${sortedRooms.length})` },
@@ -1381,9 +1381,9 @@ export const StaffDashboardView: React.FC<StaffDashboardViewProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => setRoomFilter(tab.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
                   roomFilter === tab.id
-                    ? 'bg-white text-[#0a367a] shadow-xs'
+                    ? 'bg-white text-[#0a367a]'
                     : 'text-blue-100 hover:text-white'
                 }`}
               >

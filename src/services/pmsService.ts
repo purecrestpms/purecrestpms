@@ -357,14 +357,35 @@ export async function createReservationWorkflow(params: {
       ? Math.round(expectedPayoutNgn / safeNights)
       : baseEffectiveRate;
 
-  const roomIdVal = params.room?.id || '';
-  const roomNumberVal = params.room?.roomNumber || 'Unassigned';
+  const roomIdVal = (params.room?.id || '').slice(0, 128);
+  const roomNumberVal = (params.room?.roomNumber || 'Unassigned').trim().slice(0, 24) || 'Unassigned';
   const requestedTypeVal =
-    params.requestedRoomType || params.room?.roomType || 'Studio';
+    (params.requestedRoomType || params.room?.roomType || 'Studio').trim().slice(0, 64) || 'Studio';
   const status: ReservationRecord['status'] = params.immediateCheckIn
     ? 'checked_in'
     : params.initialStatus || 'confirmed';
-  const authEmails = params.property.authorizedEmails;
+  const actorEmail = (auth.currentUser?.email || '').trim();
+  const authEmails = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(params.property.authorizedEmails) ? params.property.authorizedEmails : []),
+        params.property.adminEmail || '',
+        actorEmail,
+        actorEmail.toLowerCase(),
+        ...BOOTSTRAPPED_ADMIN_EMAILS,
+      ]
+        .map((e) => (e || '').trim())
+        .filter((e) => e.length >= 3 && e.length <= 120)
+    )
+  ).slice(0, 100);
+  const safeGuestName = (params.guestName || 'Guest').trim().slice(0, 120) || 'Guest';
+  const safeGuestPhone = (params.guestPhone || '+234 706 352 2668').trim().slice(0, 32);
+  const safeGuestEmail = (params.guestEmail || '').trim().slice(0, 120);
+  const safeGuestAddress = (params.guestAddress || '').trim().slice(0, 200);
+  const safeGuestCity = (params.guestCity || '').trim().slice(0, 80);
+  const safeGuestState = (params.guestState || '').trim().slice(0, 80);
+  const safeGuestCountry = (params.guestCountry || params.guestNationality || 'Nigeria').trim().slice(0, 80);
+  const safeGuestNationality = (params.guestNationality || params.guestCountry || 'Nigeria').trim().slice(0, 64);
 
   const sourceCurrency: ChannelCurrency =
     params.sourceCurrency || (isOta ? getDefaultOtaChannelCurrency(params.channel) : 'NGN');
@@ -441,14 +462,14 @@ export async function createReservationWorkflow(params: {
 
   batch.set(doc(db, 'properties', params.property.id, 'guests', guestId), {
     propertyId: params.property.id,
-    fullName: params.guestName,
-    email: params.guestEmail || '',
-    phone: params.guestPhone || '+234 706 352 2668',
-    address: params.guestAddress || '',
-    city: params.guestCity || '',
-    state: params.guestState || '',
-    country: params.guestCountry || params.guestNationality || 'Nigeria',
-    nationality: params.guestNationality || params.guestCountry || 'Nigeria',
+    fullName: safeGuestName,
+    email: safeGuestEmail,
+    phone: safeGuestPhone,
+    address: safeGuestAddress,
+    city: safeGuestCity,
+    state: safeGuestState,
+    country: safeGuestCountry,
+    nationality: safeGuestNationality,
     idType: params.guestIdType || 'NIN',
     idNumber: (params.guestIdNumber || '').trim().slice(0, 64),
     ...(params.guestIdExpiryDate?.trim()
@@ -457,7 +478,7 @@ export async function createReservationWorkflow(params: {
     vipTier: 'Standard',
     totalStays: params.immediateCheckIn ? 1 : 0,
     lifetimeSpendNgn: hotelPaidNgn + (isOta && otaPaidNgn > 0 ? expectedPayoutNgn : 0),
-    notes: `Created via ${params.channel}`,
+    notes: `Created via ${params.channel}`.slice(0, 400),
     authorizedEmails: authEmails,
     ownerUid: uid,
     createdAt: now,
@@ -488,18 +509,18 @@ export async function createReservationWorkflow(params: {
     updatedAt: ReturnType<typeof serverTimestamp>;
   } = {
     propertyId: params.property.id,
-    bookingRef,
+    bookingRef: bookingRef.slice(0, 32),
     roomId: roomIdVal,
     roomNumber: roomNumberVal,
     requestedRoomType: requestedTypeVal,
     guestId,
-    guestName: params.guestName,
-    guestPhone: params.guestPhone || '+234 800 000 0000',
-    ...(params.guestEmail?.trim() ? { guestEmail: params.guestEmail.trim().slice(0, 120) } : {}),
-    ...(params.guestAddress?.trim() ? { guestAddress: params.guestAddress.trim().slice(0, 200) } : {}),
-    ...(params.guestCity?.trim() ? { guestCity: params.guestCity.trim().slice(0, 80) } : {}),
-    ...(params.guestState?.trim() ? { guestState: params.guestState.trim().slice(0, 80) } : {}),
-    ...(params.guestCountry?.trim() ? { guestCountry: params.guestCountry.trim().slice(0, 80) } : {}),
+    guestName: safeGuestName,
+    guestPhone: safeGuestPhone || '+234 800 000 0000',
+    ...(safeGuestEmail ? { guestEmail: safeGuestEmail } : {}),
+    ...(safeGuestAddress ? { guestAddress: safeGuestAddress } : {}),
+    ...(safeGuestCity ? { guestCity: safeGuestCity } : {}),
+    ...(safeGuestState ? { guestState: safeGuestState } : {}),
+    ...(safeGuestCountry ? { guestCountry: safeGuestCountry } : {}),
     checkInDate: params.checkInDate,
     checkOutDate: params.checkOutDate,
     bookedDate: params.bookedDate || todayIso,
@@ -566,14 +587,14 @@ export async function createReservationWorkflow(params: {
     if (params.immediateCheckIn) {
       batch.update(doc(db, 'properties', params.property.id, 'rooms', params.room.id), {
         occupancyStatus: 'occupied',
-        currentGuestName: params.guestName,
+        currentGuestName: safeGuestName,
         currentReservationId: resId,
         updatedAt: now,
       });
     } else if (status === 'confirmed' && params.checkInDate <= todayIso && params.room.occupancyStatus === 'vacant') {
       batch.update(doc(db, 'properties', params.property.id, 'rooms', params.room.id), {
         occupancyStatus: 'reserved',
-        currentGuestName: params.guestName,
+        currentGuestName: safeGuestName,
         currentReservationId: resId,
         updatedAt: now,
       });
@@ -587,8 +608,8 @@ export async function createReservationWorkflow(params: {
       entryDate: new Date().toISOString().slice(0, 10),
       entryType: 'revenue',
       category: 'Room Accommodation',
-      reference: bookingRef,
-      description: `${params.room ? `Room ${params.room.roomNumber}` : requestedTypeVal} direct property payment — ${params.guestName}`,
+      reference: bookingRef.slice(0, 64),
+      description: `${params.room ? `Room ${params.room.roomNumber}` : requestedTypeVal} direct property payment — ${safeGuestName}`.slice(0, 240),
       amountNgn: hotelPaidNgn,
       vatNgn: Math.round(hotelPaidNgn * 0.075),
       paymentMethod: params.paymentMethod,
